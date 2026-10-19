@@ -1,0 +1,302 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
+
+/* ------------------------------------------------------------------ *
+ *  Modele danych dla osiągnięć
+ * ------------------------------------------------------------------ */
+
+type FormResult = 'W' | 'D' | 'L' | 'N'
+
+interface PlayerStats {
+  m: number
+  w: number
+  d: number
+  l: number
+  lw: number
+  ll: number
+  realAvg: number
+  pts: number
+  form: FormResult[]
+  dpi?: number
+  doublesPct?: number
+}
+
+interface RawPlayer {
+  id: string
+  div: string
+  group?: string
+  firstName: string
+  lastName: string
+  nick?: string
+  avatarUrl?: string
+  photoUrl?: string
+  isDisqualified?: boolean
+  st: PlayerStats
+  checkout?: number
+  short?: number
+  max?: number
+  dartcounter?: string
+  history?: any[]
+}
+
+interface DivisionTab {
+  id: string
+  label: string
+}
+
+const divisions: DivisionTab[] = [
+  { id: 'D1', label: 'Dywizja 1' },
+  { id: 'D2', label: 'Dywizja 2' },
+  { id: 'D3', label: 'Dywizja 3' },
+  { id: 'D4', label: 'Dywizja 4' },
+]
+
+const roster: RawPlayer[] = [
+  {
+    id: 'p1',
+    div: 'D1',
+    firstName: 'Mateusz',
+    lastName: 'Kozioł',
+    nick: 'Koziołek',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
+    dartcounter: 'koziolek123',
+    st: {
+      m: 15,
+      w: 11,
+      d: 2,
+      l: 2,
+      lw: 45,
+      ll: 28,
+      realAvg: 78.52,
+      pts: 35,
+      form: ['W', 'W', 'D', 'L', 'W'],
+      dpi: 172.55,
+      doublesPct: 42.8,
+    },
+    checkout: 156,
+    short: 17,
+    max: 12,
+  },
+  {
+    id: 'p2',
+    div: 'D1',
+    firstName: 'Daniel',
+    lastName: 'Chojnacki',
+    nick: 'Chojna',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/44.jpg',
+    dartcounter: 'chojnacki_daniel',
+    st: {
+      m: 14,
+      w: 10,
+      d: 2,
+      l: 2,
+      lw: 43,
+      ll: 29,
+      realAvg: 86.21,
+      pts: 32,
+      form: ['W', 'L', 'W', 'W', 'D'],
+      dpi: 168.73,
+      doublesPct: 45.6,
+    },
+    checkout: 170,
+    short: 15,
+    max: 18,
+  },
+  {
+    id: 'p3',
+    div: 'D2',
+    firstName: 'Bartosz',
+    lastName: 'Krych',
+    nick: 'Krychu',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/65.jpg',
+    st: {
+      m: 13,
+      w: 8,
+      d: 3,
+      l: 2,
+      lw: 38,
+      ll: 31,
+      realAvg: 74.21,
+      pts: 27,
+      form: ['W', 'L', 'W', 'W', 'D'],
+      dpi: 149.07,
+      doublesPct: 38.5,
+    },
+    checkout: 141,
+    short: 19,
+    max: 8,
+  },
+  {
+    id: 'p4',
+    div: 'D2',
+    firstName: 'Piotr',
+    lastName: 'Stępień',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/44.jpg',
+    dartcounter: 'piotrstepien',
+    st: {
+      m: 12,
+      w: 7,
+      d: 2,
+      l: 3,
+      lw: 32,
+      ll: 25,
+      realAvg: 68.93,
+      pts: 23,
+      form: ['L', 'W', 'W', 'N', 'N'],
+      dpi: 132.44,
+      doublesPct: 35.2,
+    },
+    checkout: 132,
+    short: 21,
+    max: 5,
+  },
+]
+
+const selectedPlayer = ref<RawPlayer | null>(null)
+const showPlayerModal = (player: RawPlayer) => {
+  selectedPlayer.value = player
+}
+
+const activeDiv = ref(divisions[0]?.id ?? '')
+
+const setActiveDivision = (divId: string) => {
+  activeDiv.value = divId
+}
+
+const divisionPlayers = computed(() =>
+  roster.filter((p) => p.div.trim().toUpperCase() === activeDiv.value)
+)
+
+const formDotClass: Record<FormResult, string> = {
+  W: 'bg-lime text-on-lime',
+  D: 'bg-yellow-400 text-on-yellow-400',
+  L: 'bg-danger text-white',
+  N: 'bg-surface-2 border border-line text-muted',
+}
+
+const formDotText: Record<FormResult, string> = {
+  W: 'W',
+  D: 'R',
+  L: 'P',
+  N: '-',
+}
+
+interface AchievementData {
+  trophies: string[]
+  career_stats: {
+    matches_played?: number
+    matches_won?: number
+    seasons_count?: number
+    total_180s?: number
+    total_100_checkouts?: number
+  }
+  epic_moments: {
+    nine_darter?: number
+    big_fish?: number
+    small_fish?: number
+    whitewash?: number
+  }
+}
+
+interface MilestoneBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+  level: 'none' | 'brąz' | 'srebro' | 'zloto' | 'platyna'
+}
+
+interface EpicBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+  isEarned: boolean
+  count: number
+}
+
+interface DivisionTab {
+  id: string
+  label: string
+}
+
+interface TrophyBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+}
+</script>
+
+<template>
+  <div class="min-h-screen bg-ink text-fg">
+    <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
+      <header class="mb-10">
+        <div class="flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-center">
+          <div>
+            <h1 class="font-display text-4xl font-black uppercase tracking-tight lg:text-5xl">
+              Zawodnicy <span class="text-accent">ligi</span>
+            </h1>
+            <p class="mt-2 max-w-2xl text-base text-muted">
+              Karty graczy z&nbsp;gablotą osiągnięć, statystykami ligowymi i&nbsp;panlem Dartcounter
+            </p>
+          </div>
+          <div class="text-sm text-muted font-medium">
+            Razem: <span class="ml-1 font-display text-xl font-extrabold tabular-nums text-fg">{{ players.length }}</span>
+            <span class="ml-2 font-normal">zawodników</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <article
+          v-for="player in players"
+          :key="player.id"
+          class="bg-surface border border-line rounded-2xl p-6 transition-all hover:border-lime-600 hover:bg-surface-2/80"
+        >
+          <h3 class="text-xl font-black uppercase text-fg mb-2">
+            {{ player.firstName }} <span class="text-lime">{{ player.lastName }}</span>
+          </h3>
+          
+          <p v-if="player.nick" class="text-sm text-muted italic mb-4">
+            "{{ player.nick }}"
+          </p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div class="text-center">
+              <div class="text-xs text-muted uppercase mb-1">Mecze</div>
+              <div class="font-display text-2xl font-black tabular-nums text-fg">
+                {{ player.stats.m }}
+              </div>
+            </div>
+            <div class="text-center">
+              <div class="text-xs text-muted uppercase mb-1">Punkty</div>
+              <div class="font-display text-2xl font-black tabular-nums text-accent">
+                {{ player.stats.pts }}
+              </div>
+            </div>
+          </div>
+
+          <button
+            @click="showPlayerModal(player)"
+            class="mt-6 w-full rounded-lg bg-lime hover:bg-lime-soft text-on-lime font-bold uppercase text-sm py-2.5 px-4 transition-colors"
+          >
+            Otwórz profil
+          </button>
+        </article>
+      </div>
+    </div>
+
+    <PlayerCardModal
+      :player="selectedPlayer as any"
+      @close="selectedPlayer = null"
+    />
+  </div>
+</template>

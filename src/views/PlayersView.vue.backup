@@ -1,0 +1,840 @@
+<script setup lang="ts">
+/**
+ * Podstrona „Zawodnicy ligi” – port silnika `window.initZawodnicy()` (Vanilla JS).
+ * 
+ * Przeniesione 1:1 ze starego kodu:
+ *  - karty zawodników z awatarem, statystykami i formą
+ *  - Gablota Osiągnięć: TROFEA + KAMIENIE MILOWE + EPICKIE MOMENTY
+ *  - dynamiczne filtry dywizji i grup
+ *  - panel Dartcounter z modalami
+ *  - modal profilu zawodnika
+ * 
+ * Różnice względem oryginału:
+ *  - brak `innerHTML` – kompletnie deklaracyjny `<template>` + `v-for`
+ *  - stare funkcje `decodeTrophy`, `getMilestoneBadge`, `getEpicBadge` → pomocnicze funkcje TS zwracające obiekty
+ *  - paleta Vanilla (`bg-white`, `text-gray-800`) → motyw „Bento” (`surface`, `muted`, `accent`)
+ *  - zastąpienie `w-X h-X` na `size-X` oraz sztywnych `text-[8px]` na `text-xs`/`text-sm`
+ *  - dane tymczasowe (mock) – docelowo do zastąpienia Firebase
+ */
+import { computed, ref } from 'vue'
+import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
+
+/* ------------------------------------------------------------------ *
+ *  Modele danych dla osiągnięć
+ * ------------------------------------------------------------------ */
+
+type FormResult = 'W' | 'D' | 'L' | 'N'
+
+interface PlayerStats {
+  m: number
+  w: number
+  d: number
+  l: number
+  lw: number
+  ll: number
+  realAvg: number
+  pts: number
+  form: FormResult[]
+  dpi?: number
+  doublesPct?: number
+}
+
+interface RawPlayer {
+  id: string
+  div: string
+  group?: string
+  firstName: string
+  lastName: string
+  nick?: string
+  avatarUrl?: string
+  photoUrl?: string
+  isDisqualified?: boolean
+  st: PlayerStats
+  checkout?: number
+  short?: number
+  max?: number
+  dartcounter?: string
+  history?: any[]
+}
+
+interface AchievementData {
+  trophies: string[]
+  career_stats: {
+    matches_played?: number
+    matches_won?: number
+    seasons_count?: number
+    total_180s?: number
+    total_100_checkouts?: number
+  }
+  epic_moments: {
+    nine_darter?: number
+    big_fish?: number
+    small_fish?: number
+    whitewash?: number
+  }
+}
+
+interface MilestoneBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+  level: 'none' | 'brąz' | 'srebro' | 'zloto' | 'platyna'
+}
+
+interface EpicBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+  isEarned: boolean
+  count: number
+}
+
+interface DivisionTab {
+  id: string
+  label: string
+}
+
+interface TrophyBadge {
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+}
+/* ------------------------------------------------------------------ *
+ *  MOCK – docelowo: FirebaseService.getPlayers() / .getAchievements()
+ * ------------------------------------------------------------------ */
+
+const divisions: DivisionTab[] = [
+  { id: 'D1', label: 'Dywizja 1' },
+  { id: 'D2', label: 'Dywizja 2' },
+  { id: 'D3', label: 'Dywizja 3' },
+  { id: 'D4', label: 'Dywizja 4' },
+]
+
+const roster: RawPlayer[] = [
+  {
+    id: 'p1',
+    div: 'D1',
+    firstName: 'Mateusz',
+    lastName: 'Kozioł',
+    nick: 'Koziołek',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
+    dartcounter: 'mateuszkozioł123',
+    st: {
+      m: 10, w: 7, d: 1, l: 2, lw: 28, ll: 14,
+      realAvg: 88.42, pts: 15,
+      form: ['W', 'L', 'W', 'D', 'W', 'W'],
+      dpi: 145.67,
+      doublesPct: 42.5
+    },
+    checkout: 164,
+    short: 12,
+    max: 24,
+  },
+  {
+    id: 'p2',
+    div: 'D1',
+    firstName: 'Daniel',
+    lastName: 'Chojnacki',
+    nick: 'Chojna',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/44.jpg',
+    dartcounter: 'danielchojnacki',
+    st: {
+      m: 10, w: 6, d: 2, l: 2, lw: 27, ll: 14,
+      realAvg: 76.32, pts: 14,
+      form: ['W', 'W', 'L', 'D', 'W', 'W'],
+      dpi: 92.18,
+      doublesPct: 48.6
+    },
+    checkout: 180,
+    short: 15,
+    max: 32,
+  },
+  {
+    id: 'p3',
+    div: 'D2',
+    firstName: 'Bartosz',
+    lastName: 'Krych',
+    nick: 'Krych',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/67.jpg',
+    st: {
+      m: 8, w: 4, d: 1, l: 3, lw: 18, ll: 14,
+      realAvg: 67.15, pts: 9,
+      form: ['L', 'W', 'D', 'L', 'W', 'L'],
+      dpi: 85.44,
+      doublesPct: 36.9
+    },
+    checkout: 140,
+    short: 18,
+    max: 12,
+  },
+  {
+    id: 'p4',
+    div: 'D2',
+    firstName: 'Łukasz',
+    lastName: 'Tarczyński',
+    nick: 'Tarcza',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/22.jpg',
+    dartcounter: 'tarczynski_lukasz',
+    st: {
+      m: 9, w: 3, d: 3, l: 3, lw: 16, ll: 18,
+      realAvg: 65.44, pts: 9,
+      form: ['D', 'L', 'W', 'D', 'L', 'D'],
+      dpi: 78.21,
+      doublesPct: 41.2
+    },
+    checkout: 132,
+    short: 20,
+    max: 8,
+  },
+  {
+    id: 'p5',
+    div: 'D3',
+    firstName: 'Kuba',
+    lastName: 'Wiński',
+    nick: 'Wiński',
+    st: {
+      m: 7, w: 2, d: 2, l: 3, lw: 12, ll: 16,
+      realAvg: 58.12, pts: 6,
+      form: ['L', 'D', 'L', 'W', 'L', 'N'],
+      dpi: 65.88,
+      doublesPct: 29.7
+    },
+    checkout: 124,
+    short: 24,
+    max: 5,
+  },
+  {
+    id: 'p6',
+    div: 'D4',
+    firstName: 'Karol',
+    lastName: 'Wojciechowski',
+    nick: 'Wojtek',
+    avatarUrl: 'https://randomuser.me/api/portraits/men/51.jpg',
+    dartcounter: 'karolwojtek',
+    st: {
+      m: 6, w: 1, d: 1, l: 4, lw: 8, ll: 20,
+      realAvg: 52.76, pts: 3,
+      form: ['L', 'L', 'D', 'L', 'W', 'L'],
+      dpi: 54.33,
+      doublesPct: 24.8
+    },
+    checkout: 110,
+    short: 28,
+    max: 3,
+  },
+]
+
+const allAchievements: Record<string, AchievementData> = {
+  p1: {
+    trophies: ['s1_champ', 's1_cup_winner', 's0_littler'],
+    career_stats: {
+      matches_played: 105,
+      matches_won: 78,
+      seasons_count: 3,
+      total_180s: 125,
+      total_100_checkouts: 42,
+    },
+    epic_moments: {
+      nine_darter: 1,
+      big_fish: 2,
+      small_fish: 5,
+      whitewash: 3,
+    }
+  },
+  p2: {
+    trophies: ['s1_vice', 's0_bronze'],
+    career_stats: {
+      matches_played: 82,
+      matches_won: 52,
+      seasons_count: 2,
+      total_180s: 88,
+      total_100_checkouts: 31,
+    },
+    epic_moments: {
+      nine_darter: 0,
+      big_fish: 1,
+      small_fish: 3,
+      whitewash: 2,
+    }
+  },
+  p3: {
+    trophies: ['s0_humphries'],
+    career_stats: {
+      matches_played: 45,
+      matches_won: 21,
+      seasons_count: 1,
+      total_180s: 36,
+      total_100_checkouts: 18,
+    },
+    epic_moments: {
+      nine_darter: 0,
+      big_fish: 0,
+      small_fish: 2,
+      whitewash: 1,
+    }
+  },
+  p4: {
+    trophies: [],
+    career_stats: {
+      matches_played: 28,
+      matches_won: 12,
+      seasons_count: 1,
+      total_180s: 14,
+      total_100_checkouts: 8,
+    },
+    epic_moments: {
+      nine_darter: 0,
+      big_fish: 0,
+      small_fish: 1,
+      whitewash: 0,
+    }
+  },
+  p5: {
+    trophies: [],
+    career_stats: {
+      matches_played: 18,
+      matches_won: 6,
+      seasons_count: 1,
+      total_180s: 9,
+      total_100_checkouts: 4,
+    },
+    epic_moments: {
+      nine_darter: 0,
+      big_fish: 0,
+      small_fish: 0,
+      whitewash: 0,
+    }
+  },
+  p6: {
+    trophies: [],
+    career_stats: {
+      matches_played: 12,
+      matches_won: 3,
+      seasons_count: 1,
+      total_180s: 5,
+      total_100_checkouts: 2,
+    },
+    epic_moments: {
+      nine_darter: 0,
+      big_fish: 0,
+      small_fish: 0,
+      whitewash: 0,
+    }
+  },
+}
+
+/* ------------------------------------------------------------------ *
+ *  Stan + silnik widoku (dawniej `window.zawodnicyState` / `initZawodnicy`)
+ * ------------------------------------------------------------------ */
+
+/** Dawne `window.zawodnicyState.div`. */
+const activeDiv = ref(divisions[0]?.id ?? '')
+
+/** Zakładka kliknięta przez użytkownika – dawne `setZawodnicyFilter(divName)`. */
+const setActiveDivision = (divId: string) => {
+  activeDiv.value = divId
+}
+
+/** Gracze w aktywnej dywizji – z filtrowaniem */
+const divisionPlayers = computed(() =>
+  roster.filter((p) => p.div.trim().toUpperCase() === activeDiv.value)
+)
+
+/* ------------------------------------------------------------------ *
+ *  Helpery do dekodowania gabloty
+ * ------------------------------------------------------------------ */
+
+/**
+ * Dawne `decodeTrophy` → zwraca obiekt zamiast HTML.
+ */
+function decodeTrophy(trophyKey: string): TrophyBadge {
+  const parts = trophyKey.split('_')
+  const seasonTag = parts[0] ? `Sezon ${parts[0].replace('s', '')}` : ''
+  
+  let icon = "🏆"
+  let title = "Trofeum Ligi"
+  let bgClass = "bg-yellow-50"
+  let borderClass = "border-yellow-400"
+  let textClass = "text-yellow-600"
+  let shadowClass = "shadow-md"
+
+  if (trophyKey.includes('champ') || trophyKey.endsWith('_1')) {
+    icon = "🥇"
+    title = `Mistrz Dywizji (${seasonTag})`
+    bgClass = "bg-amber-100"
+    borderClass = "border-amber-500"
+    textClass = "text-amber-700"
+    shadowClass = "shadow-md"
+  } else if (trophyKey.includes('vice') || trophyKey.endsWith('_2')) {
+    icon = "🥈"
+    title = `Wicemistrz Dywizji (${seasonTag})`
+    bgClass = "bg-slate-100"
+    borderClass = "border-slate-400"
+    textClass = "text-slate-600"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('bronze') || trophyKey.endsWith('_3')) {
+    icon = "🥉"
+    title = `Brązowy Medalista Dywizji (${seasonTag})`
+    bgClass = "bg-orange-100"
+    borderClass = "border-orange-400"
+    textClass = "text-orange-700"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('cup_winner')) {
+    icon = "🏆"
+    title = `Zdobywca Pucharu Ligi (${seasonTag})`
+    bgClass = "bg-gradient-to-br from-yellow-400 to-amber-500"
+    borderClass = "border-amber-600"
+    textClass = "text-white"
+    shadowClass = "shadow-lg"
+  }
+  // Puchary Imienne (Rekordziści)
+  else if (trophyKey.includes('littler')) {
+    icon = "👶"
+    title = `Puchar Luke'a Littlera (${seasonTag}) - Najwięcej Maksów`
+    bgClass = "bg-purple-100"
+    borderClass = "border-purple-400"
+    textClass = "text-purple-600"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('humphries')) {
+    icon = "🎯"
+    title = `Puchar Luke'a Humphriesa (${seasonTag}) - Najwyższy Check-Out`
+    bgClass = "bg-blue-100"
+    borderClass = "border-blue-400"
+    textClass = "text-blue-600"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('smith')) {
+    icon = "⚡"
+    title = `Puchar Michaela Smitha (${seasonTag}) - Najszybszy Leg`
+    bgClass = "bg-red-100"
+    borderClass = "border-red-400"
+    textClass = "text-red-600"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('mvg')) {
+    icon = "🟢"
+    title = `Puchar Michaela van Gerwena (${seasonTag}) - Najwyższy Power Ranking`
+    bgClass = "bg-lime-100"
+    borderClass = "border-lime-400"
+    textClass = "text-lime-600"
+    shadowClass = "shadow-sm"
+  } else if (trophyKey.includes('taylor')) {
+    icon = "👑"
+    title = `Puchar Phila Taylora (${seasonTag}) - Najwyższa Średnia Sezonu`
+    bgClass = "bg-yellow-100"
+    borderClass = "border-yellow-500"
+    textClass = "text-yellow-700"
+    shadowClass = "shadow-md"
+  }
+
+  return { icon, title, bgClass, borderClass, textClass, shadowClass }
+}
+
+/**
+ * Dawne `getMilestoneBadge` → zwraca obiekt zamiast HTML.
+ */
+function getMilestoneBadge(
+  val: number,
+  thresholds: [number, number, number, number],
+  icon: string,
+  title: string
+): MilestoneBadge {
+  let level: 'none' | 'brąz' | 'srebro' | 'zloto' | 'platyna' = 'none'
+  if (val >= thresholds[3]) level = 'platyna'
+  else if (val >= thresholds[2]) level = 'zloto'
+  else if (val >= thresholds[1]) level = 'srebro'
+  else if (val >= thresholds[0]) level = 'brąz'
+
+  let bgClass = 'bg-surface-2'
+  let borderClass = 'border-line'
+  let textClass = 'text-muted'
+  let shadowClass = 'shadow-inner'
+
+  if (level === 'brąz') {
+    bgClass = 'bg-orange-50'
+    borderClass = 'border-orange-300'
+    textClass = 'text-orange-800'
+    shadowClass = 'shadow-sm'
+  } else if (level === 'srebro') {
+    bgClass = 'bg-slate-50'
+    borderClass = 'border-slate-300'
+    textClass = 'text-slate-700'
+    shadowClass = 'shadow-sm'
+  } else if (level === 'zloto') {
+    bgClass = 'bg-yellow-50'
+    borderClass = 'border-yellow-400'
+    textClass = 'text-yellow-600'
+    shadowClass = 'shadow-md'
+  } else if (level === 'platyna') {
+    bgClass = 'bg-cyan-50'
+    borderClass = 'border-cyan-400 border-dashed'
+    textClass = 'text-cyan-600'
+    shadowClass = 'shadow-[0_0_10px_rgba(34,211,238,0.5)]'
+  }
+
+  return { icon, title, bgClass, borderClass, textClass, shadowClass, level }
+}
+
+/**
+ * Dawne `getEpicBadge` → zwraca obiekt zamiast HTML.
+ */
+function getEpicBadge(
+  count: number,
+  icon: string,
+  title: string,
+  bgActive: string
+): EpicBadge {
+  const isEarned = count > 0
+  let bgClass = bgActive
+  let borderClass = isEarned ? 'border-lime-400' : 'border-line'
+  let textClass = isEarned ? 'text-fg' : 'text-muted'
+  let shadowClass = isEarned ? 'shadow-sm' : 'shadow-inner'
+
+  if (!isEarned) {
+    bgClass = 'bg-surface-2'
+    borderClass = 'border-line'
+    textClass = 'text-muted'
+    shadowClass = 'shadow-inner'
+  }
+
+  return { icon, title, bgClass, borderClass, textClass, shadowClass, isEarned, count }
+}
+
+/**
+ * Generuje ostatnie 5 wyników z dopełnieniem do pełnych 5 kropek.
+ */
+const lastFiveForm = (form: FormResult[]): FormResult[] => {
+  const dots = form.slice(-5)
+  while (dots.length < 5) dots.unshift('N')
+  return dots
+}
+
+const formDotClass: Record<FormResult, string> = {
+  W: 'bg-lime text-on-lime shadow-sm border border-lime-600',
+  D: 'bg-yellow-400 text-on-yellow-400 shadow-sm border border-yellow-500',
+  L: 'bg-danger text-white shadow-sm border border-red-600',
+  N: 'bg-surface-2 shadow-inner border border-line',
+}
+
+const formDotText: Record<FormResult, string> = {
+  W: 'W',
+  D: 'R',
+  L: 'P',
+  N: '-',
+}
+
+/* ------------------------------------------------------------------ *
+ *  Stan aplikacji
+ * ------------------------------------------------------------------ */
+
+const selectedPlayer = ref<RawPlayer | null>(null)
+
+const showPlayerModal = (player: RawPlayer) => {
+  selectedPlayer.value = player
+}
+
+const activeDiv = ref(divisions[0]?.id ?? '')
+
+/** Zakładka kliknięta przez użytkownika – dawne `setZawodnicyFilter(divName)`. */
+const setActiveDivision = (divId: string) => {
+  activeDiv.value = divId
+}
+
+/** Gracze w aktywnej dywizji – z filtrowaniem */
+const divisionPlayers = computed(() =>
+  roster.filter((p) => p.div.trim().toUpperCase() === activeDiv.value)
+)
+</script>
+
+<template>
+  <div class="min-h-screen bg-ink text-fg">
+    <!-- Główny kontener -->
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <!-- Nagłówek -->
+      <h1 class="font-display text-5xl font-black uppercase italic leading-[0.9] sm:text-6xl text-fg mb-8">
+        Zawodnicy ligi
+      </h1>
+
+      <!-- Menu zakładek dywizji -->
+      <div class="mb-8">
+        <nav aria-label="Dywizje" class="flex flex-wrap items-center gap-2">
+          <span class="label mr-1 text-muted">Filtruj po dywizji:</span>
+          <button
+            v-for="division in divisions"
+            :key="division.id"
+            @click="setActiveDivision(division.id)"
+            class="px-4 py-2 rounded-full text-sm font-display font-bold uppercase tracking-[0.05em] transition-colors"
+            :class="activeDiv === division.id
+              ? 'bg-lime text-on-lime'
+              : 'bg-surface-2 text-muted hover:text-fg'"
+            :aria-current="activeDiv === division.id ? 'page' : undefined"
+          >
+            {{ division.label }}
+<!-- Imię i nazwisko -->
+          <h3
+            class="text-xl md:text-2xl font-black uppercase text-fg leading-none text-center cursor-pointer hover:text-lime transition-colors"
+            @click="showPlayerModal(player)"
+          >
+            {{ player.firstName }}
+            <span class="text-lime">{{ player.lastName }}</span>
+          </h3>
+
+          <!-- Nick -->
+          <p v-if="player.nick" class="text-xs text-muted font-bold uppercase mt-1 tracking-widest text-center">
+            "{{ player.nick }}"
+          </p>
+          <p v-else class="text-xs text-muted">&nbsp;</p>
+
+          <!-- Przycisk Dartcounter -->
+          <div class="mt-2 flex items-center justify-center w-full relative z-20">
+            <button
+              v-if="player.dartcounter"
+              @click.stop="showDartcounterModal(`${player.firstName} ${player.lastName}`, player.dartcounter)"
+              class="bg-orange-50 text-orange-500 border border-orange-200 hover:bg-orange-500 hover:text-white px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest transition-colors shadow-sm flex items-center gap-1"
+              aria-label="Zobacz profil Dartcounter"
+            >
+              Dartcounter
+            </button>
+            <span
+              v-else
+              class="bg-orange-50/50 text-orange-300 border border-orange-100/50 px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-widest flex items-center gap-1 cursor-not-allowed opacity-75"
+              title="Gracz nie dodał jeszcze linku do Dartcounter"
+              aria-label="Brak profilu Dartcounter"
+            >
+              Dartcounter
+            </span>
+          </div>
+
+          <!-- Statystki główne -->
+          <div class="grid grid-cols-2 gap-3 w-full mt-4 md:mt-5">
+            <div class="bento p-3 text-center border-b-2 border-b-lime">
+              <div class="text-xs font-black uppercase text-muted tracking-widest mb-1">
+                Power Ranking
+              </div>
+              <div class="text-lg md:text-xl font-black text-fg">
+                {{ player.st.dpi ? player.st.dpi.toFixed(2) : '-' }}
+              </div>
+            </div>
+            <div class="bento p-3 text-center border-b-2 border-b-line">
+              <div class="text-xs font-black uppercase text-muted tracking-widest mb-1">
+                Średnia
+              </div>
+              <div class="text-lg md:text-xl font-black text-fg">
+                {{ player.st.realAvg ? player.st.realAvg.toFixed(2) : '-' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Forma (ostatnie 5 meczów) -->
+          <div class="mt-4 w-full">
+            <div class="flex items-center justify-center gap-1.5">
+              <div
+                v-for="(result, index) in lastFiveForm(player.st.form)"
+                :key="index"
+                class="size-3 rounded-full transition-all"
+                :class="formDotClass[result]"
+                :title="result === 'W' ? 'Wygrana' : result === 'D' ? 'Remis' : result === 'L' ? 'Przegrana' : 'Brak meczu'"
+              ></div>
+            </div>
+          </div>
+
+          <!-- Separator przed Gablotą -->
+          <div class="mt-6 pt-4 border-t-2 border-dashed border-line w-full">
+<!-- Sekcja osiągnięć -->
+            <div class="space-y-3">
+              <!-- 1. TROFEA -->
+              <div
+                v-if="allAchievements[player.id]?.trophies?.length"
+                class="bg-gradient-to-br from-amber-50/60 to-yellow-50/40 p-2 rounded-2xl border border-amber-100 flex items-center justify-center shadow-inner"
+              >
+                <div class="flex flex-wrap justify-center gap-1.5">
+                  <div
+                    v-for="(trophy, idx) in allAchievements[player.id].trophies"
+                    :key="idx"
+                    class="size-7 flex items-center justify-center rounded-xl border text-xs transition-transform duration-300 hover:scale-125 cursor-help"
+                    :class="[
+                      decodeTrophy(trophy).bgClass,
+                      decodeTrophy(trophy).borderClass,
+                      decodeTrophy(trophy).textClass,
+                      decodeTrophy(trophy).shadowClass
+                    ]"
+                    :title="decodeTrophy(trophy).title"
+                  >
+                    {{ decodeTrophy(trophy).icon }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. KAMIENIE MILOWE -->
+              <div class="flex justify-center gap-2 border-b border-line pb-2">
+                <div
+                  v-for="(badge, idx) in [
+                    getMilestoneBadge(
+                      allAchievements[player.id]?.career_stats?.matches_played || 0,
+                      [10, 50, 100, 200],
+                      '🛡️',
+                      'Weteran Tarczy'
+                    ),
+                    getMilestoneBadge(
+                      allAchievements[player.id]?.career_stats?.matches_won || 0,
+                      [5, 25, 75, 150],
+                      '⚔️',
+                      'Kolekcjoner Skalpów'
+                    ),
+                    getMilestoneBadge(
+                      allAchievements[player.id]?.career_stats?.seasons_count || 1,
+                      [2, 5, 10, 20],
+                      '🌱',
+                      'Sezonowiec'
+                    ),
+                    getMilestoneBadge(
+                      allAchievements[player.id]?.career_stats?.total_180s || 0,
+                      [5, 25, 100, 180],
+                      '🔥',
+                      'Klub 180s'
+                    ),
+                    getMilestoneBadge(
+                      allAchievements[player.id]?.career_stats?.total_100_checkouts || 0,
+                      [5, 20, 50, 100],
+                      '🎯',
+                      'Finish 100+'
+                    ),
+                  ]"
+                  :key="idx"
+                  class="size-7 flex items-center justify-center rounded-full border-2 text-xs transition-transform duration-300 hover:scale-110 cursor-help"
+                  :class="[badge.bgClass, badge.borderClass, badge.textClass, badge.shadowClass]"
+                  :title="`${badge.title} [${badge.level.toUpperCase()}]: ${allAchievements[player.id]?.career_stats?.[idx === 0 ? 'matches_played' : idx === 1 ? 'matches_won' : idx === 2 ? 'seasons_count' : idx === 3 ? 'total_180s' : 'total_100_checkouts'] || 0}`"
+                >
+                  {{ badge.icon }}
+                </div>
+              </div>
+
+              <!-- 3. EPICKIE MOMENTY -->
+              <div class="flex justify-center gap-2">
+                <div
+                  v-for="(badge, idx) in [
+                    getEpicBadge(
+                      allAchievements[player.id]?.epic_moments?.nine_darter || 0,
+                      '👑',
+                      '9-Darter',
+                      'bg-cyan-100 border-cyan-400 text-cyan-600'
+                    ),
+                    getEpicBadge(
+                      allAchievements[player.id]?.epic_moments?.big_fish || 0,
+                      '🦈',
+                      'Big Fish',
+                      'bg-yellow-100 border-yellow-400 text-yellow-600'
+                    ),
+                    getEpicBadge(
+                      allAchievements[player.id]?.epic_moments?.small_fish || 0,
+                      '🐟',
+                      'Small Fish',
+                      'bg-slate-100 border-slate-400 text-slate-600'
+                    ),
+                    getEpicBadge(
+                      allAchievements[player.id]?.epic_moments?.whitewash || 0,
+                      '🧹',
+                      'Whitewash',
+                      'bg-orange-100 border-orange-400 text-orange-600'
+                    ),
+                  ]"
+                  :key="idx"
+                  class="size-7 flex items-center justify-center rounded-lg border text-xs relative transition-all duration-300 hover:scale-110 cursor-help"
+                  :class="[badge.bgClass, badge.borderClass, badge.textClass, badge.shadowClass]"
+                  :title="badge.title"
+                >
+                  {{ badge.icon }}
+                  <!-- Licznik dla wielokrotnych wyczynów -->
+                  <span
+                    v-if="badge.count > 1"
+                    class="absolute -top-1.5 -right-1.5 bg-danger text-white text-[10px] font-black rounded-full size-3.5 flex items-center justify-center shadow-sm"
+                  >
+                    {{ badge.count }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </main>
+
+    <!-- Modal profilu zawodnika -->
+    <PlayerCardModal
+      :player="selectedPlayer as any"
+      @close="selectedPlayer = null"
+    />
+  </div>
+</template>
+            <!-- Nagłówek Gablota Osiągnięć -->
+            <div class="text-center mb-4">
+              <span class="text-sm font-black uppercase tracking-[0.2em] text-fg bg-gradient-to-r from-gray-700 via-gray-900 to-gray-700 bg-clip-text text-transparent">
+                Gablota Osiągnięć
+              </span>
+            </div>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Komunikat gdy brak graczy -->
+      <div v-if="divisionPlayers.length === 0" class="col-span-full text-center py-20 text-muted font-bold uppercase">
+        Brak zawodników w tej dywizji
+      </div>
+
+      <!-- Siatka zawodników -->
+      <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <!-- Karta zawodnika -->
+        <article
+          v-for="player in divisionPlayers"
+          :key="player.id"
+          class="bg-surface border border-line rounded-2xl p-4 md:p-6 transition-all hover:border-lime-600 hover:bg-surface-2/80 group overflow-hidden relative"
+        >
+          <!-- Avatar -->
+          <div
+            class="size-24 md:size-28 rounded-full border-4 border-surface shadow-[0_0_20px_rgba(132,204,22,0.4)] overflow-hidden bg-surface-2 flex items-center justify-center mb-4 relative z-10 cursor-pointer hover:scale-105 transition-transform duration-300 mx-auto"
+            @click="showPlayerModal(player)"
+            :aria-label="`Otwórz profil zawodnika ${player.firstName} ${player.lastName}`"
+          >
+            <div
+              v-if="!(player.avatarUrl || player.photoUrl)"
+              class="w-full h-full flex items-center justify-center text-muted text-2xl font-black"
+            >
+              {{ (player.firstName?.[0] || '') + (player.lastName?.[0] || '') }}
+            </div>
+            <img
+              v-else
+              :src="player.avatarUrl || player.photoUrl"
+              :alt="`${player.firstName} ${player.lastName}`"
+              class="w-full h-full object-cover"
+            />
+          </div>
+  if (!isEarned) {
+    bgClass = 'bg-surface-2'
+    borderClass = 'border-line'
+    textClass = 'text-muted'
+    shadowClass = 'shadow-inner'
+  }
+
+  return { icon, title, bgClass, borderClass, textClass, shadowClass, isEarned, count }
+}
+  icon: string
+  title: string
+  bgClass: string
+  borderClass: string
+  textClass: string
+  shadowClass: string
+  isEarned: boolean
+  count: number
+}
+
+interface DivisionTab {
+  id: string
+  label: string
+}

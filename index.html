@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pl" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#06090f" />
+    <title>Amatorska Liga e-Darta | Centrum ligi</title>
+    <meta
+      name="description"
+      content="Amatorska Liga e-Darta – wyniki na żywo, terminarz, power ranking, liderzy dywizji i najnowsze newsy z rozgrywek darta online."
+    />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Saira+Condensed:wght@600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      (() => {
+        const saved = localStorage.getItem('theme')
+        const light = saved ? saved === 'light' : matchMedia('(prefers-color-scheme: light)').matches
+        if (light) document.documentElement.classList.add('light')
+      })()
+    </script>
+  </head>
+  <body class="min-h-dvh">
+    
+    <!-- Tło (przeniosłem z Twojego HTMLa) -->
+    <div aria-hidden="true" class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+      <div class="grid-noise absolute inset-0 [mask-image:radial-gradient(ellipse_at_top,black_20%,transparent_70%)]"></div>
+      <div class="absolute -top-40 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-lime/10 blur-[140px] light:bg-lime/20"></div>
+    </div>
+
+    <!-- TUTAJ VUE BĘDZIE WSTRZYKIWAĆ KOMPONENTY (App.vue) -->
+    <div id="app"></div>
+
+    <!-- PODPIĘCIE SILNIKA VUE (Tego brakowało!) -->
+    <script type="module" src="/src/main.ts"></script>
+    
+  </body>
+</html>

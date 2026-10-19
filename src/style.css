@@ -1,0 +1,135 @@
+@import 'tailwindcss';
+
+@custom-variant light (&:where(.light, .light *));
+
+/*
+ * Theme tokens live in plain CSS variables so the whole palette can be
+ * swapped by toggling the `light` class on <html>. `.force-dark` keeps
+ * image-heavy tiles (hero, news) dark in both modes.
+ */
+:root,
+.force-dark {
+  --ink: #06090f;
+  --surface: #0d131d;
+  --surface-2: #131b28;
+  --line: #1e2836;
+  --fg: #ffffff;
+  --muted: #8a96a8;
+  --accent: #9be22d;
+  --glow: rgb(155 226 45 / 0.45);
+  color-scheme: dark;
+}
+
+:root.light {
+  --ink: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #f2f5f9;
+  --line: #dce3ec;
+  --fg: #0b1220;
+  --muted: #586579;
+  --accent: #3d7a00;
+  --glow: rgb(155 226 45 / 0);
+  color-scheme: light;
+}
+
+:root.light .force-dark {
+  --ink: #06090f;
+  --surface: #0d131d;
+  --surface-2: #131b28;
+  --line: #1e2836;
+  --fg: #ffffff;
+  --muted: #8a96a8;
+  --accent: #9be22d;
+  --glow: rgb(155 226 45 / 0.45);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+}
+
+@theme {
+  --color-lime: #9be22d;
+  --color-lime-soft: #c6f36e;
+  --color-on-lime: #06090f;
+  --color-danger: #ff4d55;
+  --color-purple-400: #8b5cf6;
+  --color-purple-500: #7e22ce;
+
+  --font-display: 'Saira Condensed', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Chakra Petch', ui-sans-serif, system-ui, sans-serif;
+
+  --animate-marquee: marquee 40s linear infinite;
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-news: news-cycle 18s infinite;
+  --animate-news-bar: news-bar 6s linear infinite;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+  @keyframes news-cycle {
+    0%, 30% { transform: translateY(0); }
+    33.33%, 63.33% { transform: translateY(-33.333%); }
+    66.66%, 96.66% { transform: translateY(-66.666%); }
+    100% { transform: translateY(0); }
+  }
+  @keyframes news-bar {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+}
+
+@layer base {
+  html {
+    background-color: var(--ink);
+    transition: background-color 0.3s ease;
+  }
+  body {
+    @apply bg-ink font-sans text-fg antialiased;
+  }
+  ::selection {
+    background: var(--color-lime);
+    color: var(--color-on-lime);
+  }
+}
+
+@utility bento {
+  @apply rounded-3xl border border-line bg-surface/80 backdrop-blur-sm;
+  :root.light & {
+    box-shadow: 0 1px 2px rgb(11 18 32 / 0.04), 0 8px 24px -12px rgb(11 18 32 / 0.12);
+  }
+}
+
+@utility text-glow {
+  text-shadow: 0 0 32px var(--glow);
+}
+
+@utility label {
+  @apply font-sans text-[11px] font-semibold uppercase tracking-[0.14em];
+}
+
+@utility grid-noise {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--fg) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--fg) 4%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

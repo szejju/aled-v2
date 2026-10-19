@@ -1,0 +1,1035 @@
+<!doctype html>
+
+<html lang="pl" class="scroll-smooth">
+
+  <head>
+
+    <meta charset="UTF-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <meta name="theme-color" content="#06090f" />
+
+    <title>Amatorska Liga e-Darta | Centrum ligi</title>
+
+    <meta
+
+      name="description"
+
+      content="Amatorska Liga e-Darta – wyniki na żywo, terminarz, power ranking, liderzy dywizji i najnowsze newsy z rozgrywek darta online."
+
+    />
+
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <link
+
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Saira+Condensed:wght@600;700;800;900&display=swap"
+
+      rel="stylesheet"
+
+    />
+
+    <!-- Applies saved / system theme before first paint to avoid a flash -->
+
+    <script>
+
+      (() => {
+
+        const saved = localStorage.getItem('theme')
+
+        const light = saved ? saved === 'light' : matchMedia('(prefers-color-scheme: light)').matches
+
+        if (light) document.documentElement.classList.add('light')
+
+      })()
+
+    </script>
+
+    <link rel="stylesheet" href="/src/style.css" />
+
+  </head>
+
+  <body class="min-h-dvh">
+
+    <a
+
+      href="#main"
+
+      class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-full focus:bg-lime focus:px-4 focus:py-2 focus:font-semibold focus:text-on-lime"
+
+      >Przejdź do treści</a
+
+    >
+
+
+
+    <!-- Ambient background -->
+
+    <div aria-hidden="true" class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+
+      <div class="grid-noise absolute inset-0 [mask-image:radial-gradient(ellipse_at_top,black_20%,transparent_70%)]"></div>
+
+      <div class="absolute -top-40 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-lime/10 blur-[140px] light:bg-lime/20"></div>
+
+    </div>
+
+
+
+    <!-- ================= HEADER ================= -->
+
+    <header class="sticky top-0 z-40 border-b border-line/70 bg-ink/80 backdrop-blur-xl">
+
+      <div class="mx-auto flex h-20 max-w-7xl items-center gap-6 px-4 sm:px-6 lg:h-24">
+
+        <!-- Logo slot: replace the inner SVG with <img src="/images/logo.png" alt="" class="size-full object-contain" /> -->
+
+        <a href="#" class="flex shrink-0 items-center gap-3" aria-label="Amatorska Liga e-Darta – strona główna">
+
+          <span class="relative grid size-14 place-items-center overflow-hidden rounded-full bg-surface-2 ring-2 ring-lime/60 shadow-[0_0_28px_rgb(155_226_45/0.35)] lg:size-[72px]">
+
+            <svg viewBox="0 0 24 24" class="size-8 text-accent lg:size-10" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+
+              <circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="5.5" /><circle cx="12" cy="12" r="2" fill="currentColor" />
+
+              <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+
+            </svg>
+
+          </span>
+
+          <span class="hidden flex-col leading-none sm:flex">
+
+            <span class="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-muted">Amatorska liga</span>
+
+            <span class="font-display text-2xl font-black uppercase italic tracking-tight lg:text-3xl">e-Dart<span class="text-accent">a</span></span>
+
+          </span>
+
+        </a>
+
+
+
+        <nav aria-label="Główna nawigacja" class="hidden flex-1 justify-center xl:flex">
+
+          <ul class="flex items-center gap-1 font-display text-[15px] font-bold uppercase tracking-[0.08em] text-muted">
+
+            <li><a href="#" aria-current="page" class="relative rounded-full px-3.5 py-2 text-fg after:absolute after:inset-x-3.5 after:-bottom-0.5 after:h-0.5 after:rounded-full after:bg-lime">Home</a></li>
+
+            <li><a href="#mecze" class="rounded-full px-3.5 py-2 transition hover:text-fg">Mecze</a></li>
+
+            <li><a href="#" class="rounded-full px-3.5 py-2 transition hover:text-fg">Tabela</a></li>
+
+            <li><a href="#" class="rounded-full px-3.5 py-2 transition hover:text-fg">Terminarz</a></li>
+
+            <li><a href="#" class="rounded-full px-3.5 py-2 transition hover:text-fg">Puchar Ligi</a></li>
+
+            <li><a href="#ranking" class="rounded-full px-3.5 py-2 transition hover:text-fg">Ranking</a></li>
+
+            <li><a href="#newsy" class="rounded-full px-3.5 py-2 transition hover:text-fg">Newsy</a></li>
+
+            <li><a href="#" class="rounded-full px-3.5 py-2 transition hover:text-fg">Archiwum</a></li>
+
+          </ul>
+
+        </nav>
+
+
+
+        <div class="ml-auto flex items-center gap-2 xl:ml-0">
+
+          <button
+
+            type="button"
+
+            id="theme-toggle"
+
+            aria-label="Przełącz motyw jasny / ciemny"
+
+            class="grid size-11 place-items-center rounded-full border border-line text-fg transition hover:border-lime/60 hover:text-accent"
+
+          >
+
+            <svg viewBox="0 0 24 24" class="size-5 light:hidden" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+
+              <circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+
+            </svg>
+
+            <svg viewBox="0 0 24 24" class="hidden size-5 light:block" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+
+              <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+
+            </svg>
+
+          </button>
+
+          <a href="#" class="hidden h-11 items-center rounded-full border border-line px-5 font-display text-[15px] font-bold uppercase tracking-[0.08em] transition hover:border-lime/60 sm:inline-flex">Zaloguj</a>
+
+          <a href="#" class="inline-flex h-11 items-center gap-1.5 rounded-full bg-lime px-5 font-display text-[15px] font-extrabold uppercase tracking-[0.08em] text-on-lime transition hover:bg-lime-soft">
+
+            Dołącz
+
+            <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+
+          </a>
+
+
+
+          <details class="group relative xl:hidden">
+
+            <summary class="grid size-11 cursor-pointer list-none place-items-center rounded-full border border-line [&::-webkit-details-marker]:hidden">
+
+              <span class="sr-only">Menu</span>
+
+              <svg viewBox="0 0 24 24" class="size-5 group-open:hidden" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+
+              <svg viewBox="0 0 24 24" class="hidden size-5 group-open:block" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+
+            </summary>
+
+            <nav aria-label="Nawigacja mobilna" class="bento absolute right-0 top-14 w-60 bg-surface p-2 shadow-2xl">
+
+              <ul class="flex flex-col font-display text-base font-bold uppercase tracking-[0.08em]">
+
+                <li><a href="#" class="block rounded-xl bg-surface-2 px-3 py-2.5 text-accent">Home</a></li>
+
+                <li><a href="#mecze" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Mecze</a></li>
+
+                <li><a href="#" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Tabela</a></li>
+
+                <li><a href="#" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Terminarz</a></li>
+
+                <li><a href="#" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Puchar Ligi</a></li>
+
+                <li><a href="#ranking" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Ranking</a></li>
+
+                <li><a href="#newsy" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Newsy</a></li>
+
+                <li><a href="#" class="block rounded-xl px-3 py-2.5 text-muted hover:text-fg">Archiwum</a></li>
+
+              </ul>
+
+            </nav>
+
+          </details>
+
+        </div>
+
+      </div>
+
+
+
+      <!-- Live ticker -->
+
+      <div class="overflow-hidden border-t border-line/70 bg-surface/60" aria-label="Wyniki na żywo">
+
+        <div class="flex h-9 items-center">
+
+          <span class="z-10 flex h-full shrink-0 items-center gap-2 bg-lime px-3 font-display text-sm font-extrabold uppercase tracking-widest text-on-lime">
+
+            <span class="size-2 animate-pulse-dot rounded-full bg-on-lime"></span> Live
+
+          </span>
+
+          <div class="relative flex-1 overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_4%,black_96%,transparent)]">
+
+            <ul class="flex w-max animate-marquee gap-10 whitespace-nowrap pl-6 text-xs font-semibold uppercase tracking-wider text-muted hover:[animation-play-state:paused]">
+
+              <li><span class="text-fg">Chojnacki</span> <b class="mx-1 text-accent">2 : 1</b> <span class="text-fg">Krych</span> · Hit kolejki</li>
+
+              <li><span class="text-fg">Zawadzki</span> <b class="mx-1 text-accent">1 : 0</b> <span class="text-fg">Gray</span> · Dyw. 1</li>
+
+              <li>Najwyższe zejście dnia: <b class="text-accent">164</b> · Wróblewski</li>
+
+              <li><span class="text-fg">Orlicki</span> <b class="mx-1 text-accent">0 : 0</b> <span class="text-fg">Dąbrowski</span> · Dyw. 3</li>
+
+              <li>Maks 180 w sezonie: <b class="text-accent">412</b></li>
+
+              <li><span class="text-fg">Głogocki</span> <b class="mx-1 text-accent">1 : 2</b> <span class="text-fg">Strecha</span> · Puchar</li>
+
+              <!-- duplicate for seamless loop -->
+
+              <li aria-hidden="true"><span class="text-fg">Chojnacki</span> <b class="mx-1 text-accent">2 : 1</b> <span class="text-fg">Krych</span> · Hit kolejki</li>
+
+              <li aria-hidden="true"><span class="text-fg">Zawadzki</span> <b class="mx-1 text-accent">1 : 0</b> <span class="text-fg">Gray</span> · Dyw. 1</li>
+
+              <li aria-hidden="true">Najwyższe zejście dnia: <b class="text-accent">164</b> · Wróblewski</li>
+
+              <li aria-hidden="true"><span class="text-fg">Orlicki</span> <b class="mx-1 text-accent">0 : 0</b> <span class="text-fg">Dąbrowski</span> · Dyw. 3</li>
+
+              <li aria-hidden="true">Maks 180 w sezonie: <b class="text-accent">412</b></li>
+
+              <li aria-hidden="true"><span class="text-fg">Głogocki</span> <b class="mx-1 text-accent">1 : 2</b> <span class="text-fg">Strecha</span> · Puchar</li>
+
+            </ul>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </header>
+
+
+
+    <!-- ================= MAIN / BENTO ================= -->
+
+    <main id="main" class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
+
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12">
+
+        <!-- HERO tile (always dark) -->
+
+        <section
+
+          aria-labelledby="hero-title"
+
+          class="force-dark bento relative isolate flex min-h-[460px] flex-col justify-end overflow-hidden bg-ink p-6 text-fg sm:p-10 md:col-span-6 lg:col-span-8 lg:row-span-2"
+
+        >
+
+          <img src="/images/hero-dartboard.png" alt="" class="absolute inset-0 -z-10 size-full object-cover opacity-70" />
+
+          <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/70 to-ink/10"></div>
+
+          <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-r from-ink/80 to-transparent"></div>
+
+
+
+          <span class="label mb-5 inline-flex w-fit items-center gap-2 rounded-full border border-lime/40 bg-lime/10 px-3 py-1 text-accent">
+
+            <span class="size-1.5 animate-pulse-dot rounded-full bg-lime"></span>
+
+            Sezon 4 · Kolejka 9 trwa
+
+          </span>
+
+          <h1 id="hero-title" class="font-display text-5xl font-black uppercase italic leading-[0.88] tracking-tight sm:text-7xl xl:text-8xl">
+
+            Amatorska liga<br />
+
+            <span class="text-glow text-accent">e-darta</span>
+
+          </h1>
+
+          <p class="mt-5 max-w-lg text-pretty text-base leading-relaxed text-fg/75">
+
+            Precyzja, emocje i rywalizacja. Śledź wyniki na żywo, analizuj statystyki i walcz o mistrzostwo w sieci.
+
+          </p>
+
+          <div class="mt-7 flex flex-wrap gap-3">
+
+            <a href="#" class="inline-flex items-center gap-2 rounded-full bg-lime px-6 py-3 font-display text-base font-extrabold uppercase tracking-[0.08em] text-on-lime shadow-[0_0_40px_rgb(155_226_45/0.35)] transition hover:bg-lime-soft">
+
+              Dołącz do ligi
+
+              <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+
+            </a>
+
+            <a href="#mecze" class="inline-flex items-center gap-2 rounded-full border border-fg/15 bg-fg/5 px-6 py-3 font-display text-base font-bold uppercase tracking-[0.08em] backdrop-blur transition hover:border-lime/60">
+
+              Zobacz terminarz
+
+            </a>
+
+          </div>
+
+        </section>
+
+
+
+        <!-- MATCH OF THE ROUND -->
+
+        <section aria-labelledby="hit-title" class="bento relative overflow-hidden p-6 md:col-span-6 lg:col-span-4">
+
+          <div aria-hidden="true" class="absolute -right-16 -top-16 size-48 rounded-full bg-lime/20 blur-3xl"></div>
+
+          <div class="relative flex items-center justify-between">
+
+            <h2 id="hit-title" class="font-display text-xl font-extrabold uppercase tracking-[0.12em] text-accent">Hit kolejki</h2>
+
+            <span class="label inline-flex items-center gap-1.5 rounded-full bg-danger/15 px-2.5 py-1 text-danger">
+
+              <span class="size-1.5 animate-pulse-dot rounded-full bg-danger"></span> Live
+
+            </span>
+
+          </div>
+
+          <div class="relative mt-6 flex items-center justify-between gap-3 text-center">
+
+            <div class="flex-1">
+
+              <div class="mx-auto grid size-14 place-items-center rounded-2xl bg-surface-2 font-display text-xl font-extrabold">DC</div>
+
+              <p class="mt-2 font-display text-lg font-extrabold uppercase leading-tight">Chojnacki<br /><span class="text-muted">Daniel</span></p>
+
+            </div>
+
+            <div class="font-display text-6xl font-black tabular-nums">2<span class="mx-1 text-accent">:</span>1</div>
+
+            <div class="flex-1">
+
+              <div class="mx-auto grid size-14 place-items-center rounded-2xl bg-surface-2 font-display text-xl font-extrabold">KB</div>
+
+              <p class="mt-2 font-display text-lg font-extrabold uppercase leading-tight">Krych<br /><span class="text-muted">Bartosz</span></p>
+
+            </div>
+
+          </div>
+
+          <dl class="relative mt-6 grid grid-cols-3 gap-2 text-center">
+
+            <div class="rounded-xl bg-surface-2 p-2"><dt class="label text-muted">Średnia</dt><dd class="font-display text-lg font-bold">78.4 / 71.2</dd></div>
+
+            <div class="rounded-xl bg-surface-2 p-2"><dt class="label text-muted">180-tki</dt><dd class="font-display text-lg font-bold">3 / 1</dd></div>
+
+            <div class="rounded-xl bg-surface-2 p-2"><dt class="label text-muted">Checkout</dt><dd class="font-display text-lg font-bold">42% / 35%</dd></div>
+
+          </dl>
+
+          <a href="#" class="relative mt-5 flex items-center justify-center gap-2 rounded-full border border-line py-2.5 font-display text-sm font-bold uppercase tracking-[0.12em] transition hover:border-lime/60 hover:text-accent">
+
+            Oglądaj relację
+
+          </a>
+
+        </section>
+
+
+
+        <!-- STATS quartet -->
+
+        <section aria-label="Statystyki sezonu" class="grid grid-cols-2 gap-4 md:col-span-6 lg:col-span-4">
+
+          <div class="bento p-5">
+
+            <p class="label text-muted">Zawodnicy</p>
+
+            <p class="mt-2 font-display text-4xl font-black">248</p>
+
+            <p class="label mt-1 text-accent">+32 w sezonie</p>
+
+          </div>
+
+          <div class="bento p-5">
+
+            <p class="label text-muted">Rozegrane mecze</p>
+
+            <p class="mt-2 font-display text-4xl font-black">1 362</p>
+
+            <p class="label mt-1 text-muted">8 dywizji</p>
+
+          </div>
+
+          <div class="rounded-3xl bg-lime p-5 text-on-lime">
+
+            <p class="label text-on-lime/70">Maks 180</p>
+
+            <p class="mt-2 font-display text-4xl font-black">412</p>
+
+            <p class="label mt-1 text-on-lime/70">Rekord ligi</p>
+
+          </div>
+
+          <div class="bento p-5">
+
+            <p class="label text-muted">Najlepsza średnia</p>
+
+            <p class="mt-2 font-display text-4xl font-black">94.7</p>
+
+            <p class="label mt-1 text-muted">Rosiak M.</p>
+
+          </div>
+
+        </section>
+
+
+
+        <!-- POWER RANKING -->
+
+        <section id="ranking" aria-labelledby="pr-title" class="bento p-6 md:col-span-3 lg:col-span-4 lg:row-span-2">
+
+          <div class="flex items-center justify-between">
+
+            <h2 id="pr-title" class="font-display text-2xl font-black uppercase italic">Power <span class="text-accent">ranking</span></h2>
+
+            <span class="label rounded-full bg-surface-2 px-2.5 py-1 text-muted">Top 5</span>
+
+          </div>
+
+          <ol class="mt-5 flex flex-col gap-2 uppercase">
+
+            <li class="flex items-center gap-3 rounded-2xl border border-lime/50 bg-lime/10 p-3">
+
+              <span class="grid size-9 place-items-center rounded-xl bg-lime font-display text-lg font-black text-on-lime">1</span>
+
+              <span class="flex-1 text-sm font-semibold tracking-wide">Rosiak Mateusz</span>
+
+              <span class="font-display text-lg font-extrabold tabular-nums text-accent">776.83</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 p-3">
+
+              <span class="grid size-9 place-items-center rounded-xl bg-line font-display text-lg font-extrabold">2</span>
+
+              <span class="flex-1 text-sm font-semibold tracking-wide">Przybyszewski Daniel</span>
+
+              <span class="font-display text-lg font-extrabold tabular-nums">708.72</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 p-3">
+
+              <span class="grid size-9 place-items-center rounded-xl bg-line font-display text-lg font-extrabold">3</span>
+
+              <span class="flex-1 text-sm font-semibold tracking-wide">Włodarczyk Michał</span>
+
+              <span class="font-display text-lg font-extrabold tabular-nums">702.56</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 p-3">
+
+              <span class="grid size-9 place-items-center rounded-xl bg-line font-display text-lg font-extrabold">4</span>
+
+              <span class="flex-1 text-sm font-semibold tracking-wide">Chojnacki Daniel</span>
+
+              <span class="font-display text-lg font-extrabold tabular-nums">688.10</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 p-3">
+
+              <span class="grid size-9 place-items-center rounded-xl bg-line font-display text-lg font-extrabold">5</span>
+
+              <span class="flex-1 text-sm font-semibold tracking-wide">Krych Bartosz</span>
+
+              <span class="font-display text-lg font-extrabold tabular-nums">671.45</span>
+
+            </li>
+
+          </ol>
+
+          <div class="mt-6 rounded-2xl bg-surface-2 p-4">
+
+            <p class="label text-muted">Forma lidera · ostatnie 8 meczów</p>
+
+            <div class="mt-3 flex h-20 items-end gap-1.5" aria-hidden="true">
+
+              <span class="h-[55%] flex-1 rounded-md bg-lime/30"></span>
+
+              <span class="h-[70%] flex-1 rounded-md bg-lime/40"></span>
+
+              <span class="h-[45%] flex-1 rounded-md bg-lime/30"></span>
+
+              <span class="h-[80%] flex-1 rounded-md bg-lime/50"></span>
+
+              <span class="h-[65%] flex-1 rounded-md bg-lime/40"></span>
+
+              <span class="h-[90%] flex-1 rounded-md bg-lime/70"></span>
+
+              <span class="h-[75%] flex-1 rounded-md bg-lime/60"></span>
+
+              <span class="h-full flex-1 rounded-md bg-lime shadow-[0_0_16px_rgb(155_226_45/0.6)]"></span>
+
+            </div>
+
+            <p class="sr-only">Forma rośnie: 7 zwycięstw w ostatnich 8 meczach.</p>
+
+          </div>
+
+          <a href="#" class="mt-5 inline-flex font-display text-sm font-bold uppercase tracking-[0.12em] text-accent hover:underline">Pełny ranking →</a>
+
+        </section>
+
+
+
+        <!-- UPCOMING -->
+
+        <section id="mecze" aria-labelledby="up-title" class="bento p-6 md:col-span-3 lg:col-span-4">
+
+          <h2 id="up-title" class="font-display text-2xl font-black uppercase italic">Nadchodzące</h2>
+
+          <ul class="mt-4 flex flex-col divide-y divide-line uppercase">
+
+            <li class="flex items-center gap-3 py-3">
+
+              <div class="min-w-0 flex-1">
+
+                <p class="label text-accent">Dywizja 1 · Kolejka 9</p>
+
+                <p class="truncate text-sm font-semibold tracking-wide">Zawadzki D. <span class="text-muted">vs</span> Gray A.</p>
+
+              </div>
+
+              <time datetime="2026-10-15T19:00" class="rounded-lg bg-surface-2 px-2.5 py-1.5 text-center font-display text-base font-extrabold leading-tight">19:00<br /><span class="label text-[9px] text-muted">dziś</span></time>
+
+            </li>
+
+            <li class="flex items-center gap-3 py-3">
+
+              <div class="min-w-0 flex-1">
+
+                <p class="label text-accent">Puchar Ligi · Grupa 2</p>
+
+                <p class="truncate text-sm font-semibold tracking-wide">Głogocki A. <span class="text-muted">vs</span> Strecha F.</p>
+
+              </div>
+
+              <time datetime="2026-10-15T20:30" class="rounded-lg bg-surface-2 px-2.5 py-1.5 text-center font-display text-base font-extrabold leading-tight">20:30<br /><span class="label text-[9px] text-muted">dziś</span></time>
+
+            </li>
+
+            <li class="flex items-center gap-3 py-3">
+
+              <div class="min-w-0 flex-1">
+
+                <p class="label text-accent">Dywizja 3 · Kolejka 9</p>
+
+                <p class="truncate text-sm font-semibold tracking-wide">Orlicki W. <span class="text-muted">vs</span> Dąbrowski P.</p>
+
+              </div>
+
+              <time datetime="2026-10-16T19:00" class="rounded-lg bg-surface-2 px-2.5 py-1.5 text-center font-display text-base font-extrabold leading-tight">19:00<br /><span class="label text-[9px] text-muted">jutro</span></time>
+
+            </li>
+
+            <li class="flex items-center gap-3 py-3">
+
+              <div class="min-w-0 flex-1">
+
+                <p class="label text-accent">Dywizja 4 · Kolejka 9</p>
+
+                <p class="truncate text-sm font-semibold tracking-wide">Sadowski K. <span class="text-muted">vs</span> Bajerowicz D.</p>
+
+              </div>
+
+              <time datetime="2026-10-16T21:00" class="rounded-lg bg-surface-2 px-2.5 py-1.5 text-center font-display text-base font-extrabold leading-tight">21:00<br /><span class="label text-[9px] text-muted">jutro</span></time>
+
+            </li>
+
+          </ul>
+
+        </section>
+
+
+
+        <!-- RECENT RESULTS -->
+
+        <section aria-labelledby="res-title" class="bento p-6 md:col-span-3 lg:col-span-4">
+
+          <h2 id="res-title" class="font-display text-2xl font-black uppercase italic">Ostatnie wyniki</h2>
+
+          <ul class="mt-4 flex flex-col gap-2 uppercase">
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 px-3 py-2.5">
+
+              <p class="min-w-0 flex-1 truncate text-sm tracking-wide"><b class="font-semibold">Wróblewski D.</b> <span class="text-muted">vs Tarczyński Ł.</span></p>
+
+              <span class="rounded-lg bg-lime px-2 py-0.5 font-display font-extrabold text-on-lime">3:2</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 px-3 py-2.5">
+
+              <p class="min-w-0 flex-1 truncate text-sm tracking-wide"><b class="font-semibold">Lasenta M.</b> <span class="text-muted">vs Żwierzchlewski H.</span></p>
+
+              <span class="rounded-lg bg-lime px-2 py-0.5 font-display font-extrabold text-on-lime">4:1</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 px-3 py-2.5">
+
+              <p class="min-w-0 flex-1 truncate text-sm tracking-wide"><span class="text-muted">Wysocki K. vs</span> <b class="font-semibold">Kowalczyk E.</b></p>
+
+              <span class="rounded-lg bg-line px-2 py-0.5 font-display font-extrabold">1:3</span>
+
+            </li>
+
+            <li class="flex items-center gap-3 rounded-2xl bg-surface-2 px-3 py-2.5">
+
+              <p class="min-w-0 flex-1 truncate text-sm tracking-wide"><b class="font-semibold">Wodziński M.</b> <span class="text-muted">vs Strychorski M.</span></p>
+
+              <span class="rounded-lg bg-lime px-2 py-0.5 font-display font-extrabold text-on-lime">3:1</span>
+
+            </li>
+
+          </ul>
+
+        </section>
+
+
+
+        <!-- DIVISION LEADERS -->
+
+        <section aria-labelledby="div-title" class="bento p-6 md:col-span-6 lg:col-span-8">
+
+          <div class="flex flex-wrap items-center justify-between gap-3">
+
+            <h2 id="div-title" class="font-display text-2xl font-black uppercase italic">Liderzy <span class="text-accent">dywizji</span></h2>
+
+            <span class="label text-muted">Po 8 kolejkach</span>
+
+          </div>
+
+          <div class="mt-5 grid grid-cols-1 gap-3 uppercase sm:grid-cols-2 xl:grid-cols-4">
+
+            <article class="rounded-2xl bg-surface-2 p-4">
+
+              <h3 class="label text-accent">Dywizja 1</h3>
+
+              <ol class="mt-3 flex flex-col gap-1.5 text-sm tracking-wide">
+
+                <li class="flex justify-between font-semibold"><span>Cyrsa M.
+</span><b class="font-display tabular-nums">19</b></li>
+
+                <li class="flex justify-between text-fg/70"><span>2. Rogowski K.</span><b class="font-display tabular-nums">17</b></li>
+
+                <li class="flex justify-between text-fg/50"><span>3. Stasiak P.</span><b class="font-display tabular-nums">15</b></li>
+
+              </ol>
+
+            </article>
+
+            <article class="rounded-2xl bg-surface-2 p-4">
+
+              <h3 class="label text-accent">Dywizja 2</h3>
+
+              <ol class="mt-3 flex flex-col gap-1.5 text-sm tracking-wide">
+
+                <li class="flex justify-between font-semibold"><span>Mróz A.
+</span><b class="font-display tabular-nums">18</b></li>
+
+                <li class="flex justify-between text-fg/70"><span>2. Sokołowski J.</span><b class="font-display tabular-nums">18</b></li>
+
+                <li class="flex justify-between text-fg/50"><span>3. Kaczmarek T.</span><b class="font-display tabular-nums">14</b></li>
+
+              </ol>
+
+            </article>
+
+            <article class="rounded-2xl bg-surface-2 p-4">
+
+              <h3 class="label text-accent">Dywizja 3</h3>
+
+              <ol class="mt-3 flex flex-col gap-1.5 text-sm tracking-wide">
+
+                <li class="flex justify-between font-semibold"><span>Orlicki W.
+</span><b class="font-display tabular-nums">20</b></li>
+
+                <li class="flex justify-between text-fg/70"><span>2. Dąbrowski P.</span><b class="font-display tabular-nums">16</b></li>
+
+                <li class="flex justify-between text-fg/50"><span>3. Nowicki R.</span><b class="font-display tabular-nums">13</b></li>
+
+              </ol>
+
+            </article>
+
+            <article class="rounded-2xl bg-surface-2 p-4">
+
+              <h3 class="label text-accent">Dywizja 4</h3>
+
+              <ol class="mt-3 flex flex-col gap-1.5 text-sm tracking-wide">
+
+                <li class="flex justify-between font-semibold"><span>Sadowski K.
+</span><b class="font-display tabular-nums">21</b></li>
+
+                <li class="flex justify-between text-fg/70"><span>2. Bajerowicz D.</span><b class="font-display tabular-nums">17</b></li>
+
+                <li class="flex justify-between text-fg/50"><span>3. Zieliński O.</span><b class="font-display tabular-nums">12</b></li>
+
+              </ol>
+
+            </article>
+
+          </div>
+
+        </section>
+
+
+
+        <!-- NEWS carousel (auto-rotates 3 latest, pauses on hover/focus) -->
+
+        <section
+
+          id="newsy"
+
+          aria-labelledby="news-title"
+
+          aria-roledescription="karuzela"
+
+          class="force-dark group relative isolate h-[360px] overflow-hidden rounded-3xl border border-line bg-ink text-fg md:col-span-6 lg:col-span-8"
+
+        >
+
+          <div class="absolute inset-x-0 top-0 z-20 flex items-center justify-between p-6">
+
+            <h2 id="news-title" class="inline-flex items-center gap-2 rounded-full bg-lime px-3 py-1 font-display text-sm font-extrabold uppercase tracking-[0.14em] text-on-lime">
+
+              <span class="size-1.5 rounded-full bg-on-lime"></span> Aktualności
+
+            </h2>
+
+            <a href="#" class="font-display text-sm font-bold uppercase tracking-[0.12em] text-fg/80 transition hover:text-accent">Wszystkie newsy →</a>
+
+          </div>
+
+
+
+          <div class="h-[300%] animate-news group-hover:[animation-play-state:paused] group-focus-within:[animation-play-state:paused]">
+
+            <article aria-roledescription="slajd" aria-label="1 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
+
+              <img src="/images/news-1.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
+
+              <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20"></div>
+
+              <div class="flex items-center gap-3">
+
+                <span class="label text-accent">Relacja</span>
+
+                <time datetime="2026-10-14" class="label text-fg/60">14.10.2026</time>
+
+                <span class="label ml-auto text-fg/50">01 / 03</span>
+
+              </div>
+
+              <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
+
+                <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Trzy 180-tki w jednym legu! Rosiak bije rekord ligi</a>
+
+              </h3>
+
+              <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Lider power rankingu zakończył 8. kolejkę średnią 94.7 i pobił rekord sezonu.</p>
+
+            </article>
+
+
+
+            <article aria-roledescription="slajd" aria-label="2 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
+
+              <img src="/images/news-2.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
+
+              <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20"></div>
+
+              <div class="flex items-center gap-3">
+
+                <span class="label text-accent">Puchar Ligi</span>
+
+                <time datetime="2026-10-12" class="label text-fg/60">12.10.2026</time>
+
+                <span class="label ml-auto text-fg/50">02 / 03</span>
+
+              </div>
+
+              <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
+
+                <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Losowanie fazy pucharowej – znamy pary ćwierćfinałów</a>
+
+              </h3>
+
+              <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Hitem rundy będzie starcie Chojnackiego z Przybyszewskim. Transmisja na Discordzie.</p>
+
+            </article>
+
+
+
+            <article aria-roledescription="slajd" aria-label="3 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
+
+              <img src="/images/news-3.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
+
+              <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20"></div>
+
+              <div class="flex items-center gap-3">
+
+                <span class="label text-accent">Komunikat</span>
+
+                <time datetime="2026-10-09" class="label text-fg/60">09.10.2026</time>
+
+                <span class="label ml-auto text-fg/50">03 / 03</span>
+
+              </div>
+
+              <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
+
+                <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Nowy regulamin kamer i weryfikacji wyników</a>
+
+              </h3>
+
+              <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Od 10. kolejki obowiązuje ujednolicone ustawienie kamery. Sprawdź, co się zmienia.</p>
+
+            </article>
+
+          </div>
+
+        </section>
+
+
+
+        <!-- COMMUNITY tile -->
+
+        <section aria-labelledby="com-title" class="bento flex flex-col justify-between p-6 md:col-span-6 lg:col-span-4">
+
+          <div>
+
+            <h2 id="com-title" class="font-display text-2xl font-black uppercase italic">Społeczność</h2>
+
+            <p class="mt-2 text-sm text-muted">Transmisje, losowania i analizy meczów – dołącz do rozmowy.</p>
+
+          </div>
+
+          <ul class="mt-6 flex flex-col gap-2">
+
+            <li>
+
+              <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+
+                <span class="grid size-11 place-items-center rounded-xl bg-[#5865F2] text-white">
+
+                  <svg viewBox="0 0 24 24" class="size-6" fill="currentColor" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" /></svg>
+
+                </span>
+
+                <span class="flex-1">
+
+                  <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">Discord</span>
+
+                  <span class="label text-muted">1.2k członków</span>
+
+                </span>
+
+                <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+
+              </a>
+
+            </li>
+
+            <li>
+
+              <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+
+                <span class="grid size-11 place-items-center rounded-xl bg-[#010101] text-white ring-1 ring-white/10">
+
+                  <svg viewBox="0 0 24 24" class="size-5 drop-shadow-[1.5px_1.5px_0_#fe2c55] [filter:drop-shadow(-1.5px_-1.5px_0_#25f4ee)_drop-shadow(1.5px_1.5px_0_#fe2c55)]" fill="currentColor" aria-hidden="true"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.430.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.720.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" /></svg>
+
+                </span>
+
+                <span class="flex-1">
+
+                  <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">TikTok</span>
+
+                  <span class="label text-muted">3.4k obserwujących</span>
+
+                </span>
+
+                <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+
+              </a>
+
+            </li>
+
+            <li>
+
+              <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+
+                <span class="grid size-11 place-items-center rounded-xl bg-[#0866FF] text-white">
+
+                  <svg viewBox="0 0 24 24" class="size-6" fill="currentColor" aria-hidden="true"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" /></svg>
+
+                </span>
+
+                <span class="flex-1">
+
+                  <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">Facebook</span>
+
+                  <span class="label text-muted">5.8k fanów</span>
+
+                </span>
+
+                <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+
+              </a>
+
+            </li>
+
+          </ul>
+
+        </section>
+
+      </div>
+
+    </main>
+
+
+
+    <!-- ================= FOOTER ================= -->
+
+    <footer class="border-t border-line">
+
+      <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-4 py-8 text-sm text-muted sm:flex-row sm:px-6">
+
+        <p>© 2026 Amatorska Liga e-Darta. Wszystkie prawa zastrzeżone.</p>
+
+        <nav aria-label="Stopka">
+
+          <ul class="flex gap-5 font-display font-bold uppercase tracking-[0.1em]">
+
+            <li><a href="#" class="hover:text-accent">Regulamin</a></li>
+
+            <li><a href="#" class="hover:text-accent">Prywatność</a></li>
+
+            <li><a href="#" class="hover:text-accent">Kontakt</a></li>
+
+          </ul>
+
+        </nav>
+
+      </div>
+
+    </footer>
+
+
+
+    <script>
+
+      const toggle = document.getElementById('theme-toggle')
+
+      const meta = document.querySelector('meta[name="theme-color"]')
+
+      const sync = () => {
+
+        const light = document.documentElement.classList.contains('light')
+
+        toggle.setAttribute('aria-pressed', String(light))
+
+        meta.setAttribute('content', light ? '#eef1f5' : '#06090f')
+
+      }
+
+      sync()
+
+      toggle.addEventListener('click', () => {
+
+        const light = document.documentElement.classList.toggle('light')
+
+        localStorage.setItem('theme', light ? 'light' : 'dark')
+
+        sync()
+
+      })
+
+    </script>
+
+  </body>
+
+</html>
