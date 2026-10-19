@@ -73,6 +73,18 @@ const router = createRouter({
       meta: { title: 'Profil gracza', requiresAuth: true },
     },
     {
+      // Alias /player → profil gracza (spójność z linkami w headerze)
+      path: '/player',
+      redirect: { name: 'profile' },
+    },
+    {
+      // Panel administratora (placeholder – docelowo AdminView)
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { title: 'Panel Admina', requiresAuth: true },
+    },
+    {
       // Zamiast białego ekranu wracamy na stronę główną.
       path: '/:pathMatch(.*)*',
       name: 'not-found',
