@@ -55,6 +55,18 @@ const router = createRouter({
       meta: { title: 'Rankingi' },
     },
     {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { title: 'Logowanie' },
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/RegisterView.vue'),
+      meta: { title: 'Rejestracja' },
+    },
+    {
       // Zamiast białego ekranu wracamy na stronę główną.
       path: '/:pathMatch(.*)*',
       name: 'not-found',

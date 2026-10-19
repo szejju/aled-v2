@@ -90,12 +90,12 @@ const toggleTheme = () => {
           <Sun v-else class="size-5" aria-hidden="true" />
         </button>
 
-        <a href="#" class="hidden h-11 items-center rounded-full border border-line px-5 font-display text-[15px] font-bold uppercase tracking-[0.08em] transition hover:border-lime/60 sm:inline-flex">Zaloguj</a>
+        <RouterLink to="/login" class="hidden h-11 items-center rounded-full border border-line px-5 font-display text-[15px] font-bold uppercase tracking-[0.08em] transition hover:border-lime/60 sm:inline-flex">Zaloguj</RouterLink>
 
-        <a href="#" class="inline-flex h-11 items-center gap-1.5 rounded-full bg-lime px-5 font-display text-[15px] font-extrabold uppercase tracking-[0.08em] text-on-lime transition hover:bg-lime-soft">
+        <RouterLink to="/register" class="inline-flex h-11 items-center gap-1.5 rounded-full bg-lime px-5 font-display text-[15px] font-extrabold uppercase tracking-[0.08em] text-on-lime transition hover:bg-lime-soft">
           Dołącz
           <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-        </a>
+        </RouterLink>
 
         <!-- Menu mobilne -->
         <details class="group relative xl:hidden">

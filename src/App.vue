@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import AuthRequiredModal from '@/components/modals/AuthRequiredModal.vue'
 </script>
 
 <template>
@@ -23,4 +24,7 @@ import AppFooter from '@/components/layout/AppFooter.vue'
   </main>
 
   <AppFooter />
+
+  <!-- Globalny modal auth – wyświetlany gdy użytkownik próbuje skorzystać z zastrzeżonej funkcji -->
+  <AuthRequiredModal />
 </template>
