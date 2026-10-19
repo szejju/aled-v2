@@ -67,6 +67,12 @@ const router = createRouter({
       meta: { title: 'Rejestracja' },
     },
     {
+      path: '/profil',
+      name: 'profile',
+      component: () => import('@/views/ProfileView.vue'),
+      meta: { title: 'Profil gracza', requiresAuth: true },
+    },
+    {
       // Zamiast białego ekranu wracamy na stronę główną.
       path: '/:pathMatch(.*)*',
       name: 'not-found',
