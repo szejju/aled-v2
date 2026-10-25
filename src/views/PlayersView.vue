@@ -1,30 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+/**
+ * Podstrona „Zawodnicy” – dane pobierane z Cloud Function `getPlayersList`.
+ *
+ * Kafelki bento prezentują: awatar, nick, Power Ranking (DPI), średnią oraz
+ * Gablotę Osiągnięć (puchary, kamienie milowe, epickie momenty).
+ */
+import { computed, ref, watch } from 'vue'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
+import ViewDartcounterModal from '@/components/profile/ViewDartcounterModal.vue'
+import { getPlayersList, type PlayerListItem } from '@/services/api'
+import {
+  decodeTrophy,
+  decodeMilestone,
+  decodeEpicMoment,
+  tierStyles,
+  type DecodedTrophy,
+  type DecodedMilestone,
+  type DecodedEpicMoment,
+} from '@/utils/achievements'
+import { formatDivisionName } from '@/utils/divisions'
 
-type FormResult = 'W' | 'D' | 'L'
-
-interface Player {
-  id: string
-  div: string
-  firstName: string
-  lastName: string
-  nick?: string
-  avatarUrl?: string
-  stats: {
-    m: number
-    w: number
-    d: number
-    l: number
-    pts: number
-    realAvg: number
-    form: FormResult[]
-  }
-  checkout?: number
-  short?: number
-  max?: number
-  dartcounter?: string
-}
+type FormResult = 'W' | 'D' | 'L' | 'N'
 
 interface DivisionTab {
   id: string
@@ -32,114 +28,165 @@ interface DivisionTab {
 }
 
 const divisions: DivisionTab[] = [
-  { id: 'D1', label: 'Dywizja 1' },
-  { id: 'D2', label: 'Dywizja 2' },
-  { id: 'D3', label: 'Dywizja 3' },
-  { id: 'D4', label: 'Dywizja 4' },
+  { id: 'DYWIZJA 1', label: 'Dywizja 1' },
+  { id: 'DYWIZJA 2', label: 'Dywizja 2' },
+  { id: 'DYWIZJA 3', label: 'Dywizja 3' },
+  { id: 'DYWIZJA 4', label: 'Dywizja 4' },
+  { id: 'DYWIZJA 5', label: 'Dywizja 5' },
 ]
 
-const players: Player[] = [
-  {
-    id: '1',
-    div: 'D1',
-    firstName: 'Mateusz',
-    lastName: 'Kozioł',
-    nick: 'Koziołek',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/32.jpg',
-    dartcounter: 'koziolek123',
-    stats: {
-      m: 15,
-      w: 11,
-      d: 2,
-      l: 2,
-      pts: 35,
-      realAvg: 78.52,
-      form: ['W', 'W', 'D', 'L', 'W'],
-    },
-    checkout: 156,
-    short: 17,
-    max: 12,
-  },
-  {
-    id: '2',
-    div: 'D1',
-    firstName: 'Daniel',
-    lastName: 'Chojnacki',
-    nick: 'Chojna',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/44.jpg',
-    dartcounter: 'chojnacki_daniel',
-    stats: {
-      m: 14,
-      w: 10,
-      d: 2,
-      l: 2,
-      pts: 32,
-      realAvg: 86.21,
-      form: ['W', 'L', 'W', 'W', 'D'],
-    },
-    checkout: 170,
-    short: 15,
-    max: 18,
-  },
-  {
-    id: '3',
-    div: 'D2',
-    firstName: 'Bartosz',
-    lastName: 'Krych',
-    nick: 'Krychu',
-    avatarUrl: 'https://randomuser.me/api/portraits/men/65.jpg',
-    stats: {
-      m: 13,
-      w: 8,
-      d: 3,
-      l: 2,
-      pts: 27,
-      realAvg: 74.21,
-      form: ['W', 'L', 'W', 'W', 'D'],
-    },
-    checkout: 141,
-    short: 19,
-    max: 8,
-  },
-]
+/* ------------------------------------------------------------------ *
+ *  Stan + pobieranie danych
+ * ------------------------------------------------------------------ */
 
-const selectedPlayer = ref<Player | null>(null)
-const showPlayerModal = (player: Player) => {
-  selectedPlayer.value = player
-}
-
-const activeDiv = ref('')
+const activeDiv = ref('') // '' = wszyscy
+const loading = ref(false)
+const error = ref<string | null>(null)
+const players = ref<PlayerListItem[]>([])
 
 const setActiveDivision = (divId: string) => {
   activeDiv.value = divId
 }
 
-const filteredPlayers = computed(() =>
-  activeDiv.value
-    ? players.filter((p) => p.div === activeDiv.value)
-    : players
-)
+const filteredPlayers = computed(() => players.value)
+
+const fetchPlayers = async () => {
+  loading.value = true
+  error.value = null
+  try {
+    const res = await getPlayersList(activeDiv.value ? { division: activeDiv.value } : {})
+    players.value = res.players ?? []
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Nie udało się pobrać listy zawodników'
+    players.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+// Pobranie przy montowaniu + reakcja na zmianę zakładki.
+fetchPlayers()
+watch(activeDiv, fetchPlayers)
+
+/* ------------------------------------------------------------------ *
+ *  Gablota osiągnięć
+ * ------------------------------------------------------------------ */
+
+const playerTrophies = (p: PlayerListItem): DecodedTrophy[] =>
+  (p.achievements?.trophies ?? []).map(decodeTrophy)
+
+const playerMilestones = (p: PlayerListItem): DecodedMilestone[] =>
+  Object.entries(p.achievements?.careerStats ?? {}).map(([key, value]) =>
+    decodeMilestone(key, Number(value))
+  )
+
+const playerEpicMoments = (p: PlayerListItem): DecodedEpicMoment[] =>
+  Object.keys(p.achievements?.epicMoments ?? {}).map(decodeEpicMoment)
+
+const hasAchievements = (p: PlayerListItem): boolean =>
+  playerTrophies(p).length > 0 ||
+  playerMilestones(p).length > 0 ||
+  playerEpicMoments(p).length > 0
+
+/* ------------------------------------------------------------------ *
+ *  Modal profilu (adapter PlayerListItem -> kształt oczekiwany przez modal)
+ * ------------------------------------------------------------------ */
+
+interface ModalPlayer {
+  id: string
+  div: string
+  firstName: string
+  lastName: string
+  nick?: string
+  avatarUrl?: string
+  photoUrl?: string
+  st: {
+    m: number
+    w: number
+    d: number
+    l: number
+    lw: number
+    ll: number
+    realAvg: number
+    pts: number
+    form: FormResult[]
+    dpi?: number
+    doublesPct?: number
+  }
+  checkout?: number
+  short?: number
+  max?: number
+  history: unknown[]
+}
+
+const toModalPlayer = (p: PlayerListItem): ModalPlayer => ({
+  id: p.id,
+  div: p.div ?? '',
+  firstName: p.firstName,
+  lastName: p.lastName,
+  nick: p.nick,
+  avatarUrl: p.avatarUrl,
+  photoUrl: p.photoUrl,
+  st: {
+    m: p.stats?.matchesPlayed ?? 0,
+    w: p.stats?.wins ?? 0,
+    d: 0,
+    l: p.stats?.losses ?? 0,
+    lw: 0,
+    ll: 0,
+    realAvg: p.stats?.realAvg ?? 0,
+    pts: 0,
+    form: (p.stats?.form ?? []) as FormResult[],
+    dpi: p.stats?.dpi ?? 0,
+    doublesPct: 0,
+  },
+  checkout: p.checkout != null && p.checkout !== '' ? Number(p.checkout) : undefined,
+  short: p.short != null && p.short !== '' ? Number(p.short) : undefined,
+  max: p.max != null && p.max !== '' ? Number(p.max) : undefined,
+  history: [],
+})
+
+const selectedPlayer = ref<ModalPlayer | null>(null)
+
+const showPlayerModal = (player: PlayerListItem) => {
+  selectedPlayer.value = toModalPlayer(player)
+}
+
+/* ------------------------------------------------------------------ *
+ *  Pomocnicze renderowania
+ * ------------------------------------------------------------------ */
 
 const formDotClass: Record<FormResult, string> = {
   W: 'bg-lime text-on-lime',
   D: 'bg-yellow-400 text-on-yellow-400',
   L: 'bg-danger text-white',
+  N: 'bg-surface-2 border border-line text-muted',
 }
 
 const formDotText: Record<FormResult, string> = {
   W: 'W',
   D: 'R',
   L: 'P',
+  N: '-',
 }
 
-const openDartcounterProfile = (username: string) => {
-  window.open(`https://dartcounter.com/de/profile/${username}`, '_blank')
+const lastFive = (form: FormResult[]): FormResult[] => {
+  const dots = form.slice(-5)
+  while (dots.length < 5) dots.unshift('N')
+  return dots
 }
 
-const openDartcounterMatches = (username: string) => {
-  window.open(`https://dartcounter.com/de/profile/${username}/matches`, '_blank')
+const showDcModal = ref(false)
+const dcModalPlayerName = ref('')
+const dcModalLink = ref('')
+
+function openDcModal(name: string, dartcounterUsername: string) {
+  dcModalPlayerName.value = name
+  dcModalLink.value = `https://dartcounter.com/de/profile/${dartcounterUsername}`
+  showDcModal.value = true
 }
 </script>
+
 <template>
   <div class="flex flex-col gap-6">
     <!-- Header -->
@@ -151,126 +198,215 @@ const openDartcounterMatches = (username: string) => {
         </h1>
       </div>
       <p class="max-w-sm text-sm leading-relaxed text-muted">
-        Lista wszystkich zawodników ALED z podziałem na dywizje. Sprawdź statystyki, formę i profile graczy.
+        Lista zawodników ALED z podziałem na dywizje. Sprawdź Power Ranking, średnią,
+        formę oraz Gablotę Osiągnięć każdego gracza.
       </p>
     </header>
 
-      <!-- Filtry dywizji -->
-      <nav aria-label="Wybór dywizji" class="flex flex-wrap items-center gap-2">
-        <span class="label mr-1 text-muted">Dywizja</span>
-        <button type="button" @click="setActiveDivision('')"
-          class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-          :class="!activeDiv ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'">
-          Wszyscy
-        </button>
-        <button v-for="division in divisions" :key="division.id"
-          type="button" @click="setActiveDivision(division.id)"
-          class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-          :class="activeDiv === division.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'">
-          {{ division.label }}
-        </button>
-      </nav>
+    <!-- Filtry dywizji -->
+    <nav aria-label="Wybór dywizji" class="flex flex-wrap items-center gap-2">
+      <span class="label mr-1 text-muted">Dywizja</span>
+      <button
+        type="button"
+        @click="setActiveDivision('')"
+        class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
+        :class="!activeDiv ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+      >
+        Wszyscy
+      </button>
+      <button
+        v-for="division in divisions"
+        :key="division.id"
+        type="button"
+        @click="setActiveDivision(division.id)"
+        class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
+        :class="activeDiv === division.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+      >
+        {{ division.label }}
+      </button>
+    </nav>
 
-      <!-- Komunikat braku zawodników -->
-      <div v-if="filteredPlayers.length === 0" class="py-20 text-center text-muted font-bold">
-        Brak zawodników w tej dywizji
-      </div>
+    <!-- Stan ładowania -->
+    <section v-if="loading" class="bento p-10 text-center">
+      <p class="label animate-pulse text-muted">Ładowanie zawodników…</p>
+    </section>
 
-      <!-- Karty zawodników -->
-      <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        <article v-for="player in filteredPlayers" :key="player.id"
-          class="bg-surface border border-line rounded-2xl p-6 transition-all hover:border-lime-600 hover:bg-surface-2/80">
-          <!-- Nagłówek z dywizją -->
-          <div class="mb-4">
-            <div class="inline-block px-3 py-1 rounded-full text-xs font-bold uppercase bg-surface-2 text-muted">
-              {{ divisions.find(d => d.id === player.div)?.label || player.div }}
-            </div>
+    <!-- Błąd -->
+    <section v-else-if="error" class="bento border-danger/30 bg-danger/10 p-10 text-center">
+      <p class="label text-danger">Błąd: {{ error }}</p>
+    </section>
+
+    <!-- Brak zawodników -->
+    <div v-else-if="filteredPlayers.length === 0" class="bento py-20 text-center text-muted font-bold">
+      Brak zawodników w tej dywizji
+    </div>
+
+
+
+    <!-- Karty zawodników -->
+    <div v-else class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <article
+        v-for="player in filteredPlayers"
+        :key="player.id"
+        class="flex flex-col rounded-3xl border border-line bg-surface/80 p-6 backdrop-blur-sm transition-all hover:border-lime/60 hover:shadow-2xl"
+      >
+        <!-- Nagłówek: awatar + nazwa + dywizja -->
+        <div class="mb-4 flex items-start gap-4">
+          <div
+            class="flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-line bg-surface-2 text-xl"
+          >
+            <img
+              v-if="player.avatarUrl || player.photoUrl"
+              :src="player.avatarUrl || player.photoUrl"
+              :alt="`Awatar ${player.firstName} ${player.lastName}`"
+              class="h-full w-full object-cover"
+            />
+            <span v-else aria-hidden="true">🎯</span>
           </div>
 
-          <h3 class="font-display text-xl font-black uppercase text-fg mb-2">
-            {{ player.firstName }} <span class="text-lime">{{ player.lastName }}</span>
-          </h3>
-          
-          <p v-if="player.nick" class="text-sm text-muted italic mb-4">
-            "{{ player.nick }}"
-          </p>
-          
-          <!-- Statystyki -->
-          <div class="grid grid-cols-4 gap-3 mb-4">
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">M</div>
-              <div class="font-display text-lg font-black tabular-nums text-fg">{{ player.stats.m }}</div>
-            </div>
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">W</div>
-              <div class="font-display text-lg font-black tabular-nums text-fg">{{ player.stats.w }}</div>
-            </div>
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">PKT</div>
-              <div class="font-display text-lg font-black tabular-nums text-accent">{{ player.stats.pts }}</div>
-            </div>
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">AVG</div>
-              <div class="font-display text-lg font-black tabular-nums text-fg">{{ player.stats.realAvg.toFixed(1) }}</div>
+          <div class="min-w-0">
+            <h3 class="truncate font-display text-xl font-black uppercase text-fg">
+              {{ player.firstName }} <span class="text-lime">{{ player.lastName }}</span>
+            </h3>
+            <p v-if="player.nick" class="truncate text-sm italic text-muted">
+              „{{ player.nick }}”
+            </p>
+            <span class="mt-1 inline-block rounded-full bg-surface-2 px-3 py-0.5 text-xs font-bold uppercase text-muted">
+              {{ formatDivisionName(player.div) }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Power Ranking + średnia -->
+        <div class="mb-4 grid grid-cols-2 gap-3">
+          <div class="rounded-2xl bg-surface-2 p-3 text-center">
+            <div class="text-[10px] uppercase tracking-wide text-muted">Power Ranking</div>
+            <div class="font-display text-2xl font-black text-accent">
+              {{ (player.stats?.dpi ?? 0).toFixed(2) }}
             </div>
           </div>
-
-          <!-- Forma -->
-          <div class="mb-4">
-            <div class="text-xs text-muted uppercase mb-2 text-center">Forma (5 ostatnich)</div>
-            <div class="flex justify-center gap-1">
-              <div v-for="(result, index) in player.stats.form.slice(-5)" :key="index"
-                class="size-5 rounded-full flex items-center justify-center text-xs font-bold"
-                :class="formDotClass[result]"
-                :title="result === 'W' ? 'Wygrana' : result === 'D' ? 'Remis' : result === 'L' ? 'Przegrana' : 'Nie rozegrano'">
-                {{ formDotText[result] }}
-              </div>
+          <div class="rounded-2xl bg-surface-2 p-3 text-center">
+            <div class="text-[10px] uppercase tracking-wide text-muted">Średnia</div>
+            <div class="font-display text-2xl font-black text-fg">
+              {{ (player.stats?.realAvg ?? 0).toFixed(2) }}
             </div>
           </div>
+        </div>
 
-          <!-- Rekordy -->
-          <div class="grid grid-cols-3 gap-2 mb-6">
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">Checkout</div>
-              <div class="font-display text-base font-black tabular-nums text-fg">{{ player.checkout || '-' }}</div>
-            </div>
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">Najszybszy</div>
-              <div class="font-display text-base font-black tabular-nums text-fg">{{ player.short ? `${player.short} dartów` : '-' }}</div>
-            </div>
-            <div class="text-center">
-              <div class="text-xs text-muted uppercase mb-1">180s</div>
-              <div class="font-display text-base font-black tabular-nums text-fg">{{ player.max || 0 }}</div>
+        <!-- Statystyki meczowe -->
+        <div class="mb-4 grid grid-cols-3 gap-3">
+          <div class="text-center">
+            <div class="text-xs uppercase text-muted">Mecze</div>
+            <div class="font-display text-lg font-black tabular-nums text-fg">
+              {{ player.stats?.matchesPlayed ?? 0 }}
             </div>
           </div>
+          <div class="text-center">
+            <div class="text-xs uppercase text-muted">Wygrane</div>
+            <div class="font-display text-lg font-black tabular-nums text-lime">
+              {{ player.stats?.wins ?? 0 }}
+            </div>
+          </div>
+          <div class="text-center">
+            <div class="text-xs uppercase text-muted">Porażki</div>
+            <div class="font-display text-lg font-black tabular-nums text-danger">
+              {{ player.stats?.losses ?? 0 }}
+            </div>
+          </div>
+        </div>
 
-          <!-- Dartcounter -->
-          <div v-if="player.dartcounter" class="mb-4 flex items-center justify-center gap-2 text-xs text-muted hover:text-lime transition-colors cursor-pointer"
-            @click="openDartcounterProfile(player.dartcounter)">
-            <span class="font-bold uppercase">Dartcounter</span>
-            <svg class="size-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002 2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
+        <!-- Forma -->
+        <div class="mb-5">
+          <div class="mb-2 text-center text-xs uppercase text-muted">Forma (5 ostatnich)</div>
+          <div class="flex justify-center gap-1">
+            <div
+              v-for="(result, index) in lastFive(player.stats?.form ?? [])"
+              :key="index"
+              class="flex size-5 items-center justify-center rounded-full text-xs font-bold"
+              :class="formDotClass[result]"
+              :title="result === 'W' ? 'Wygrana' : result === 'D' ? 'Remis' : result === 'L' ? 'Przegrana' : 'Nie rozegrano'"
+            >
+              {{ formDotText[result] }}
+            </div>
+          </div>
+        </div>
+
+
+        <!-- Gablota Osiągnięć -->
+        <div v-if="hasAchievements(player)" class="mb-5 border-t border-line pt-4">
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            🏆 Gablota Osiągnięć
           </div>
 
-          <!-- Przyciski akcji -->
-          <div class="flex gap-2">
-            <button @click="showPlayerModal(player)"
-              class="flex-1 rounded-lg bg-lime hover:bg-lime-soft text-on-lime font-bold uppercase text-sm py-2.5 px-4 transition-colors">
-              Profil
-            </button>
-            <button v-if="player.dartcounter"
-              @click="openDartcounterMatches(player.dartcounter)"
-              class="flex-1 rounded-lg border border-line hover:border-lime text-fg font-bold uppercase text-sm py-2.5 px-4 transition-colors">
-              Mecze
-            </button>
+          <!-- Puchary -->
+          <div v-if="playerTrophies(player).length > 0" class="mb-3 flex flex-wrap gap-1.5">
+            <span
+              v-for="trophy in playerTrophies(player)"
+              :key="trophy.id"
+              class="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold"
+              :class="tierStyles[trophy.tier]"
+              :title="`${trophy.label} (${trophy.tier})`"
+            >
+              <span aria-hidden="true">{{ trophy.icon }}</span>{{ trophy.label }}
+            </span>
           </div>
-        </article>
-      </div>
 
+          <!-- Kamienie milowe -->
+          <div v-if="playerMilestones(player).length > 0" class="mb-3 flex flex-wrap gap-1.5">
+            <span
+              v-for="milestone in playerMilestones(player)"
+              :key="milestone.key"
+              class="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold"
+              :class="tierStyles[milestone.tier]"
+              :title="`${milestone.label} (${milestone.tier})`"
+            >
+              <span aria-hidden="true">{{ milestone.icon }}</span>{{ milestone.label }}
+            </span>
+          </div>
+
+          <!-- Epickie momenty -->
+          <div v-if="playerEpicMoments(player).length > 0" class="flex flex-wrap gap-1.5">
+            <span
+              v-for="moment in playerEpicMoments(player)"
+              :key="moment.key"
+              class="inline-flex items-center gap-1 rounded-full border border-purple-400/50 bg-purple-500/20 px-2.5 py-1 text-xs font-bold text-purple-300"
+            >
+              <span aria-hidden="true">{{ moment.icon }}</span>{{ moment.label }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Przyciski akcji -->
+        <div class="mt-auto flex gap-2">
+          <button
+            @click="showPlayerModal(player)"
+            class="flex-1 rounded-lg bg-lime px-4 py-2.5 text-sm font-bold uppercase text-on-lime transition-colors hover:bg-lime-soft"
+          >
+            Profil
+          </button>
+          <button
+            v-if="player.dartcounter"
+            @click="openDcModal(player.firstName + ' ' + player.lastName, player.dartcounter)"
+            class="flex-1 rounded-lg border border-line px-4 py-2.5 text-sm font-bold uppercase text-fg transition-colors hover:border-lime"
+          >
+            Mecze
+          </button>
+        </div>
+      </article>
+    </div>
+
+    <!-- Modal profilu gracza -->
     <PlayerCardModal
-      :player="selectedPlayer as any"
+      :player="selectedPlayer"
       @close="selectedPlayer = null"
+    />
+
+    <!-- Modal Dartcounter -->
+    <ViewDartcounterModal
+      :link="dcModalLink"
+      :player-name="dcModalPlayerName"
+      @close="showDcModal = false"
+      v-if="showDcModal"
     />
   </div>
 </template>

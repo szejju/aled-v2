@@ -1,6 +1,23 @@
 <script setup lang="ts">
+/**
+ * RegisterView – Rejestracja nowego zawodnika.
+ *
+ * Flow:
+ *  1. Firebase Auth: createUserWithEmailAndPassword
+ *  2. Wysłanie e-maila weryfikacyjnego (sendEmailVerification)
+ *  3. Cloud Function: registerNewPlayer({ firstName, lastName, nick })
+ *  4. Wymuszone wylogowanie (signOut)
+ *  5. Kinowy modal potwierdzający → po 6s przekierowanie na /home
+ */
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import {
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  signOut,
+} from 'firebase/auth'
+import { getAuthClient } from '@/services/firebase'
+import { registerNewPlayer } from '@/services/api'
 
 const router = useRouter()
 
@@ -11,13 +28,18 @@ const email = ref('')
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
-const success = ref(false)
+const showCinemaModal = ref(false)
 
-async function registerPlayer() {
+async function handleRegister() {
   error.value = ''
-  success.value = false
 
-  if (!firstName.value.trim() || !lastName.value.trim() || !nick.value.trim() || !email.value.trim() || !password.value.trim()) {
+  if (
+    !firstName.value.trim() ||
+    !lastName.value.trim() ||
+    !nick.value.trim() ||
+    !email.value.trim() ||
+    !password.value.trim()
+ ) {
     error.value = 'Wypełnij wszystkie wymagane pola.'
     return
   }
@@ -30,11 +52,59 @@ async function registerPlayer() {
   loading.value = true
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    success.value = true
-    setTimeout(() => router.push('/'), 2000)
+    const auth = getAuthClient()
+
+    // 1. Firebase Auth – utwórz konto
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      email.value.trim(),
+      password.value,
+    )
+
+    // 2. Wyślij e-mail weryfikacyjny
+    await sendEmailVerification(credential.user)
+
+    // 3. Cloud Function – rejestracja w lidze
+    await registerNewPlayer({
+      firstName: firstName.value.trim(),
+      lastName: lastName.value.trim(),
+      nick: nick.value.trim(),
+    })
+
+    // 4. Wymuszone wylogowanie
+    await signOut(auth)
+
+    // 5. Pokaż modal kinowy
+    showCinemaModal.value = true
+
+    // 6. Po 6s zamknij modal i przekieruj
+    setTimeout(() => {
+      showCinemaModal.value = false
+      router.push({ name: 'home' })
+    }, 6000)
   } catch (err: unknown) {
-    error.value = err instanceof Error ? err.message : 'Rejestracja nie powiodła się.'
+    if (err instanceof Error) {
+      if (err.message.includes('auth/email-already-in-use')) {
+        error.value = 'Konto z tym adresem e-mail już istnieje.'
+      } else if (err.message.includes('auth/weak-password')) {
+        error.value = 'Hasło jest za słabe. Użyj co najmniej 6 znaków.'
+      } else if (err.message.includes('auth/invalid-email')) {
+        error.value = 'Podany adres e-mail jest nieprawidłowy.'
+      } else {
+        error.value = err.message || 'Rejetracja nie powiodła się. Spróbuj ponownie.'
+      }
+    } else {
+      error.value = 'Wystąił nieoczekiwany błąd. Spróbuj ponownie.'
+    }
+
+    try {
+      const auth = getAuthClient()
+      if (auth.currentUser) {
+        await signOut(auth)
+      }
+    } catch {
+      // ignoruj błąd wylogowania
+    }
   } finally {
     loading.value = false
   }
@@ -82,17 +152,10 @@ async function registerPlayer() {
         {{ error }}
       </div>
 
-      <!-- Komunikat sukcesu -->
-      <div
-        v-if="success"
-        class="mb-4 rounded-xl border border-lime/30 bg-lime/10 px-4 py-3 text-sm text-lime"
-        role="status"
-      >
-        ✅ Konto zostało utworzone pomyślnie! Za chwilę nastąpi przekierowanie na stronę główną...
-      </div>
+      
 
       <!-- Formularz -->
-      <form class="flex flex-col gap-4" @submit.prevent="registerPlayer">
+      <form class="flex flex-col gap-4" @submit.prevent="handleRegister">
         <!-- Imię -->
         <label class="flex flex-col gap-1.5">
           <span class="label text-muted">Imię *</span>
@@ -101,7 +164,8 @@ async function registerPlayer() {
             type="text"
             autocomplete="given-name"
             placeholder="Jan"
-            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+            :disabled="loading"
+            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20 disabled:opacity-50"
           />
         </label>
 <!-- Nazwisko -->
@@ -112,7 +176,8 @@ async function registerPlayer() {
             type="text"
             autocomplete="family-name"
             placeholder="Kowalski"
-            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+            :disabled="loading"
+            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20 disabled:opacity-50"
           />
         </label>
 
@@ -124,7 +189,8 @@ async function registerPlayer() {
             type="text"
             autocomplete="nickname"
             placeholder="TwojNick123"
-            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+            :disabled="loading"
+            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20 disabled:opacity-50"
           />
         </label>
 
@@ -136,7 +202,8 @@ async function registerPlayer() {
             type="email"
             autocomplete="email"
             placeholder="twoj@email.pl"
-            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+            :disabled="loading"
+            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20 disabled:opacity-50"
           />
         </label>
 
@@ -148,14 +215,15 @@ async function registerPlayer() {
             type="password"
             autocomplete="new-password"
             placeholder="••••••••"
-            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+            :disabled="loading"
+            class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted/50 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20 disabled:opacity-50"
           />
         </label>
 
         <!-- Przycisk -->
         <button
           type="submit"
-          :disabled="loading || success"
+          :disabled="loading"
           class="mt-2 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-lime font-display text-[15px] font-extrabold uppercase tracking-[0.08em] text-on-lime transition hover:bg-lime-soft focus:outline-none focus:ring-2 focus:ring-lime/40 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <svg
@@ -168,7 +236,6 @@ async function registerPlayer() {
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
-          <span v-else-if="success">✓ Konto utworzone</span>
           <span v-else>Utwórz konto</span>
         </button>
       </form>
@@ -195,4 +262,82 @@ async function registerPlayer() {
       </p>
     </div>
   </div>
+
+    <!-- ═════════════════════════════════ KINOWY MODAL ═══════ -->
+    <Teleport to="body">
+      <Transition name="cinema">
+        <div
+          v-if="showCinemaModal"
+          class="fixed inset-0 z-[99999] flex items-center justify-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cinema-modal-title"
+        >
+          <div class="fixed inset-0 bg-ink/95 backdrop-blur-md" aria-hidden="true" />
+
+          <div class="relative z-10 flex flex-col items-center text-center px-6 max-w-lg animate-in fade-in zoom-in-95 duration-500">
+            <div class="mb-8 flex h-24 w-24 items-center justify-center rounded-full bg-lime/15 ring-4 ring-lime/30">
+              <svg class="h-12 w-12 text-lime" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h2
+              id="cinema-modal-title"
+              class="font-display text-4xl sm:text-5xl font-black uppercase italic tracking-tight text-white text-glow"
+            >
+              Konto <span class="text-accent">Utworzone!</span>
+            </h2>
+
+            <div class="mt-6 space-y-3 max-w-md">
+              <div class="flex items-start gap-3 rounded-2xl border border-line bg-surface/60 px-5 py-4 text-left">
+                <span class="mt-0.5 shrink-0 text-xl">📧</span>
+                <div>
+                  <p class="text-sm font-bold text-fg">Sprawdź swoją skrzynkę e-mail</p>
+                  <p class="text-xs text-muted mt-0.5">
+                    Kliknij w link weryfikacyjny, który wyslaliśmy na adres <strong class="text-fg">{{ email }}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div class="flex items-start gap-3 rounded-2xl border border-line bg-surface/60 px-5 py-4 text-left">
+                <span class="mt-0.5 shrink-0 text-xl">⌛</span>
+                <div>
+                  <p class="text-sm font-bold text-fg">Czekaj na akceptację administratora</p>
+                  <p class="text-xs text-muted mt-0.5">
+                    Po weryfikacji e-mail Twoje konto trafi do poczekalni. Administrator zatwierdzi je ręcznie.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-8 h-1 w-64 overflow-hidden rounded-full bg-surface-2">
+              <div class="h-full w-full origin-left animate-[cinema-progress_6s_ease-out_forwards] rounded-full bg-lime" />
+            </div>
+
+            <p class="mt-4 text-xs text-muted">
+              Za chwilę zostaniesz przekierowany na stronę główną…
+            </p>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 </template>
+
+<style scoped>
+.cinema-enter-active {
+  transition: opacity 0.4s ease-out;
+}
+.cinema-leave-active {
+  transition: opacity 0.3s ease-in;
+}
+.cinema-enter-from,
+.cinema-leave-to {
+  opacity: 0;
+}
+
+@keyframes cinema-progress {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0%);   }
+}
+</style>

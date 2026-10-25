@@ -1,0 +1,1 @@
+export { getModalData } from "./modalData.js";

@@ -41,9 +41,9 @@ const toggleTheme = () => {
   localStorage.setItem('theme', light ? 'light' : 'dark')
 }
 
-/** Handler wylogowania – czyści stan i przekierowuje na stronę główną. */
-function handleLogout() {
-  logout()
+/** Handler wylogowania – czyści Firebase Auth, wyświetla toast i przekierowuje na tabelę. */
+async function handleLogout() {
+  await logout()
 }
 
 </script>

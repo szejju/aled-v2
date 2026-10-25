@@ -1,0 +1,1 @@
+import{P as e}from"./runtime-dom.esm-bundler-ZqUrEDCR.js";var t=1,n=e([]);function r(){function e(e,i=`info`,a=4e3){let o=t++;n.value=[...n.value,{id:o,message:e,type:i}],a>0&&setTimeout(()=>r(o),a)}function r(e){n.value=n.value.filter(t=>t.id!==e)}return{toasts:n,showToast:e,dismissToast:r}}export{r as t};

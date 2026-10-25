@@ -23,10 +23,10 @@ interface Player {
   firstName: string
   lastName: string
   nick?: string
-  avatarUrl?: string
+  avatarUrl?: string | null
   photoUrl?: string
   isDisqualified?: boolean
-  st: PlayerStats
+  st?: PlayerStats
   checkout?: number
   short?: number
   max?: number
@@ -68,7 +68,7 @@ const toggleHistory = () => {
 }
 
 const formDots = computed(() => {
-  const form = props.player?.st.form || []
+  const form = props.player?.st?.form || []
   const lastFive = form.slice(-5)
   const padded = [...lastFive]
   while (padded.length < 5) padded.unshift('N')
@@ -153,13 +153,13 @@ const formDotTexts = {
               <div class="bento p-4 text-center">
                 <div class="text-xs text-muted uppercase mb-1">Power Ranking</div>
                 <div class="text-2xl font-black text-accent">
-                  {{ player?.st.dpi?.toFixed(2) || '0.00' }}
+                  {{ player?.st?.dpi?.toFixed(2) || '0.00' }}
                 </div>
               </div>
               <div class="bento p-4 text-center">
                 <div class="text-xs text-muted uppercase mb-1">Średnia</div>
                 <div class="text-2xl font-black text-fg">
-                  {{ player?.st.realAvg?.toFixed(2) || '0.00' }}
+                  {{ player?.st?.realAvg?.toFixed(2) || '0.00' }}
                 </div>
               </div>
             </div>
@@ -180,7 +180,7 @@ const formDotTexts = {
               </div>
               <div class="bento p-3">
                 <div class="text-[10px] text-muted uppercase mb-1">Dable %</div>
-                <div class="text-lg font-black text-fg">{{ player?.st.doublesPct ? player.st.doublesPct.toFixed(2) + '%' : '-' }}</div>
+                <div class="text-lg font-black text-fg">{{ player?.st?.doublesPct ? player?.st?.doublesPct?.toFixed(2) + '%' : '-' }}</div>
               </div>
             </div>
 

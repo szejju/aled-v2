@@ -5,7 +5,7 @@ import CupGroups from '@/components/cup/CupGroups.vue'
 import CupKnockout from '@/components/cup/CupKnockout.vue'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
-import type { CupPlayer, CupMatch, CupData } from '@/types/cup'
+import type { CupPlayer, CupMatch, CupData, KnockoutMatch } from '@/types/cup'
 
 // Stan widoku - który ekran jest aktywny
 type ViewMode = 'registration' | 'groups' | 'knockout'
@@ -99,7 +99,7 @@ const groupMatches = computed(() =>
 )
 
 const knockoutMatches = computed(() => 
-  cupData.schedule.filter(m => m.isKnockout)
+  cupData.schedule.filter(m => m.isKnockout) as KnockoutMatch[]
 )
 
 // Funkcje obsługi UI

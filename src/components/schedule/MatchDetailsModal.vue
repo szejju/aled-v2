@@ -31,7 +31,7 @@ interface ScheduleMatch {
 }
 
 const props = defineProps<{
-  match: ScheduleMatch | null
+  match: ScheduleMatch | Record<string, any> | null
 }>()
 
 const emit = defineEmits<{

@@ -1,7 +1,17 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
+import { useRouter } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
 import AuthRequiredModal from '@/components/modals/AuthRequiredModal.vue'
+import ToastContainer from '@/components/ui/ToastContainer.vue'
+import { setAuthRouter } from '@/composables/useAuth'
+
+/**
+ * Przekazujemy router do useAuth (singleton), aby funkcja `logout()`
+ * mogła przekierować po wylogowaniu bez cyklicznej zależności.
+ */
+const router = useRouter()
+setAuthRouter(router)
 </script>
 
 <template>
@@ -27,4 +37,7 @@ import AuthRequiredModal from '@/components/modals/AuthRequiredModal.vue'
 
   <!-- Globalny modal auth – wyświetlany gdy użytkownik próbuje skorzystać z zastrzeżonej funkcji -->
   <AuthRequiredModal />
+
+  <!-- Globalny system powiadomień Toast -->
+  <ToastContainer />
 </template>

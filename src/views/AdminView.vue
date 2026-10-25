@@ -1,4 +1,4 @@
-<script setup lang="ts">
+ <script setup lang="ts">
 /**
  * AdminView – Panel Administratora (Centrum Dowodzenia Rozgrywkami).
  *
@@ -7,8 +7,11 @@
  * - Zakładki (`activeTab`) przełączane przez UI.
  * - Metody zarządcze to stuby – docelowo wywołania Firebase/Cloud Functions.
  */
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useAuth } from '@/composables/useAuth'
+import { ref as dbRef, get } from 'firebase/database'
+import { getDatabaseClient } from '@/services/firebase'
+import { approveWaitlistPlayer } from '@/services/api'
 
 // ──────────────────────────────────────────────────
 // Auth
@@ -16,9 +19,9 @@ import { useAuth } from '@/composables/useAuth'
 
 const { logout: authLogout } = useAuth()
 
-const logoutAdmin = () => {
-  authLogout()
-  // Docelowo: router.push('/')
+const logoutAdmin = async () => {
+  await authLogout()
+  // logout() sam przekierowuje na /standings
 }
 
 // ──────────────────────────────────────────────────
@@ -32,10 +35,6 @@ const activeTab = ref<AdminTab>('zarzadzanie')
 // ──────────────────────────────────────────────────
 // Stub – przyszłe metody zarządcze (Firebase)
 // ──────────────────────────────────────────────────
-
-const resolveException = (_matchId: string, _action: string) => {
-  console.debug('[Admin] resolveException', _matchId, _action)
-}
 
 const assignPlayersToDivision = () => {
   console.debug('[Admin] assignPlayersToDivision – masowy przydział do dywizji')
@@ -58,6 +57,73 @@ const hardResetSeason = () => {
     console.debug('[Admin] hardResetSeason – twardy reset sezonu')
   }
 }
+
+// ─── Poczekalnia (Waitlist) ──────────────────────────────────
+
+interface WaitlistPlayer {
+  id: string
+  firstName?: string
+  lastName?: string
+  nick?: string
+  email?: string
+  createdAt?: number | string
+}
+
+const waitlistPlayers = ref<WaitlistPlayer[]>([])
+const waitlistLoading = ref(false)
+const waitlistError = ref('')
+const approvingIds = ref<Set<string>>(new Set())
+
+async function fetchWaitlist() {
+  waitlistLoading.value = true
+  waitlistError.value = ''
+
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, '/waitlist'))
+
+    if (snap.exists()) {
+      const raw = snap.val()
+      waitlistPlayers.value = Object.entries(raw).map(([id, data]: [string, any]) => ({
+        id,
+        ...data,
+      }))
+    } else {
+      waitlistPlayers.value = []
+    }
+  } catch (err: unknown) {
+    waitlistError.value = 'Nie udało się pobrać poczekalni.'
+    console.error('[Admin] fetchWaitlist error:', err)
+  } finally {
+    waitlistLoading.value = false
+  }
+}
+
+async function approvePlayer(playerId: string) {
+  const set = new Set(approvingIds.value)
+  set.add(playerId)
+  approvingIds.value = set
+
+  try {
+    const result = await approveWaitlistPlayer({ playerId })
+    if (result.success) {
+      waitlistPlayers.value = waitlistPlayers.value.filter((p) => p.id !== playerId)
+    } else {
+      alert(result.error || result.message || 'Błąd podczas akceptacji gracza.')
+    }
+  } catch (err: unknown) {
+    console.error('[Admin] approvePlayer error:', err)
+    alert('Wystąpił błąd. Spróbuj ponownie.')
+  } finally {
+    const next = new Set(approvingIds.value)
+    next.delete(playerId)
+    approvingIds.value = next
+  }
+}
+
+onMounted(() => {
+  fetchWaitlist()
+})
 </script>
 
 <template>
@@ -196,11 +262,61 @@ const hardResetSeason = () => {
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-display font-extrabold text-lg uppercase tracking-tight text-fg flex items-center gap-2">
               <span class="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse" aria-hidden="true" />
-              Weryfikacja Kont
+              Poczekalnia (Waitlist)
             </h3>
-            <span class="label rounded-full bg-surface-2 px-2.5 py-1 text-muted">Oczekuje</span>
+            <button
+              @click="fetchWaitlist"
+              :disabled="waitlistLoading"
+              class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors disabled:opacity-50"
+            >
+              ↻ Odśwież
+            </button>
           </div>
-          <p class="text-xs text-muted italic">Brak nowych kont czekających na weryfikację (średnia/kamera).</p>
+
+          <!-- Loading -->
+          <div v-if="waitlistLoading" class="py-8 text-center">
+            <div class="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-line border-t-lime" />
+            <p class="mt-3 text-xs text-muted">Ładowanie poczekalni…</p>
+          </div>
+
+          <!-- Błąd -->
+          <p v-else-if="waitlistError" class="text-xs text-danger">{{ waitlistError }}</p>
+
+          <!-- Pusta lista -->
+          <p v-else-if="waitlistPlayers.length === 0" class="text-xs text-muted italic">
+            Brak nowych kont czekających na weryfikację.
+          </p>
+
+          <!-- Lista graczy -->
+          <ul v-else class="space-y-2 max-h-96 overflow-y-auto pr-1">
+            <li
+              v-for="player in waitlistPlayers"
+              :key="player.id"
+              class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+            >
+              <div class="min-w-0">
+                <p class="truncate text-sm font-bold text-fg">
+                  {{ player.firstName }} {{ player.lastName }}
+                </p>
+                <p class="truncate text-xs text-muted">
+                  {{ player.nick || '—' }} · {{ player.email || '—' }}
+                </p>
+              </div>
+              <button
+                @click="approvePlayer(player.id)"
+                :disabled="approvingIds.has(player.id)"
+                class="shrink-0 rounded-xl bg-lime px-4 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest text-on-lime transition hover:bg-lime-soft disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <template v-if="approvingIds.has(player.id)">
+                  <svg class="mx-auto h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </template>
+                <template v-else>Zatwierdź</template>
+              </button>
+            </li>
+          </ul>
         </section>
 
         <section class="bg-surface border border-line rounded-2xl p-6 shadow-sm">
