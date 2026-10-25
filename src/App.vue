@@ -4,6 +4,8 @@ import AppHeader from '@/components/layout/AppHeader.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
 import AuthRequiredModal from '@/components/modals/AuthRequiredModal.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
+import ScrollToTop from '@/components/ui/ScrollToTop.vue'
+import PollWidget from '@/components/ui/PollWidget.vue'
 import { setAuthRouter } from '@/composables/useAuth'
 
 /**
@@ -40,4 +42,8 @@ setAuthRouter(router)
 
   <!-- Globalny system powiadomień Toast -->
   <ToastContainer />
+
+  <!-- Globalne UI Goodies -->
+  <ScrollToTop />
+  <PollWidget />
 </template>

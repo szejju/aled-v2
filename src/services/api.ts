@@ -336,3 +336,233 @@ export const submitVerification = makeCallable<
   SubmitVerificationPayload,
   { success: boolean; message: string }
 >('submitVerification')
+
+// ─── updateAvatar ────────────────────────────────────────────────────────
+
+export interface UpdateAvatarPayload {
+  avatarUrl: string;
+}
+
+/** Aktualizuje awatar gracza. */
+export const updateAvatar = makeCallable<
+  UpdateAvatarPayload,
+  { success: boolean; message: string }
+>('updateAvatar')
+
+// ─── proposeMatchDate ─────────────────────────────────────────────────────────
+
+export interface ProposeMatchDatePayload {
+  matchId: string;
+  date: string;
+  time: string;
+  timestamp: number;
+  isException: boolean;
+  exceptionReason?: string;
+  isCup: boolean;
+}
+
+/** Proponuje nowy termin meczu (lub wyjątek do Admina). */
+export const proposeMatchDate = makeCallable<
+  ProposeMatchDatePayload,
+  { success: boolean; message: string }
+>('proposeMatchDate')
+
+// ─── respondToMatchDate ────────────────────────────────────────────────────────
+
+export interface RespondToMatchDatePayload {
+  matchId: string;
+  action: 'accept' | 'reject';
+  isCup: boolean;
+}
+
+/** Akceptuje lub odrzuca propozycję terminu meczu. */
+export const respondToMatchDate = makeCallable<
+  RespondToMatchDatePayload,
+  { success: boolean; message: string }
+>('respondToMatchDate')
+
+// ─── admin (Radar Wyników) ──────────────────────────────────────────────────
+
+export interface ApproveResultPayload {
+  matchId: string
+  sourcePath: string // 'schedule' | 'cup/schedule'
+  finalScore1: number
+  finalScore2: number
+  finalLegs1?: number
+  finalLegs2?: number
+  p1Stats: Record<string, unknown>
+  p2Stats: Record<string, unknown>
+}
+
+export const approveMatchResult = makeCallable<
+  ApproveResultPayload,
+  { success: boolean; message: string }
+>('approveMatchResult')
+
+export interface RejectResultPayload {
+  matchId: string
+  sourcePath: string
+  pendingData: Record<string, unknown>
+}
+
+export const rejectMatchResult = makeCallable<
+  RejectResultPayload,
+  { success: boolean; message: string }
+>('rejectMatchResult')
+
+// ─── admin (Weryfikacja Graczy) ────────────────────────────────────────────────
+
+export interface VerifyPlayerFeaturePayload {
+  playerId: string
+  feature: 'avg' | 'cam' | 'all' | 'manual'
+  action?: 'approve' | 'reject'
+  declaredAvg?: number
+}
+
+export const verifyPlayerFeature = makeCallable<
+  VerifyPlayerFeaturePayload,
+  { success: boolean; message: string }
+>('verifyPlayerFeature')
+
+export interface DeletePlayerPayload {
+  playerId: string
+}
+
+export const deletePlayerDefinitively = makeCallable<
+  DeletePlayerPayload,
+  { success: boolean; message: string }
+>('deletePlayerDefinitively')
+
+// ─── admin (Zarządzanie Aktywnymi Graczami) ──────────────────────────────────
+
+export interface AssignPlayerDivPayload {
+  playerId: string
+  division: string
+}
+
+export const assignPlayerToDivision = makeCallable<
+  AssignPlayerDivPayload,
+  { success: boolean; message: string }
+>('assignPlayerToDivision')
+
+export interface KickPlayerPayload {
+  playerId: string
+  walkoverScore: number
+  isCup: boolean
+}
+
+export const kickPlayer = makeCallable<
+  KickPlayerPayload,
+  { success: boolean; message: string }
+>('kickPlayer')
+
+export interface ReplacePlayerPayload {
+  oldPlayerId: string
+  newPlayerId: string
+  isCup: boolean
+  oldPlayerDiv?: string
+}
+
+export const replacePlayer = makeCallable<
+  ReplacePlayerPayload,
+  { success: boolean; message: string }
+>('replacePlayer')
+
+// ─── admin (Kolejka Wyjątków) ──────────────────────────────────────────────
+
+export interface HandleExceptionPayload {
+  matchId: string
+  isCup: boolean
+  action: 'approve' | 'reject'
+}
+
+export const handleExceptionRequest = makeCallable<
+  HandleExceptionPayload,
+  { success: boolean; message: string }
+>('handleExceptionRequest')
+
+// ─── admin (Struktura Ligi i Masowy Przydział) ────────────────────────────────
+
+export interface SaveLeagueLevelPayload {
+  level: string
+  groups: number
+  promo: number
+  playoffs: number
+  releg: number
+  playersLimit: number
+}
+
+export const saveLeagueLevel = makeCallable<
+  SaveLeagueLevelPayload,
+  { success: boolean; message: string }
+>('saveLeagueLevel')
+
+export interface DeleteLeagueLevelPayload { level: string }
+
+export const deleteLeagueLevel = makeCallable<
+  DeleteLeagueLevelPayload,
+  { success: boolean; message: string }
+>('deleteLeagueLevel')
+
+export interface MassAssignPayload {
+  playerIds: string[]
+  targetDiv: string
+}
+
+export const massAssignPlayers = makeCallable<
+  MassAssignPayload,
+  { success: boolean; message: string }
+>('massAssignPlayers')
+
+// ─── submitMatchResult (Zgłaszanie wyniku przez gracza) ──────────────────────
+
+export interface SubmitMatchResultPayload {
+  matchId: string
+  isCup: boolean
+  score1: number
+  score2: number
+  legs1?: number
+  legs2?: number
+  p1Stats?: Record<string, unknown>
+  p2Stats?: Record<string, unknown>
+  screenUrl1: string
+  screenUrl2?: string
+}
+
+/** Gracz wysyła wynik meczu ze screenami (status: pending_result). */
+export const submitMatchResult = makeCallable<
+  SubmitMatchResultPayload,
+  { success: boolean; message: string }
+>('submitMatchResult')
+
+// ─── submitPollVote (Ankiety) ──────────────────────────────────────────────────
+
+export interface SubmitPollVotePayload {
+  pollId: string
+  optionKey: string
+}
+
+/** Głosowanie w ankiecie – zabezpieczone przez Cloud Function (OWASP). */
+export const submitPollVote = makeCallable<
+  SubmitPollVotePayload,
+  { success: boolean; message: string }
+>('submitPollVote')
+
+// ─── adminSaveMatchResult (Ręczny Protokół Meczowy) ──────────────────────────
+
+export interface AdminSaveMatchPayload {
+  matchId: string
+  isCupMatch: boolean
+  s1: number
+  s2: number
+  l1?: number
+  l2?: number
+  p1Stats: Record<string, unknown>
+  p2Stats: Record<string, unknown>
+}
+
+/** Admin ręcznie edytuje/zapisuje wynik meczu (z walidacją statsów). */
+export const adminSaveMatchResult = makeCallable<
+  AdminSaveMatchPayload,
+  { success: boolean; message: string }
+>('adminSaveMatchResult')

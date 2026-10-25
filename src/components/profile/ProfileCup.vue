@@ -55,6 +55,8 @@ interface Props {
 
 interface Emits {
   (e: 'join-cup'): void
+  (e: 'propose', match: CupMatchEntry): void
+  (e: 'decide', match: CupMatchEntry): void
 }
 
 const props = withDefaults(defineProps<Props>(), { loading: false })
@@ -170,6 +172,17 @@ function statusLabel(match: CupMatchEntry): string {
   }
 }
 
+function isClickable(match: CupMatchEntry): boolean {
+  if (match.status === 'unscheduled') return true
+  if (match.status === 'proposed' && !match.isProposer) return true
+  return false
+}
+
+function handleClick(match: CupMatchEntry) {
+  if (match.status === 'unscheduled') emit('propose', match)
+  else if (match.status === 'proposed' && !match.isProposer) emit('decide', match)
+}
+
 function statusPrefix(match: CupMatchEntry): string {
   switch (match.status) {
     case 'pending_result': return '⏳'
@@ -256,8 +269,9 @@ function statusPrefix(match: CupMatchEntry): string {
 
     <div v-else-if="matches.length > 0" class="space-y-2 min-h-[150px]">
       <div v-for="match in matches" :key="match.id"
-        class="bento rounded-2xl p-4 hover:bg-fg/5 transition-all group cursor-pointer border-l-4"
-        :class="[borderClass(match), match.status === 'pending_result' ? 'border border-orange-500/20 bg-orange-500/5' : '']">
+        class="bento rounded-2xl p-4 hover:bg-fg/5 transition-all group border-l-4"
+        :class="[borderClass(match), match.status === 'pending_result' ? 'border border-orange-500/20 bg-orange-500/5' : '', isClickable(match) ? 'cursor-pointer' : '']"
+        @click="isClickable(match) ? handleClick(match) : undefined">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3 min-w-0">
             <div class="bg-surface-2 text-purple-400 font-black text-sm uppercase px-2 py-1 rounded shadow-inner min-w-[30px] text-center flex items-center justify-center">🏆</div>
@@ -282,6 +296,9 @@ function statusPrefix(match: CupMatchEntry): string {
               match.status === 'completed'
                 ? resultClass(match) + ' bg-black/40'
                 : 'text-muted bg-surface-2']">{{ scoreDisplay(match) }}</span>
+            <span v-if="isClickable(match)" class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded text-on-lime bg-accent/80 group-hover:bg-accent transition-colors">
+              {{ match.status === 'unscheduled' ? 'USTAL' : 'ODPOWIEDZ' }}
+            </span>
           </div>
         </div>
       </div>

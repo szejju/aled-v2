@@ -9,6 +9,17 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 
 /**
+ * Leniwy helper – opóźnia init Admin SDK do pierwszego wywołania funkcji,
+ * co zapobiega timeoutowi Firebase CLI podczas deployu.
+ */
+const getDb = () => {
+  if (!admin.apps.length) {
+    admin.initializeApp();
+  }
+  return admin.database();
+};
+
+/**
  * Ustawia lub anuluje urlop gracza.
  */
 export const updateVacation = onCall(
@@ -83,7 +94,7 @@ export const updateProfile = functions.https.onCall(async (request) => {
   }
 
   const { nick, dartcounter } = request.data;
-  const db = admin.database(); // Inicjalizacja lokalnie wewnątrz funkcji!
+  const db = getDb(); // Inicjalizacja lokalnie wewnątrz funkcji!
 
   try {
     const playersRef = db.ref('players');
@@ -119,7 +130,7 @@ export const joinCup = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError('unauthenticated', 'Musisz być zalogowany, aby zapisać się do pucharu.');
   }
 
-  const db = admin.database(); // Lokalna inicjalizacja wewnątrz funkcji
+  const db = getDb(); // Lokalna inicjalizacja wewnątrz funkcji
 
   try {
     const playersRef = db.ref('players');
@@ -155,6 +166,43 @@ export const joinCup = functions.https.onCall(async (request) => {
   }
 });
 
+/**
+ * Aktualizuje awatar gracza – bezpieczny zapis przez Cloud Function (OWASP).
+ */
+export const updateAvatar = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Musisz być zalogowany, aby zmienić awatar.');
+  }
+
+  const { avatarUrl } = request.data;
+  if (!avatarUrl || typeof avatarUrl !== 'string') {
+    throw new functions.https.HttpsError('invalid-argument', 'Brakujący lub nieprawidłowy link do awatara.');
+  }
+
+  const db = getDb(); // Lokalna inicjalizacja wewnątrz funkcji
+
+  try {
+    const playersRef = db.ref('players');
+    const snap = await playersRef.orderByChild('uid').equalTo(uid).once('value');
+    
+    if (!snap.exists()) {
+      throw new functions.https.HttpsError('not-found', 'Nie znaleziono profilu gracza.');
+    }
+
+    const playerData = snap.val();
+    const playerId = Object.keys(playerData)[0];
+
+    // Bezpieczny zapis - nadpisujemy tylko pole avatarUrl
+    await playersRef.child(playerId).update({ avatarUrl });
+
+    return { success: true, message: 'Awatar zaktualizowany pomyślnie.' };
+  } catch (error: any) {
+    console.error('Błąd aktualizacji awatara:', error);
+    throw new functions.https.HttpsError('internal', 'Wystąpił błąd podczas zapisywania w bazie.');
+  }
+});
+
 /** Wysyła zrzut ekranu (AVG lub CAM) do weryfikacji przez administratora. */
 export const submitVerification = functions.https.onCall(async (request) => {
   const uid = request.auth?.uid;
@@ -167,7 +215,7 @@ export const submitVerification = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError('invalid-argument', 'Brakujące lub nieprawidłowe dane.');
   }
 
-  const db = admin.database();
+  const db = getDb();
 
   try {
     const playersRef = db.ref('players');

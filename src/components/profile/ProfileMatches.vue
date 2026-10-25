@@ -35,7 +35,13 @@ interface Props {
   loading?: boolean
 }
 
+interface Emits {
+  (e: 'propose', match: MatchEntry): void
+  (e: 'decide', match: MatchEntry): void
+}
+
 const props = withDefaults(defineProps<Props>(), { loading: false })
+const emit = defineEmits<Emits>()
 const skeleton = computed(() => props.loading)
 
 function resultClass(match: MatchEntry): string {
@@ -110,6 +116,17 @@ function statusLabel(match: MatchEntry): string {
 }
 
 /** Emoji przy statusie (widoczne obok nazwy przeciwnika) */
+function isClickable(match: MatchEntry): boolean {
+  if (match.status === 'unscheduled') return true
+  if (match.status === 'proposed' && !match.isProposer) return true
+  return false
+}
+
+function handleClick(match: MatchEntry) {
+  if (match.status === 'unscheduled') emit('propose', match)
+  else if (match.status === 'proposed' && !match.isProposer) emit('decide', match)
+}
+
 function statusPrefix(match: MatchEntry): string {
   switch (match.status) {
     case 'pending_result': return '⏳'
@@ -140,8 +157,9 @@ function statusPrefix(match: MatchEntry): string {
 
     <div v-else class="space-y-2 min-h-[150px]">
       <div v-for="match in matches" :key="match.id"
-        class="bento rounded-2xl p-4 hover:bg-fg/5 transition-all group cursor-pointer border-l-4"
-        :class="[borderClass(match), match.status === 'pending_result' ? 'border border-orange-500/20 bg-orange-500/5' : '']">
+        class="bento rounded-2xl p-4 hover:bg-fg/5 transition-all group border-l-4"
+        :class="[borderClass(match), match.status === 'pending_result' ? 'border border-orange-500/20 bg-orange-500/5' : '', isClickable(match) ? 'cursor-pointer' : '']"
+        @click="isClickable(match) ? handleClick(match) : undefined">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3 min-w-0">
             <span v-if="match.round" class="bg-surface-2 text-muted font-black text-[10px] uppercase px-2 py-1 rounded shadow-inner min-w-[28px] text-center">K{{ match.round }}</span>
@@ -175,6 +193,9 @@ function statusPrefix(match: MatchEntry): string {
               match.status === 'completed'
                 ? resultClass(match) + ' bg-black/40'
                 : 'text-muted bg-surface-2']">{{ scoreDisplay(match) }}</span>
+            <span v-if="isClickable(match)" class="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded text-on-lime bg-accent/80 group-hover:bg-accent transition-colors">
+              {{ match.status === 'unscheduled' ? 'USTAL' : 'ODPOWIEDZ' }}
+            </span>
           </div>
         </div>
       </div>

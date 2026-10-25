@@ -6,7 +6,7 @@ export interface PlayerProfileHeader {
   id: string; firstName: string; lastName: string
   nick?: string; avatarUrl?: string | null; div: string; leave?: Leave | null
 }
-interface Props { player: PlayerProfileHeader; loading?: boolean }
+interface Props { player: PlayerProfileHeader; loading?: boolean; uploadingAvatar?: boolean }
 interface Emits {
   (e: 'update-avatar', file: File): void
   (e: 'edit-nick'): void
@@ -57,10 +57,17 @@ function cancelVacation() { emit('vacation-cancel') }
     <template v-else>
       <div class="flex flex-col items-center text-center mb-7">
         <div role="button" tabindex="0"
-          class="w-32 h-32 bg-lime rounded-full flex items-center justify-center text-on-lime text-5xl font-black shadow-lg border-4 border-lime/20 relative group cursor-pointer overflow-hidden mb-6"
+          :class="['w-32 h-32 rounded-full flex items-center justify-center text-on-lime text-5xl font-black shadow-lg border-4 border-lime/20 relative group overflow-hidden mb-6',
+            props.uploadingAvatar ? 'cursor-wait opacity-70' : 'cursor-pointer bg-lime']"
           @click="triggerAvatarUpload" @keydown.enter="triggerAvatarUpload">
-          <span v-if="!player.avatarUrl">D</span>
-          <img v-else :src="player.avatarUrl" alt="Avatar" class="w-full h-full object-cover">
+          <span v-if="props.uploadingAvatar" class="absolute inset-0 bg-lime/80 flex items-center justify-center z-10">
+            <svg class="animate-spin h-10 w-10 text-on-lime" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </span>
+          <span v-if="!props.uploadingAvatar && !player.avatarUrl">D</span>
+          <img v-else-if="!props.uploadingAvatar" :src="player.avatarUrl ?? undefined" alt="Avatar" class="w-full h-full object-cover">
         </div>
         <input ref="avatarInput" type="file" accept="image/*" class="hidden" @change="onAvatarChange">
         <h2 class="text-2xl md:text-3xl font-display font-black text-fg uppercase tracking-tight">{{ player.firstName }} {{ player.lastName }}</h2>

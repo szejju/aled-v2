@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { navLinks } from '@/data/league'
+import RulesModal from '@/components/ui/RulesModal.vue'
 
 const year = new Date().getFullYear()
+const showRules = ref(false)
 </script>
 
 <template>
@@ -30,6 +33,16 @@ const year = new Date().getFullYear()
     </div>
     <p class="border-t border-line py-6 text-center text-xs text-muted">
       © {{ year }} Amatorska Liga e-Darta. Wszelkie prawa zastrzeżone.
+      <button
+        type="button"
+        class="ml-3 text-lime underline underline-offset-2 hover:text-lime-soft transition-colors"
+        @click="showRules = true"
+      >
+        Regulamin
+      </button>
     </p>
   </footer>
+
+  <!-- Modal regulaminu -->
+  <RulesModal v-model="showRules" />
 </template>

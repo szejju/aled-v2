@@ -11,7 +11,7 @@ import { useAuth } from '@/composables/useAuth'
 import { uploadToCloudinary } from '@/services/cloudinary'
 import {
   getDivisionTable, getSchedule, getCupData, updateVacation, enrollForNextSeason,
-  submitVerification,
+  submitVerification, updateAvatar, proposeMatchDate, respondToMatchDate,
   type DivisionTablePlayer, type ScheduleMatch, type CupDataResponse,
 } from '@/services/api'
 import ProfileHeader from '@/components/profile/ProfileHeader.vue'
@@ -27,6 +27,8 @@ import { type MatchEntry } from '@/components/profile/ProfileMatches.vue'
 import ProfileCup from '@/components/profile/ProfileCup.vue'
 import CupEnrollmentModal from '@/components/profile/CupEnrollmentModal.vue'
 import VerificationModal from '@/components/profile/VerificationModal.vue'
+import MatchmakingModal from '@/components/profile/MatchmakingModal.vue'
+import MatchDecisionModal from '@/components/profile/MatchDecisionModal.vue'
 import {
   type CupMatchEntry, type CupEnrollmentData, type CupPhaseStatus,
 } from '@/components/profile/ProfileCup.vue'
@@ -371,9 +373,26 @@ function handleJoinCup() {
   showCupModal.value = true
 }
 
-function handleAvatarUpload(file: File) {
-  const url = URL.createObjectURL(file)
-  playerHeader.value = { ...playerHeader.value, avatarUrl: url }
+const isUploadingAvatar = ref(false)
+
+async function handleAvatarUpload(file: File) {
+  isUploadingAvatar.value = true
+
+  try {
+    // 1. Wysyłka pliku na Cloudinary przez pancerny silnik XHR/Canvas
+    const secureUrl = await uploadToCloudinary(file)
+
+    // 2. OWASP-bezpieczny zapis przez Cloud Function
+    await updateAvatar({ avatarUrl: secureUrl })
+
+    // 3. Natychmiastowa aktualizacja lokalnego stanu
+    playerHeader.value = { ...playerHeader.value, avatarUrl: secureUrl }
+  } catch (error: any) {
+    console.error('Błąd wgrywania awatara:', error)
+    alert('Błąd wgrywania awatara: ' + (error.message || 'Nieznany błąd'))
+  } finally {
+    isUploadingAvatar.value = false
+  }
 }
 
 // ─── Modale ────────────────────────────────────────────────────
@@ -418,6 +437,101 @@ function saveNick() {
 
 const dartcounterModalOpen = ref(false)
 const showCupModal = ref(false)
+
+// ─── Matchmaking modals ────────────────────────────────────────────
+const matchmakingModal = ref(false)
+const matchmakingMatchId = ref('')
+const matchmakingOpponent = ref('')
+const matchmakingIsCup = ref(false)
+const matchmakingRound = ref('')
+const matchmakingSubmitting = ref(false)
+
+const decisionModal = ref(false)
+const decisionMatchId = ref('')
+const decisionOpponent = ref('')
+const decisionProposedDate = ref('')
+const decisionProposedTime = ref('')
+const decisionIsCup = ref(false)
+const decisionRound = ref('')
+const decisionSubmitting = ref(false)
+
+function handleMatchPropose(match: MatchEntry | CupMatchEntry) {
+  matchmakingMatchId.value = match.id
+  matchmakingOpponent.value = match.opponent
+  matchmakingIsCup.value = false
+  matchmakingRound.value = match.round ?? ''
+  matchmakingModal.value = true
+}
+
+function handleCupPropose(match: CupMatchEntry) {
+  matchmakingMatchId.value = match.id
+  matchmakingOpponent.value = match.opponent
+  matchmakingIsCup.value = true
+  matchmakingRound.value = match.round ?? ''
+  matchmakingModal.value = true
+}
+
+async function handleMatchmakingSubmit(data: {
+  matchId: string; date: string; time: string; timestamp: number
+  isException: boolean; exceptionReason?: string; isCup: boolean
+}) {
+  matchmakingSubmitting.value = true
+  try {
+    await proposeMatchDate(data)
+    matchmakingModal.value = false
+    // Odśwież dane meczów
+    if (data.isCup) await fetchCupData(playerId.value)
+    else {
+      const div = playerHeader.value.div
+      if (div && !div.toUpperCase().includes('POCZEKALNIA')) await fetchMatches(div, playerId.value)
+    }
+  } catch (e: any) {
+    console.error('[ProfileView] proposeMatchDate:', e)
+    alert(e?.message || 'Błąd wysyłania propozycji.')
+  } finally {
+    matchmakingSubmitting.value = false
+  }
+}
+
+function handleMatchDecide(match: MatchEntry | CupMatchEntry) {
+  decisionMatchId.value = match.id
+  decisionOpponent.value = match.opponent
+  decisionProposedDate.value = match.date ?? ''
+  decisionProposedTime.value = match.time ?? ''
+  decisionIsCup.value = false
+  decisionRound.value = match.round ?? ''
+  decisionModal.value = true
+}
+
+function handleCupDecide(match: CupMatchEntry) {
+  decisionMatchId.value = match.id
+  decisionOpponent.value = match.opponent
+  decisionProposedDate.value = match.date ?? ''
+  decisionProposedTime.value = match.time ?? ''
+  decisionIsCup.value = true
+  decisionRound.value = match.round ?? ''
+  decisionModal.value = true
+}
+
+async function handleDecision(data: {
+  matchId: string; action: 'accept' | 'reject'; isCup: boolean
+}) {
+  decisionSubmitting.value = true
+  try {
+    await respondToMatchDate(data)
+    decisionModal.value = false
+    if (data.isCup) await fetchCupData(playerId.value)
+    else {
+      const div = playerHeader.value.div
+      if (div && !div.toUpperCase().includes('POCZEKALNIA')) await fetchMatches(div, playerId.value)
+    }
+  } catch (e: any) {
+    console.error('[ProfileView] respondToMatchDate:', e)
+    alert(e?.message || 'Błąd akceptowania terminu.')
+  } finally {
+    decisionSubmitting.value = false
+  }
+}
 </script>
 <template>
   <div class="animate-fade-in space-y-8">
@@ -438,6 +552,7 @@ const showCupModal = ref(false)
       <ProfileHeader
         :player="playerHeader"
         :loading="playerLoading"
+        :uploading-avatar="isUploadingAvatar"
         @update-avatar="handleAvatarUpload"
         @edit-nick="openNickEdit"
         @vacation-submit="submitVacation"
@@ -463,6 +578,8 @@ const showCupModal = ref(false)
       <ProfileMatches
         :matches="leagueMatches"
         :loading="scheduleLoading"
+        @propose="handleMatchPropose"
+        @decide="handleMatchDecide"
       />
 
       <ProfileCup
@@ -471,6 +588,8 @@ const showCupModal = ref(false)
         :league-start-date="leagueStartDate"
         :loading="cupLoading || scheduleLoading"
         @join-cup="handleJoinCup"
+        @propose="handleCupPropose"
+        @decide="handleCupDecide"
       />
 <!-- ================================================================ -->
     <!-- MODAL: WERYFIKACJA                                               -->
@@ -558,6 +677,38 @@ const showCupModal = ref(false)
       @close="showCupModal = false"
       @enrolled="fetchCupData(playerId)"
       v-if="showCupModal"
+    />
+
+    <!-- ================================================================ -->
+    <!-- MODAL: PROPONOWANIE TERMINU                                        -->
+    <!-- ================================================================ -->
+    <MatchmakingModal
+      :open="matchmakingModal"
+      :match-id="matchmakingMatchId"
+      :opponent="matchmakingOpponent"
+      :is-cup="matchmakingIsCup"
+      :round="matchmakingRound"
+      :submitting="matchmakingSubmitting"
+      @close="matchmakingModal = false"
+      @submit="handleMatchmakingSubmit"
+      v-if="matchmakingModal"
+    />
+
+    <!-- ================================================================ -->
+    <!-- MODAL: DECYZJA O TERMINIE                                         -->
+    <!-- ================================================================ -->
+    <MatchDecisionModal
+      :open="decisionModal"
+      :match-id="decisionMatchId"
+      :opponent="decisionOpponent"
+      :proposed-date="decisionProposedDate"
+      :proposed-time="decisionProposedTime"
+      :is-cup="decisionIsCup"
+      :round="decisionRound"
+      :submitting="decisionSubmitting"
+      @close="decisionModal = false"
+      @decide="handleDecision"
+      v-if="decisionModal"
     />
   </div>
 </template>

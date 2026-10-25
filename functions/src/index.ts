@@ -28,6 +28,15 @@ export {
   createNews,
   toggleNewsVisibility,
   createPoll,
+  // actions.ts
+  approveMatchResult,
+  rejectMatchResult,
+  verifyPlayerFeature,
+  deletePlayerDefinitively,
+  assignPlayerToDivision,
+  kickPlayer,
+  replacePlayer,
+  handleExceptionRequest,
 } from "./admin/index.js";
 
 // ─── Views ───────────────────────────────────────────────────────────────────
@@ -51,7 +60,19 @@ export {
   enrollForNextSeason,
 } from "./profile/index.js";
 
+// ─── Matches ─────────────────────────────────────────────────────────────────
+export {
+  proposeMatchDate,
+  respondToMatchDate,
+  submitMatchResult,
+} from "./matches/index.js";
+
 // ─── Modals ──────────────────────────────────────────────────────────────────
 export {
   getModalData,
 } from "./modals/index.js";
+
+// ─── Polls ───────────────────────────────────────────────────────────────────
+export {
+  submitPollVote,
+} from "./polls/index.js";
