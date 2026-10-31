@@ -3,58 +3,195 @@
  * AdminZawodnicy – Tab 2: Zarzadzanie graczami.
  * Sekcje: Weryfikacja, Powiadomienia, Kary, Glowna Tabela Zawodnikow.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { ref as dbRef, get, onValue } from 'firebase/database'
+import { computed, onMounted, ref } from 'vue'
+import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { verifyPlayerFeature, deletePlayerDefinitively, kickPlayer, replacePlayer, addPenalty, sendPlayerNotification } from '@/services/api'
+import { addPenalty, deletePlayerDefinitively, sendPlayerNotification, verifyPlayerFeature } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import { useBusyIds } from '@/composables/useBusyIds'
+import { usePlayerDirectory, type UnverifiedPlayer } from '@/composables/usePlayerDirectory'
+import { usePlayerKick, usePlayerReplace } from '@/composables/useRosterModals'
+import { errorText } from '@/utils/errorText'
+import { asRecord, optNum, optStr } from '@/utils/rtdb'
 
-/* --- types --- */
-interface UPlayer { id:string;firstName?:string;lastName?:string;nick?:string;email?:string;verifyAvg?:string;verifyCam?:string;verifyAvgScreen?:string;verifyCamScreen?:string;declaredAvg?:number;isVerified?:boolean }
-interface APlayer { id:string;firstName?:string;lastName?:string;nick?:string;div?:string;isDisqualified?:boolean;isVerified?:boolean;avg?:number;declaredAvg?:number;email?:string;cup?:boolean;summer?:boolean }
-interface CParticipant { id:string;firstName?:string;lastName?:string;nick?:string;div?:string }
-/* ---- 1. Weryfikacja ---- */
-const uPlayers = ref<UPlayer[]>([]);const verifAct = ref<Set<string>>(new Set())
-let _unsubV:(()=>void)|null=null
-function startV(){ const db=getDatabaseClient();_unsubV=onValue(dbRef(db,'players'),(sn:any)=>{const raw=sn.val();if(!raw){uPlayers.value=[];return};uPlayers.value=Object.entries(raw).filter(([,p]:[string,any])=>!p.isVerified).map(([id,p]:[string,any])=>({id,firstName:p.firstName,lastName:p.lastName,nick:p.nick,email:p.email,verifyAvg:p.verifyAvg,verifyCam:p.verifyCam,verifyAvgScreen:p.verifyAvgScreen,verifyCamScreen:p.verifyCamScreen,declaredAvg:p.declaredAvg,isVerified:p.isVerified}))}) }
-async function doVerify(p:UPlayer,feat:'avg'|'cam'|'all'|'manual',act?:'approve'|'reject'){ let davg:number|undefined;if((feat==='avg'&&act==='approve')||feat==='all'||feat==='manual'){const inp=prompt('Wprowadz deklarowana srednia (np. 65.5):',p.declaredAvg?.toString()??'');if(inp===null)return;const pr=parseFloat(inp.replace(',','.'));if(isNaN(pr)||pr<=0){alert('Nieprawidlowa wartosc.');return}davg=pr};const ns=new Set(verifAct.value);ns.add(p.id);verifAct.value=ns;try{const r=await verifyPlayerFeature({playerId:p.id,feature:feat,action:act,declaredAvg:davg});if(!r.success)alert(r.message||'Blad')}catch(e:any){alert(e?.message??'Blad')}finally{const n2=new Set(verifAct.value);n2.delete(p.id);verifAct.value=n2} }
-async function doDelPlayer(p:UPlayer){ if(!confirm('Usunac gracza '+p.firstName+' '+p.lastName+'?')||!confirm('OSTATECZNE POTWIERDZENIE: Usunac '+p.firstName+' '+p.lastName+'?'))return;const ns=new Set(verifAct.value);ns.add(p.id);verifAct.value=ns;try{const r=await deletePlayerDefinitively({playerId:p.id});if(!r.success)alert(r.message||'Blad')}catch(e:any){alert(e?.message??'Blad')}finally{const n2=new Set(verifAct.value);n2.delete(p.id);verifAct.value=n2} }
+const directory = usePlayerDirectory()
+const uPlayers = directory.unverified
+const lPlayers = directory.verified
+const directoryError = directory.error
+const { ids: verifAct, run: runVerify } = useBusyIds()
 
-/* ---- 2. Glowna Tabela Zawodnikow ---- */
-const lPlayers = ref<APlayer[]>([]);const cParticipants = ref<CParticipant[]>([])
 const plFilterDiv = ref('')
-const showKick = ref(false);const kickTarget = ref<APlayer|null>(null);const walkoverScore = ref(5)
-const showRepl = ref(false);const replTarget = ref<APlayer|null>(null);const replNewId = ref('')
-const replSearch = ref('');const replLoading = ref(false);const replMsg = ref('')
-let _unsubLP:(()=>void)|null=null;let _unsubCP:(()=>void)|null=null
+const plDivs = computed(() => {
+  const divisions = new Set<string>()
+  for (const player of lPlayers.value) {
+    if (player.div) divisions.add(player.div)
+  }
+  return [...divisions].sort()
+})
+const fPlayers = computed(() =>
+  plFilterDiv.value ? lPlayers.value.filter((player) => player.div === plFilterDiv.value) : lPlayers.value,
+)
 
-function startGL(){ const db=getDatabaseClient();_unsubLP=onValue(dbRef(db,'players'),(sn:any)=>{const raw=sn.val();if(!raw){lPlayers.value=[];return};lPlayers.value=Object.entries(raw).filter(([,p]:[string,any])=>p.isVerified&&!p.isDisqualified).map(([id,p]:[string,any])=>({id,firstName:p.firstName,lastName:p.lastName,nick:p.nick,div:p.div,isVerified:p.isVerified,isDisqualified:p.isDisqualified,avg:p.avg,declaredAvg:p.declaredAvg,email:p.email,cup:p.cup,summer:p.summer})).sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||''))});_unsubCP=onValue(dbRef(db,'cup/participants'),(sn:any)=>{const raw=sn.val();if(!raw){cParticipants.value=[];return};cParticipants.value=Object.entries(raw).map(([id,p]:[string,any])=>({id,firstName:p.firstName,lastName:p.lastName,nick:p.nick,div:p.div}))}) }
-const plDivs = computed(()=>{const s=new Set<string>();lPlayers.value.forEach(p=>{if(p.div)s.add(p.div)});return[...s].sort()})
-const fPlayers = computed(()=>plFilterDiv.value?lPlayers.value.filter(p=>p.div===plFilterDiv.value):lPlayers.value)
-const replList = computed(()=>lPlayers.value.filter(p=>p.id!==replTarget.value?.id&&(!replSearch.value||(p.lastName||''+p.firstName||'').toLowerCase().includes(replSearch.value.toLowerCase()))).sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||'')))
+const {
+  show: showKick,
+  target: kickTarget,
+  walkoverScore,
+  loading: kickLoading,
+  open: openKick,
+  confirm: doKick,
+} = usePlayerKick(false)
 
-function openKick(p:APlayer){ kickTarget.value=p;walkoverScore.value=5;showKick.value=true }
-async function doKick(){ if(!kickTarget.value)return;try{const r=await kickPlayer({playerId:kickTarget.value.id,walkoverScore:walkoverScore.value,isCup:false});alert(r.message);showKick.value=false}catch(e:any){alert(e?.message??'Blad')} }
-function openRepl(p:APlayer){ replTarget.value=p;replNewId.value='';replSearch.value='';replMsg.value='';replLoading.value=false;showRepl.value=true }
-async function doRepl(){ if(!replTarget.value||!replNewId.value){replMsg.value='Wybierz nowego gracza.';return};replLoading.value=true;replMsg.value='';try{const r=await replacePlayer({oldPlayerId:replTarget.value.id,newPlayerId:replNewId.value,isCup:false,oldPlayerDiv:replTarget.value.div});replMsg.value=r.message;if(r.success)setTimeout(()=>showRepl.value=false,1500)}catch(e:any){replMsg.value=e?.message??'Blad'}finally{replLoading.value=false} }
-/* ---- 3. Powiadomienia ---- */
-const notifPlayer=ref('');const notifTitle=ref('');const notifMsg=ref('');const notifLoad=ref(false);const notifRes=ref('')
-async function sendNotif(){ if(!notifPlayer.value||!notifTitle.value||!notifMsg.value.trim()){notifRes.value='Uzupelnij: gracz, tytul, tresc.';return};notifLoad.value=true;notifRes.value='';try{const r=await sendPlayerNotification({playerId:notifPlayer.value,title:notifTitle.value,message:notifMsg.value});notifRes.value=r.message;notifMsg.value='';notifTitle.value=''}catch(e:any){notifRes.value=e?.message??'Blad'}finally{notifLoad.value=false} }
+const {
+  show: showRepl,
+  target: replTarget,
+  newId: replNewId,
+  search: replSearch,
+  loading: replLoading,
+  message: replMsg,
+  candidates: replList,
+  open: openRepl,
+  confirm: doRepl,
+} = usePlayerReplace(lPlayers, false, true)
 
-/* ---- 4. Kary ---- */
-const penPlayer=ref('');const penReason=ref('');const penPoints=ref(0);const penLoad=ref(false);const penRes=ref('')
-const penList=ref<{playerId:string;playerName:string;reason:string;points:number;div?:string}[]>([])
-async function fetchPen(){ try{const db=getDatabaseClient();const snap=await get(dbRef(db,'penalties'));if(snap.exists())penList.value=Object.entries(snap.val()).map(([id,d]:[string,any])=>({playerId:id,...d})).sort((a,b)=>b.points-a.points);else penList.value=[]}catch(e){console.error(e)} }
-async function addPen(){ if(!penPlayer.value||!penReason.value||penPoints.value<=0){penRes.value='Uzupelnij pola.';return}penLoad.value=true;penRes.value='';try{const r=await addPenalty({playerId:penPlayer.value,points:penPoints.value,reason:penReason.value});penRes.value=r.message;penPlayer.value='';penReason.value='';penPoints.value=0;fetchPen()}catch(e:any){penRes.value=e?.message??'Blad'}finally{penLoad.value=false} }
+async function doVerify(player: UnverifiedPlayer, feature: 'avg' | 'cam' | 'all' | 'manual', action?: 'approve' | 'reject') {
+  let declaredAvg: number | undefined
+  if ((feature === 'avg' && action === 'approve') || feature === 'all' || feature === 'manual') {
+    const input = prompt('Wprowadz deklarowana srednia (np. 65.5):', player.declaredAvg?.toString() ?? '')
+    if (input === null) return
+    const parsed = parseFloat(input.replace(',', '.'))
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      alert('Nieprawidlowa wartosc.')
+      return
+    }
+    declaredAvg = parsed
+  }
+  await runVerify(player.id, async () => {
+    try {
+      const result = await verifyPlayerFeature({ playerId: player.id, feature, action, declaredAvg })
+      if (!result.success) alert(result.message || 'Blad')
+    } catch (err: unknown) {
+      alert(errorText(err))
+    }
+  })
+}
 
-onMounted(()=>{ startV();startGL();fetchPen() })
-onUnmounted(()=>{ _unsubV?.();_unsubLP?.();_unsubCP?.() })
+async function doDelPlayer(player: UnverifiedPlayer) {
+  const label = `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim()
+  if (!confirm('Usunac gracza ' + label + '?') || !confirm('OSTATECZNE POTWIERDZENIE: Usunac ' + label + '?')) return
+  await runVerify(player.id, async () => {
+    try {
+      const result = await deletePlayerDefinitively({ playerId: player.id })
+      if (!result.success) alert(result.message || 'Blad')
+    } catch (err: unknown) {
+      alert(errorText(err))
+    }
+  })
+}
+
+const notifPlayer = ref('')
+const notifTitle = ref('')
+const notifMsg = ref('')
+const notifLoad = ref(false)
+const notifRes = ref('')
+
+async function sendNotif() {
+  if (!notifPlayer.value || !notifTitle.value || !notifMsg.value.trim()) {
+    notifRes.value = 'Uzupelnij: gracz, tytul, tresc.'
+    return
+  }
+  notifLoad.value = true
+  notifRes.value = ''
+  try {
+    const result = await sendPlayerNotification({
+      playerId: notifPlayer.value,
+      title: notifTitle.value,
+      message: notifMsg.value,
+    })
+    notifRes.value = result.message
+    notifMsg.value = ''
+    notifTitle.value = ''
+  } catch (err: unknown) {
+    notifRes.value = errorText(err)
+  } finally {
+    notifLoad.value = false
+  }
+}
+
+interface PenaltyRow {
+  key: string
+  playerName: string
+  reason: string
+  points: number
+}
+
+const penPlayer = ref('')
+const penReason = ref('')
+const penPoints = ref(0)
+const penLoad = ref(false)
+const penRes = ref('')
+const penList = ref<PenaltyRow[]>([])
+
+async function fetchPen() {
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'penalties'))
+    const raw = asRecord(snap.val())
+    if (!raw) {
+      penList.value = []
+      return
+    }
+    penList.value = Object.entries(raw)
+      .map(([key, value]) => {
+        const row = asRecord(value) ?? {}
+        return {
+          key,
+          playerName: optStr(row.playerName) ?? 'Gracz',
+          reason: optStr(row.reason) ?? '',
+          points: optNum(row.points) ?? 0,
+        }
+      })
+      .sort((a, b) => b.points - a.points)
+  } catch (err: unknown) {
+    penRes.value = errorText(err)
+  }
+}
+
+async function addPen() {
+  if (!penPlayer.value || !penReason.value || penPoints.value <= 0) {
+    penRes.value = 'Uzupelnij pola.'
+    return
+  }
+  penLoad.value = true
+  penRes.value = ''
+  try {
+    const result = await addPenalty({
+      playerId: penPlayer.value,
+      points: penPoints.value,
+      reason: penReason.value,
+    })
+    penRes.value = result.message
+    penPlayer.value = ''
+    penReason.value = ''
+    penPoints.value = 0
+    await fetchPen()
+  } catch (err: unknown) {
+    penRes.value = errorText(err)
+  } finally {
+    penLoad.value = false
+  }
+}
+
+onMounted(() => {
+  directory.start()
+  fetchPen()
+})
 </script>
 <template>
 <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
   <!-- WERYFIKACJA -->
   <AdminSectionCard title="Weryfikacja Nowych Graczy" dot-color="bg-lime animate-pulse" class="xl:col-span-2">
+    <p v-if="directoryError" class="text-sm font-bold text-red-400 mb-3">{{ directoryError }}</p>
     <div v-if="uPlayers.length===0" class="text-center py-6 text-xs text-muted italic">Brak graczy czekajacych na weryfikacje.</div>
     <div v-else class="space-y-3 max-h-[500px] overflow-y-auto pr-1">
       <div v-for="p in uPlayers" :key="p.id" class="rounded-xl border border-line bg-surface-2 px-4 py-3">
@@ -93,8 +230,12 @@ onUnmounted(()=>{ _unsubV?.();_unsubLP?.();_unsubCP?.() })
   </AdminSectionCard>
   <!-- POWIADOMIENIA -->
   <AdminSectionCard title="Powiadomienia" dot-color="bg-amber-500">
-    <textarea v-model="notifMsg" placeholder="Tresc komunikatu do wszystkich graczy..." rows="3" class="w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-xs text-fg placeholder:text-muted/50 focus:border-lime/60 focus:outline-none resize-none"></textarea>
-    <button @click="sendNotif" :disabled="notifLoad" class="mt-3 w-full rounded-xl bg-lime text-on-lime px-4 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ notifLoad?'Wysylanie...':'Wyslij Powiadomienie' }}</button>
+    <div class="space-y-3">
+      <div><label class="label block text-muted mb-1">Gracz</label><select v-model="notifPlayer" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"><option value="">-- Wybierz --</option><option v-for="p in lPlayers" :key="p.id" :value="p.id">{{ p.firstName }} {{ p.lastName }}</option></select></div>
+      <div><label class="label block text-muted mb-1">Tytul</label><input v-model="notifTitle" type="text" placeholder="Tytul powiadomienia" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
+      <textarea v-model="notifMsg" placeholder="Tresc powiadomienia..." rows="3" class="w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-xs text-fg placeholder:text-muted/50 focus:border-lime/60 focus:outline-none resize-none"></textarea>
+      <button @click="sendNotif" :disabled="notifLoad" class="w-full rounded-xl bg-lime text-on-lime px-4 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ notifLoad?'Wysylanie...':'Wyslij Powiadomienie' }}</button>
+    </div>
     <p v-if="notifRes" :class="['text-xs mt-2 font-bold',notifRes.includes('Blad')?'text-red-400':'text-lime']">{{ notifRes }}</p>
   </AdminSectionCard>
 
@@ -107,7 +248,7 @@ onUnmounted(()=>{ _unsubV?.();_unsubLP?.();_unsubCP?.() })
       <button @click="addPen" :disabled="penLoad" class="w-full rounded-xl bg-red-600 text-white px-4 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-red-500 disabled:opacity-50 transition-colors">{{ penLoad?'Zapisywanie...':'Przyznaj Kare' }}</button>
       <p v-if="penRes" :class="['text-xs font-bold',penRes.includes('Blad')?'text-red-400':'text-lime']">{{ penRes }}</p>
     </div>
-    <div v-if="penList.length>0" class="mt-4"><h4 class="text-[10px] font-black uppercase text-muted mb-2">Przyznane kary:</h4><div class="space-y-1 max-h-[200px] overflow-y-auto"><div v-for="k in penList" :key="k.playerId" class="flex justify-between text-xs rounded-lg bg-surface-2 px-3 py-2"><span class="text-fg font-bold">{{ k.playerName }}</span><span class="text-muted">{{ k.reason }} (-{{ k.points }} pkt)</span></div></div></div>
+    <div v-if="penList.length>0" class="mt-4"><h4 class="text-[10px] font-black uppercase text-muted mb-2">Przyznane kary:</h4><div class="space-y-1 max-h-[200px] overflow-y-auto"><div v-for="k in penList" :key="k.key" class="flex justify-between text-xs rounded-lg bg-surface-2 px-3 py-2"><span class="text-fg font-bold">{{ k.playerName }}</span><span class="text-muted">{{ k.reason }} (-{{ k.points }} pkt)</span></div></div></div>
   </AdminSectionCard>
   <!-- MODAL: Wyzuc Gracza -->
   <Teleport to="body">
@@ -117,7 +258,7 @@ onUnmounted(()=>{ _unsubV?.();_unsubLP?.();_unsubCP?.() })
         <p class="text-sm text-muted">Gracz: <span class="font-bold text-fg">{{ kickTarget?.firstName }} {{ kickTarget?.lastName }}</span></p>
         <label class="block"><span class="text-[10px] font-black uppercase text-muted tracking-widest">Wynik walkowera</span><select v-model.number="walkoverScore" class="mt-1 w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-fg"><option :value="5">5:0</option><option :value="6">6:0</option><option :value="7">7:0</option><option :value="8">8:0</option></select></label>
         <p class="text-xs text-muted italic">Wszystkie nierozegrane mecze otrzymaja walkower {{ walkoverScore }}:0.</p>
-        <div class="flex gap-3"><button @click="showKick=false" class="flex-1 rounded-xl bg-fg/5 border border-line px-4 py-3 font-extrabold uppercase text-[10px] text-fg/70 hover:bg-fg/10">Anuluj</button><button @click="doKick" class="flex-1 rounded-xl bg-red-600 text-white px-4 py-3 font-extrabold uppercase text-[10px] hover:bg-red-500">Wy&#x017c;uc</button></div>
+        <div class="flex gap-3"><button @click="showKick=false" class="flex-1 rounded-xl bg-fg/5 border border-line px-4 py-3 font-extrabold uppercase text-[10px] text-fg/70 hover:bg-fg/10">Anuluj</button><button @click="doKick" :disabled="kickLoading" class="flex-1 rounded-xl bg-red-600 text-white px-4 py-3 font-extrabold uppercase text-[10px] hover:bg-red-500 disabled:opacity-50">{{ kickLoading?'Usuwam...':'Wy&#x017c;uc' }}</button></div>
       </div>
     </div>
   </Teleport>

@@ -3,55 +3,272 @@
  * AdminLiga – Tab 3: Zarzadzanie Sezonem Ligi.
  * Sekcje: Struktura Ligi, Przydzial Graczy, Licznik zapisanych, Generator Terminarza, Generator Barazy.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { ref as dbRef, get, onValue } from 'firebase/database'
+import { computed, onMounted, ref } from 'vue'
+import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { saveLeagueLevel, deleteLeagueLevel, massAssignPlayers, generateAllSchedulesAdmin, generatePlayoffsAdmin } from '@/services/api'
+import { deleteLeagueLevel, generateAllSchedulesAdmin, generatePlayoffsAdmin, massAssignPlayers, saveLeagueLevel } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import { useBusyIds } from '@/composables/useBusyIds'
+import { useRtdbValue } from '@/composables/useRtdbValue'
+import { useVerifiedPlayers } from '@/composables/usePlayerDirectory'
+import { errorText } from '@/utils/errorText'
+import { playerFullName } from '@/utils/playerName'
+import { asRecord } from '@/utils/rtdb'
 
-interface LevelForm { level:string; groups:number; promo:number; playoffs:number; releg:number; playersLimit:number }
-interface APlayer { id:string;firstName?:string;lastName?:string;div?:string;isVerified?:boolean;isDisqualified?:boolean }/* ---- 1. Struktura Ligi ---- */
-const leagueStructure=ref<Record<string,any>>({})
-const newLevel=ref<LevelForm>({level:'',groups:1,promo:0,playoffs:0,releg:0,playersLimit:8})
-const strSaveLoad=ref(false);const strDelLoad=ref<Set<string>>(new Set())
-let _unsubStr:(()=>void)|null=null
-function startStr(){ const db=getDatabaseClient();_unsubStr=onValue(dbRef(db,'settings/leagueStructure'),(sn:any)=>{leagueStructure.value=sn.val()||{}}) }
-async function saveLvl(){ if(!newLevel.value.level||!newLevel.value.groups){alert('Poziom i ilosc grup wymagane.');return};strSaveLoad.value=true;try{const r=await saveLeagueLevel(newLevel.value);if(r.success)newLevel.value={level:'',groups:1,promo:0,playoffs:0,releg:0,playersLimit:8};else alert(r.message||'Blad')}catch(e:any){alert(e?.message??'Blad')}finally{strSaveLoad.value=false} }
-async function delLvl(level:string){ if(!confirm('Usunac strukture Dywizji '+level+'?'))return;const ns=new Set(strDelLoad.value);ns.add(level);strDelLoad.value=ns;try{const r=await deleteLeagueLevel({level});if(!r.success)alert(r.message||'Blad')}catch(e:any){alert(e?.message??'Blad')}finally{const n2=new Set(strDelLoad.value);n2.delete(level);strDelLoad.value=n2} }
+interface LevelForm {
+  level: string
+  groups: number
+  promo: number
+  playoffs: number
+  releg: number
+  playersLimit: number
+}
 
-/* ---- 2. Przydzial Graczy (Masowy) ---- */
-const selectedIds=ref<Set<string>>(new Set())
-const massSource=ref('Wszyscy');const massTarget=ref('POCZEKALNIA');const massLoad=ref(false);const massMsg=ref('')
-const allPlayers=ref<APlayer[]>([])
-let _unsubMP:(()=>void)|null=null
-function startMP(){ const db=getDatabaseClient();_unsubMP=onValue(dbRef(db,'players'),(sn:any)=>{const raw=sn.val();if(!raw){allPlayers.value=[];return};allPlayers.value=Object.entries(raw).filter(([,p]:[string,any])=>p.isVerified&&!p.isDisqualified).map(([id,p]:[string,any])=>({id,...p})).sort((a,b)=>(a.lastName||'').localeCompare(b.lastName||''))}) }
-const strLevels=computed(()=>Object.keys(leagueStructure.value).sort((a,b)=>+a-+b))
-const massSrcOpts=computed(()=>{const o=['Wszyscy','Poczekalnia'];strLevels.value.forEach(l=>o.push('Dywizja '+l));return o})
-const massTgtOpts=computed(()=>{const o=['POCZEKALNIA'];strLevels.value.forEach(l=>o.push('Dywizja '+l));return o})
-const filtMass=computed(()=>{const f=massSource.value;return allPlayers.value.filter(p=>{if(f==='Wszyscy')return true;if(f==='Poczekalnia')return!p.div;const m=f.match(/^Dywizja (\d+)$/);return m?p.div==='Dywizja '+m[1]:true})})
-const isAllSel=computed(()=>{const f=filtMass.value;return f.length>0&&f.every(p=>selectedIds.value.has(p.id))})
-function togAll(){ if(isAllSel.value){const n=new Set(selectedIds.value);filtMass.value.forEach(p=>n.delete(p.id));selectedIds.value=n}else{const n=new Set(selectedIds.value);filtMass.value.forEach(p=>n.add(p.id));selectedIds.value=n} }
-function togP(id:string){const n=new Set(selectedIds.value);if(n.has(id))n.delete(id);else n.add(id);selectedIds.value=n}
-async function doMass(){ if(selectedIds.value.size===0){alert('Nie wybrano graczy.');return};if(!massTarget.value){alert('Nie wybrano dywizji.');return};massLoad.value=true;massMsg.value='';try{const r=await massAssignPlayers({playerIds:[...selectedIds.value],targetDiv:massTarget.value});if(r.success){massMsg.value=r.message;selectedIds.value=new Set()}else alert(r.message||'Blad')}catch(e:any){alert(e?.message??'Blad')}finally{massLoad.value=false} }
+interface LeagueLevel {
+  groups?: number
+  promo?: number
+  playoffs?: number
+  releg?: number
+  playersLimit?: number
+}
 
-/* ---- 3. Licznik zapisanych ---- */
-const enrollCount=ref(0);const enrollLoad=ref(false)
-async function fEnroll(){ enrollLoad.value=true;try{const db=getDatabaseClient();const snap=await get(dbRef(db,'enrollments'));if(snap.exists()){const d=snap.val();enrollCount.value=Object.keys(d).length}else enrollCount.value=0}catch(e){console.error(e)}finally{enrollLoad.value=false} }
+interface PlayoffSlot {
+  round: 'semifinal' | 'final'
+  p1Id: string
+  p1Name: string
+  p2Id: string
+  p2Name: string
+}
 
-/* ---- 4. Generator Terminarza ---- */
-const schedLoad=ref(false);const schedMsg=ref('')
-async function doGenSched(){ if(!confirm('Wygenerowac terminarz dla wszystkich dywizji? Usunie obecny terminarz i zresetuje statystyki graczy!'))return;schedLoad.value=true;schedMsg.value='';try{const r=await generateAllSchedulesAdmin({});schedMsg.value=r.message;alert(r.message)}catch(e:any){schedMsg.value=e?.message??'Blad';alert(schedMsg.value)}finally{schedLoad.value=false} }
+const emptyLevel = (): LevelForm => ({ level: '', groups: 1, promo: 0, playoffs: 0, releg: 0, playersLimit: 8 })
 
-/* ---- 5. Generator Barazy ---- */
-const pofTargetSem=ref('AWANS');const pofTargetFin=ref('AWANS')
-const pofS1=ref('');const pofS2=ref('');const pofS3=ref('');const pofS4=ref('')
-const pofF1=ref('');const pofF2=ref('');const pofLoad=ref(false);const pofMsg=ref('')
-const pofPlayers=computed(()=>allPlayers.value.map(p=>({id:p.id,name:(p.lastName||''+' '+p.firstName||'').trim()||p.id})).sort((a,b)=>a.name.localeCompare(b.name)))
-async function doGenSem(){ const tgt=pofTargetSem.value.trim().toUpperCase();const ids=[pofS1.value,pofS2.value,pofS3.value,pofS4.value].filter(Boolean);if(ids.length<2){alert('Wybierz co najmniej 2 graczy.');return};const ms=[];for(let i=0;i<ids.length;i+=2){if(i+1<ids.length)ms.push({round:'semifinal',p1Id:ids[i],p1Name:pofPlayers.value.find(x=>x.id===ids[i])?.name||ids[i],p2Id:ids[i+1],p2Name:pofPlayers.value.find(x=>x.id===ids[i+1])?.name||ids[i+1]})};if(ms.length===0){alert('Za malo graczy.');return};pofLoad.value=true;pofMsg.value='';try{const r=await generatePlayoffsAdmin({target:tgt,matches:ms});pofMsg.value=r.message;alert(r.message)}catch(e:any){pofMsg.value=e?.message??'Blad'}finally{pofLoad.value=false} }
-async function doGenFin(){ const tgt=pofTargetFin.value.trim().toUpperCase();const ids=[pofF1.value,pofF2.value].filter(Boolean);if(ids.length<2){alert('Wybierz 2 graczy.');return};const ms=[{round:'final',p1Id:ids[0],p1Name:pofPlayers.value.find(x=>x.id===ids[0])?.name||ids[0],p2Id:ids[1],p2Name:pofPlayers.value.find(x=>x.id===ids[1])?.name||ids[1]}];pofLoad.value=true;pofMsg.value='';try{const r=await generatePlayoffsAdmin({target:tgt,matches:ms});pofMsg.value=r.message;alert(r.message)}catch(e:any){pofMsg.value=e?.message??'Blad'}finally{pofLoad.value=false} }
+const structure = useRtdbValue(
+  'settings/leagueStructure',
+  (snapshot) => (asRecord(snapshot.val()) ?? {}) as Record<string, LeagueLevel>,
+  {} as Record<string, LeagueLevel>,
+)
+const leagueStructure = structure.data
+const structureError = structure.error
+const newLevel = ref<LevelForm>(emptyLevel())
+const strSaveLoad = ref(false)
+const { ids: strDelLoad, run: runDeleteLevel } = useBusyIds()
 
-onMounted(()=>{ startStr();startMP();fEnroll() })
-onUnmounted(()=>{ if(_unsubStr)_unsubStr(); if(_unsubMP)_unsubMP() })
+const verified = useVerifiedPlayers()
+const allPlayers = verified.data
+const playersError = verified.error
+
+const selectedIds = ref<Set<string>>(new Set())
+const massSource = ref('Wszyscy')
+const massTarget = ref('POCZEKALNIA')
+const massLoad = ref(false)
+const massMsg = ref('')
+
+const strLevels = computed(() => Object.keys(leagueStructure.value).sort((a, b) => +a - +b))
+const massSrcOpts = computed(() => ['Wszyscy', 'Poczekalnia', ...strLevels.value.map((level) => 'Dywizja ' + level)])
+const massTgtOpts = computed(() => ['POCZEKALNIA', ...strLevels.value.map((level) => 'Dywizja ' + level)])
+const filtMass = computed(() => {
+  const source = massSource.value
+  return allPlayers.value.filter((player) => {
+    if (source === 'Wszyscy') return true
+    if (source === 'Poczekalnia') return !player.div
+    const match = source.match(/^Dywizja (\d+)$/)
+    return match ? player.div === 'Dywizja ' + match[1] : true
+  })
+})
+const isAllSel = computed(() => {
+  const visible = filtMass.value
+  return visible.length > 0 && visible.every((player) => selectedIds.value.has(player.id))
+})
+
+function togAll() {
+  const next = new Set(selectedIds.value)
+  for (const player of filtMass.value) {
+    if (isAllSel.value) next.delete(player.id)
+    else next.add(player.id)
+  }
+  selectedIds.value = next
+}
+
+function togP(id: string) {
+  const next = new Set(selectedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedIds.value = next
+}
+
+async function saveLvl() {
+  if (!newLevel.value.level || !newLevel.value.groups) {
+    alert('Poziom i ilosc grup wymagane.')
+    return
+  }
+  strSaveLoad.value = true
+  try {
+    const result = await saveLeagueLevel(newLevel.value)
+    if (result.success) newLevel.value = emptyLevel()
+    else alert(result.message || 'Blad')
+  } catch (err: unknown) {
+    alert(errorText(err))
+  } finally {
+    strSaveLoad.value = false
+  }
+}
+
+async function delLvl(level: string) {
+  if (!confirm('Usunac strukture Dywizji ' + level + '?')) return
+  await runDeleteLevel(level, async () => {
+    try {
+      const result = await deleteLeagueLevel({ level })
+      if (!result.success) alert(result.message || 'Blad')
+    } catch (err: unknown) {
+      alert(errorText(err))
+    }
+  })
+}
+
+async function doMass() {
+  if (selectedIds.value.size === 0) {
+    alert('Nie wybrano graczy.')
+    return
+  }
+  if (!massTarget.value) {
+    alert('Nie wybrano dywizji.')
+    return
+  }
+  massLoad.value = true
+  massMsg.value = ''
+  try {
+    const result = await massAssignPlayers({
+      playerIds: [...selectedIds.value],
+      targetDiv: massTarget.value,
+    })
+    if (result.success) {
+      massMsg.value = result.message
+      selectedIds.value = new Set()
+    } else alert(result.message || 'Blad')
+  } catch (err: unknown) {
+    alert(errorText(err))
+  } finally {
+    massLoad.value = false
+  }
+}
+
+const enrollCount = ref(0)
+const enrollLoad = ref(false)
+const enrollMsg = ref('')
+
+async function fEnroll() {
+  enrollLoad.value = true
+  enrollMsg.value = ''
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'enrollments'))
+    const value = snap.val()
+    if (Array.isArray(value)) enrollCount.value = value.length
+    else {
+      const data = asRecord(value)
+      enrollCount.value = data ? Object.keys(data).length : 0
+    }
+  } catch (err: unknown) {
+    enrollMsg.value = errorText(err)
+  } finally {
+    enrollLoad.value = false
+  }
+}
+
+const schedLoad = ref(false)
+const schedMsg = ref('')
+
+async function doGenSched() {
+  if (!confirm('Wygenerowac terminarz dla wszystkich dywizji? Usunie obecny terminarz i zresetuje statystyki graczy!')) return
+  schedLoad.value = true
+  schedMsg.value = ''
+  try {
+    const result = await generateAllSchedulesAdmin({})
+    schedMsg.value = result.message
+    alert(result.message)
+  } catch (err: unknown) {
+    schedMsg.value = errorText(err)
+    alert(schedMsg.value)
+  } finally {
+    schedLoad.value = false
+  }
+}
+
+const pofTargetSem = ref('AWANS')
+const pofTargetFin = ref('AWANS')
+const pofS1 = ref('')
+const pofS2 = ref('')
+const pofS3 = ref('')
+const pofS4 = ref('')
+const pofF1 = ref('')
+const pofF2 = ref('')
+const pofLoad = ref(false)
+const pofMsg = ref('')
+const pofPlayers = computed(() =>
+  allPlayers.value
+    .map((player) => ({ id: player.id, name: playerFullName(player, player.id) }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+)
+
+function playerName(id: string): string {
+  return pofPlayers.value.find((player) => player.id === id)?.name || id
+}
+
+function pairPlayers(ids: string[], round: 'semifinal' | 'final'): PlayoffSlot[] {
+  const matches: PlayoffSlot[] = []
+  for (let i = 0; i < ids.length; i += 2) {
+    const p1Id = ids[i]
+    const p2Id = ids[i + 1]
+    if (!p1Id || !p2Id) continue
+    matches.push({ round, p1Id, p1Name: playerName(p1Id), p2Id, p2Name: playerName(p2Id) })
+  }
+  return matches
+}
+
+async function submitPlayoffs(target: string, matches: PlayoffSlot[]) {
+  pofLoad.value = true
+  pofMsg.value = ''
+  try {
+    const result = await generatePlayoffsAdmin({ target, matches })
+    pofMsg.value = result.message
+    alert(result.message)
+  } catch (err: unknown) {
+    pofMsg.value = errorText(err)
+  } finally {
+    pofLoad.value = false
+  }
+}
+
+async function doGenSem() {
+  const target = pofTargetSem.value.trim().toUpperCase()
+  const ids = [pofS1.value, pofS2.value, pofS3.value, pofS4.value].filter(Boolean)
+  if (ids.length < 2) {
+    alert('Wybierz co najmniej 2 graczy.')
+    return
+  }
+  const matches = pairPlayers(ids, 'semifinal')
+  if (matches.length === 0) {
+    alert('Za malo graczy.')
+    return
+  }
+  await submitPlayoffs(target, matches)
+}
+
+async function doGenFin() {
+  const target = pofTargetFin.value.trim().toUpperCase()
+  const ids = [pofF1.value, pofF2.value].filter(Boolean)
+  if (ids.length < 2) {
+    alert('Wybierz 2 graczy.')
+    return
+  }
+  await submitPlayoffs(target, pairPlayers(ids, 'final'))
+}
+
+onMounted(() => {
+  structure.start()
+  verified.start()
+  fEnroll()
+})
 </script>
 
 <template>
@@ -76,7 +293,8 @@ onUnmounted(()=>{ if(_unsubStr)_unsubStr(); if(_unsubMP)_unsubMP() })
         <div><span class="font-bold text-fg">Dywizja {{ lvl }}</span><span class="text-xs text-muted ml-3">{{ cfg.groups }} grup, Awans:{{ cfg.promo }}, Baraze:{{ cfg.playoffs }}, Spadek:{{ cfg.releg }}, Limit:{{ cfg.playersLimit }}</span></div>
         <button @click="delLvl(lvl)" :disabled="strDelLoad.has(lvl)" class="text-red-400 hover:text-red-300 text-xs font-bold uppercase">Usun</button>
       </div>
-      <p v-if="Object.keys(leagueStructure).length===0" class="text-xs text-muted italic">Brak zdefiniowanych poziomow.</p>
+      <p v-if="structureError" class="text-sm font-bold text-red-400">{{ structureError }}</p>
+      <p v-else-if="Object.keys(leagueStructure).length===0" class="text-xs text-muted italic">Brak zdefiniowanych poziomow.</p>
     </div>
   </AdminSectionCard>
   <!-- PRZYDZIAL GRACZY -->
@@ -86,6 +304,7 @@ onUnmounted(()=>{ if(_unsubStr)_unsubStr(); if(_unsubMP)_unsubMP() })
       <div><label class="label block text-muted mb-1">Cel</label><select v-model="massTarget" class="rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg"><option v-for="o in massTgtOpts" :key="o" :value="o">{{ o }}</option></select></div>
       <button @click="doMass" :disabled="massLoad" class="rounded-xl bg-teal-600 text-white px-6 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-teal-500 disabled:opacity-50">{{ massLoad?'Przypisuje...':'Przypisz Wybranych ('+selectedIds.size+')' }}</button>
     </div>
+    <p v-if="playersError" class="text-sm font-bold text-red-400 mb-3">{{ playersError }}</p>
     <p v-if="massMsg" class="text-xs text-lime font-bold mb-3">{{ massMsg }}</p>
     <div class="max-h-[400px] overflow-y-auto">
       <table class="w-full text-xs"><thead class="sticky top-0 bg-surface z-10"><tr class="border-b border-line text-muted uppercase tracking-widest text-[10px]"><th class="text-left py-2 px-2"><input type="checkbox" :checked="isAllSel" @change="togAll" class="rounded"/></th><th class="text-left py-2 px-2">Gracz</th><th class="text-left py-2 px-2">Obecna Dywizja</th></tr></thead>
@@ -98,6 +317,7 @@ onUnmounted(()=>{ if(_unsubStr)_unsubStr(); if(_unsubMP)_unsubMP() })
     <div class="text-center py-4">
       <span class="text-4xl font-display font-extrabold text-lime">{{ enrollCount }}</span>
       <p class="text-xs text-muted mt-1">zapisanych na kolejny sezon</p>
+      <p v-if="enrollMsg" class="text-xs text-red-400 mt-2">{{ enrollMsg }}</p>
       <button @click="fEnroll" :disabled="enrollLoad" class="mt-3 label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Odswiez</button>
     </div>
   </AdminSectionCard>

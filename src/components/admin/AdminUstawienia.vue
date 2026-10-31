@@ -3,32 +3,179 @@
  * AdminUstawienia – Tab 7: Ustawienia.
  * Harmonogram/Daty, Administratorzy, Regulamin (Markdown), Zakoncz Sezon.
  */
-import { ref, computed, onMounted } from 'vue'
-import { ref as dbRef, get, set } from 'firebase/database'
+import { computed, onMounted, ref } from 'vue'
+import { get, ref as dbRef, set } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { manageAdminEmails, archiveCurrentSeason, updateRules } from '@/services/api'
-import AdminSectionCard from './shared/AdminSectionCard.vue'/* ---- Harmonogram / Daty ---- */
-const schedSignupStart=ref('');const schedSignupEnd=ref('');const schedLeagueStart=ref('');const schedSummerStart=ref('');const schedMsg=ref('');const schedLoad=ref(false)
-async function loadSched(){ try{const db=getDatabaseClient();const snap=await get(dbRef(db,'settings/schedule'));if(snap.exists()){const d=snap.val();schedSignupStart.value=d.signupStart||'';schedSignupEnd.value=d.signupEnd||'';schedLeagueStart.value=d.leagueStart||'';schedSummerStart.value=d.summerStart||''}}catch(e){console.error(e)} }
-async function saveSched(){ schedLoad.value=true;schedMsg.value='';try{const db=getDatabaseClient();await set(dbRef(db,'settings/schedule'),{signupStart:schedSignupStart.value,signupEnd:schedSignupEnd.value,leagueStart:schedLeagueStart.value,summerStart:schedSummerStart.value});schedMsg.value='Zapisano harmonogram!'}catch(e:any){schedMsg.value='Blad: '+(e?.message||'')}finally{schedLoad.value=false} }
+import { archiveCurrentSeason, manageAdminEmails, updateRules } from '@/services/api'
+import AdminSectionCard from './shared/AdminSectionCard.vue'
+import { useSafeTimeout } from '@/composables/useSafeTimeout'
+import { errorText } from '@/utils/errorText'
+import { asRecord, optStr } from '@/utils/rtdb'
+import { simpleMarkdown } from '@/utils/simpleMarkdown'
 
-/* ---- Administratorzy ---- */
-const adminEmails=ref<string[]>([]);const adminEmailsLoad=ref(false);const adminEmailsMsg=ref('');const newAdminEmail=ref('')
-async function fetchAdminEmails(){ adminEmailsLoad.value=true;try{const db=getDatabaseClient();const snap=await get(dbRef(db,'settings/adminEmails'));adminEmails.value=snap.exists()?snap.val():[]}catch(e){console.error(e)}finally{adminEmailsLoad.value=false} }
-async function addAdmin(){ const email=newAdminEmail.value.trim();if(!email)return;adminEmailsMsg.value='';try{const r=await manageAdminEmails({email,action:'add'});adminEmailsMsg.value=r.message;newAdminEmail.value='';fetchAdminEmails()}catch(e:any){adminEmailsMsg.value=e?.message??'Blad'} }
-async function rmAdmin(email:string){ adminEmailsMsg.value='';try{const r=await manageAdminEmails({email,action:'remove'});adminEmailsMsg.value=r.message;fetchAdminEmails()}catch(e:any){adminEmailsMsg.value=e?.message??'Blad'} }
+const { later } = useSafeTimeout()
 
-/* ---- Regulamin ---- */
-const rulesContent=ref('');const rulesLoad=ref(false);const rulesMsg=ref('');const rulesTab=ref<'edit'|'preview'>('edit')
-function simpleMd(text:string):string{ if(!text)return'';let h=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');h=h.replace(/^### (.+)$/gm,'<h3 class="text-lg font-bold mt-4 mb-2">$1</h3>');h=h.replace(/^## (.+)$/gm,'<h2 class="text-xl font-bold mt-4 mb-2">$1</h2>');h=h.replace(/^# (.+)$/gm,'<h1 class="text-2xl font-bold mt-4 mb-2">$1</h1>');h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');h=h.replace(/\n/g,'<br/>');return h }
-const rulesPreview=computed(()=>simpleMd(rulesContent.value))
-async function loadRules(){ rulesLoad.value=true;try{const db=getDatabaseClient();const snap=await get(dbRef(db,'settings/rules'));if(snap.exists())rulesContent.value=typeof snap.val()==='string'?snap.val():JSON.stringify(snap.val())}catch(e){console.error(e)}finally{rulesLoad.value=false} }
-async function saveRules(){ rulesLoad.value=true;rulesMsg.value='';try{const r=await updateRules({content:rulesContent.value});rulesMsg.value=r.message}catch(e:any){rulesMsg.value=e?.message??'Blad'}finally{rulesLoad.value=false} }
+const schedSignupStart = ref('')
+const schedSignupEnd = ref('')
+const schedLeagueStart = ref('')
+const schedSummerStart = ref('')
+const schedMsg = ref('')
+const schedLoad = ref(false)
 
-/* ---- Zakoncz Sezon ---- */
-const archiveLoad=ref(false);const archiveMsg=ref('');const archiveConfirm1=ref(false)
-async function doArchive(){ if(!archiveConfirm1.value){ if(confirm('UWAGA: Zakonczyc sezon? Archiwizuje dane i przeniesie graczy do Poczekalni.')){archiveConfirm1.value=true;setTimeout(()=>archiveConfirm1.value=false,10000)}return }; if(!confirm('OSTATECZNE POTWIERDZENIE: Na pewno zakonczyc sezon? Tej operacji nie mozna cofnac!')){archiveConfirm1.value=false;return};archiveLoad.value=true;archiveMsg.value='';try{const r=await archiveCurrentSeason({});archiveMsg.value=r.message;archiveConfirm1.value=false}catch(e:any){archiveMsg.value=e?.message??'Blad'}finally{archiveLoad.value=false} }
-onMounted(()=>{ loadSched();fetchAdminEmails();loadRules() })
+async function loadSched() {
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'settings/schedule'))
+    const data = asRecord(snap.val())
+    if (!data) return
+    schedSignupStart.value = optStr(data.signupStart) ?? ''
+    schedSignupEnd.value = optStr(data.signupEnd) ?? ''
+    schedLeagueStart.value = optStr(data.leagueStart) ?? ''
+    schedSummerStart.value = optStr(data.summerStart) ?? ''
+  } catch (err: unknown) {
+    schedMsg.value = errorText(err)
+  }
+}
+
+async function saveSched() {
+  schedLoad.value = true
+  schedMsg.value = ''
+  try {
+    const db = getDatabaseClient()
+    await set(dbRef(db, 'settings/schedule'), {
+      signupStart: schedSignupStart.value,
+      signupEnd: schedSignupEnd.value,
+      leagueStart: schedLeagueStart.value,
+      summerStart: schedSummerStart.value,
+    })
+    schedMsg.value = 'Zapisano harmonogram!'
+  } catch (err: unknown) {
+    schedMsg.value = errorText(err)
+  } finally {
+    schedLoad.value = false
+  }
+}
+
+const adminEmails = ref<string[]>([])
+const adminEmailsLoad = ref(false)
+const adminEmailsMsg = ref('')
+const newAdminEmail = ref('')
+
+function normalizeEmails(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+  }
+  const record = asRecord(value)
+  if (!record) return []
+  const fromValues = Object.values(record).filter((item): item is string => typeof item === 'string' && item.length > 0)
+  return fromValues.length > 0 ? fromValues : Object.keys(record)
+}
+
+async function fetchAdminEmails() {
+  adminEmailsLoad.value = true
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'settings/adminEmails'))
+    adminEmails.value = normalizeEmails(snap.val())
+  } catch (err: unknown) {
+    adminEmailsMsg.value = errorText(err)
+  } finally {
+    adminEmailsLoad.value = false
+  }
+}
+
+async function addAdmin() {
+  const email = newAdminEmail.value.trim()
+  if (!email) return
+  adminEmailsMsg.value = ''
+  try {
+    const result = await manageAdminEmails({ email, action: 'add' })
+    adminEmailsMsg.value = result.message
+    newAdminEmail.value = ''
+    await fetchAdminEmails()
+  } catch (err: unknown) {
+    adminEmailsMsg.value = errorText(err)
+  }
+}
+
+async function rmAdmin(email: string) {
+  adminEmailsMsg.value = ''
+  try {
+    const result = await manageAdminEmails({ email, action: 'remove' })
+    adminEmailsMsg.value = result.message
+    await fetchAdminEmails()
+  } catch (err: unknown) {
+    adminEmailsMsg.value = errorText(err)
+  }
+}
+
+const rulesContent = ref('')
+const rulesLoad = ref(false)
+const rulesMsg = ref('')
+const rulesTab = ref<'edit' | 'preview'>('edit')
+const rulesPreview = computed(() => simpleMarkdown(rulesContent.value))
+
+async function loadRules() {
+  rulesLoad.value = true
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'settings/rules'))
+    const value = snap.val()
+    if (snap.exists()) rulesContent.value = typeof value === 'string' ? value : JSON.stringify(value)
+  } catch (err: unknown) {
+    rulesMsg.value = errorText(err)
+  } finally {
+    rulesLoad.value = false
+  }
+}
+
+async function saveRules() {
+  rulesLoad.value = true
+  rulesMsg.value = ''
+  try {
+    const result = await updateRules({ content: rulesContent.value })
+    rulesMsg.value = result.message
+  } catch (err: unknown) {
+    rulesMsg.value = errorText(err)
+  } finally {
+    rulesLoad.value = false
+  }
+}
+
+const archiveLoad = ref(false)
+const archiveMsg = ref('')
+const archiveConfirm1 = ref(false)
+
+async function doArchive() {
+  if (!archiveConfirm1.value) {
+    if (confirm('UWAGA: Zakonczyc sezon? Archiwizuje dane i przeniesie graczy do Poczekalni.')) {
+      archiveConfirm1.value = true
+      later(() => { archiveConfirm1.value = false }, 10000)
+    }
+    return
+  }
+  if (!confirm('OSTATECZNE POTWIERDZENIE: Na pewno zakonczyc sezon? Tej operacji nie mozna cofnac!')) {
+    archiveConfirm1.value = false
+    return
+  }
+  archiveLoad.value = true
+  archiveMsg.value = ''
+  try {
+    const result = await archiveCurrentSeason({})
+    archiveMsg.value = result.message
+    archiveConfirm1.value = false
+  } catch (err: unknown) {
+    archiveMsg.value = errorText(err)
+  } finally {
+    archiveLoad.value = false
+  }
+}
+
+onMounted(() => {
+  loadSched()
+  fetchAdminEmails()
+  loadRules()
+})
 </script>
 <template>
 <div class="flex flex-col gap-6">

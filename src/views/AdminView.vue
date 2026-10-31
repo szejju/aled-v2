@@ -68,25 +68,25 @@ const currentLabel = computed(() => tabs.find(t => t.key === activeTab.value)?.l
 
     <!-- Content -->
     <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-      <div v-show="activeTab === 'zarzadzanie'">
+      <div v-if="activeTab === 'zarzadzanie'">
         <AdminZarzadzanie />
       </div>
-      <div v-show="activeTab === 'zawodnicy'">
+      <div v-if="activeTab === 'zawodnicy'">
         <AdminZawodnicy />
       </div>
-      <div v-show="activeTab === 'liga'">
+      <div v-if="activeTab === 'liga'">
         <AdminLiga />
       </div>
-      <div v-show="activeTab === 'puchar'">
+      <div v-if="activeTab === 'puchar'">
         <AdminPuchar />
       </div>
-      <div v-show="activeTab === 'lato'">
+      <div v-if="activeTab === 'lato'">
         <AdminLato />
       </div>
-      <div v-show="activeTab === 'newsy'">
+      <div v-if="activeTab === 'newsy'">
         <AdminNewsy />
       </div>
-      <div v-show="activeTab === 'ustawienia'">
+      <div v-if="activeTab === 'ustawienia'">
         <AdminUstawienia />
       </div>
     </main>

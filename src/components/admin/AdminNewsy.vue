@@ -3,31 +3,148 @@
  * AdminNewsy – Tab 6: Newsy i Social Media.
  * Edytor Newsow (Markdown z podgladem), Lista Newsow, Social Media inputy.
  */
-import { ref, computed, onMounted } from 'vue'
-import { ref as dbRef, get, set } from 'firebase/database'
+import { computed, onMounted, ref } from 'vue'
+import { get, ref as dbRef, set } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { saveNewsAdmin, deleteNewsAdmin } from '@/services/api'
+import { deleteNewsAdmin, saveNewsAdmin } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import { errorText } from '@/utils/errorText'
+import { asRecord, optNum, optStr } from '@/utils/rtdb'
+import { simpleMarkdown } from '@/utils/simpleMarkdown'
 
-interface NewsItem { id:string;title:string;content:string;imageUrl?:string;date?:string;timestamp?:number }/* ---- Newsy ---- */
-const newsList=ref<NewsItem[]>([]);const newsLoad=ref(false);const newsMsg=ref('')
-const newsForm=ref({id:'',title:'',content:'',imageUrl:''});const editMode=ref(false)
-const previewTab=ref<'edit'|'preview'>('edit')
+interface NewsItem {
+  id: string
+  title: string
+  content: string
+  imageUrl?: string
+  date?: string
+  timestamp?: number
+}
 
-async function fetchNews(){ newsLoad.value=true;try{const db=getDatabaseClient();const snap=await get(dbRef(db,'news'));if(snap.exists()){const raw=snap.val();newsList.value=Object.entries(raw).map(([id,d]:[string,any])=>({id,...d}))}else newsList.value=[]}catch(e){console.error(e)}finally{newsLoad.value=false} }
-function simpleMd(text:string):string{ if(!text)return'';let h=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');h=h.replace(/^### (.+)$/gm,'<h3 class="text-lg font-bold mt-4 mb-2">$1</h3>');h=h.replace(/^## (.+)$/gm,'<h2 class="text-xl font-bold mt-4 mb-2">$1</h2>');h=h.replace(/^# (.+)$/gm,'<h1 class="text-2xl font-bold mt-4 mb-2">$1</h1>');h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');h=h.replace(/!\[(.*?)\]\((.*?)\)/g,'<img src="$2" alt="$1" class="rounded-xl my-2 max-w-full"/>');h=h.replace(/\[(.*?)\]\((.*?)\)/g,'<a href="$2" target="_blank" class="text-lime underline">$1</a>');h=h.replace(/\n/g,'<br/>');return h }
-const previewHtml=computed(()=>simpleMd(newsForm.value.content))
+const newsList = ref<NewsItem[]>([])
+const newsLoad = ref(false)
+const newsMsg = ref('')
+const newsError = ref('')
+const newsForm = ref({ id: '', title: '', content: '', imageUrl: '' })
+const editMode = ref(false)
+const previewTab = ref<'edit' | 'preview'>('edit')
+const previewHtml = computed(() => simpleMarkdown(newsForm.value.content, { links: true }))
 
-function editNews(n:NewsItem){ newsForm.value={id:n.id,title:n.title,content:n.content,imageUrl:n.imageUrl||''};editMode.value=true }
-function resetForm(){ newsForm.value={id:'',title:'',content:'',imageUrl:''};editMode.value=false }
-async function saveNews(){ if(!newsForm.value.title||!newsForm.value.content){newsMsg.value='Tytul i tresc wymagane.';return};newsLoad.value=true;newsMsg.value='';try{const r=await saveNewsAdmin({id:editMode.value?newsForm.value.id:undefined,title:newsForm.value.title,content:newsForm.value.content,imageUrl:newsForm.value.imageUrl||undefined});if(r.success){resetForm();fetchNews();newsMsg.value='Zapisano!'}else newsMsg.value=r.message||'Blad'}catch(e:any){newsMsg.value=e?.message??'Blad'}finally{newsLoad.value=false} }
-async function delNews(id:string){ if(!confirm('Usunac news?'))return;try{await deleteNewsAdmin({id});fetchNews()}catch(e:any){alert(e?.message??'Blad')} }
+async function fetchNews() {
+  newsLoad.value = true
+  newsError.value = ''
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'news'))
+    const raw = asRecord(snap.val())
+    newsList.value = raw
+      ? Object.entries(raw).map(([id, value]) => {
+          const row = asRecord(value) ?? {}
+          return {
+            id,
+            title: optStr(row.title) ?? '',
+            content: optStr(row.content) ?? '',
+            imageUrl: optStr(row.imageUrl),
+            date: optStr(row.date),
+            timestamp: optNum(row.timestamp),
+          }
+        })
+      : []
+  } catch (err: unknown) {
+    newsError.value = errorText(err)
+  } finally {
+    newsLoad.value = false
+  }
+}
 
-/* ---- Social Media ---- */
-const socDiscord=ref('');const socTiktok=ref('');const socFacebook=ref('');const socMsg=ref('');const socLoad=ref(false)
-async function loadSoc(){ try{const db=getDatabaseClient();const snap=await get(dbRef(db,'settings/socialStats'));if(snap.exists()){const d=snap.val();socDiscord.value=d.discord||'';socTiktok.value=d.tiktok||'';socFacebook.value=d.facebook||''}}catch(e){console.error(e)} }
-async function saveSoc(){ socLoad.value=true;socMsg.value='';try{const db=getDatabaseClient();await set(dbRef(db,'settings/socialStats'),{discord:socDiscord.value.trim()||'Brak danych',tiktok:socTiktok.value.trim()||'Brak danych',facebook:socFacebook.value.trim()||'Brak danych'});socMsg.value='Zapisano!'}catch(e:any){socMsg.value='Blad: '+(e?.message||'')}finally{socLoad.value=false} }
-onMounted(()=>{ fetchNews();loadSoc() })
+function editNews(item: NewsItem) {
+  newsForm.value = { id: item.id, title: item.title, content: item.content, imageUrl: item.imageUrl || '' }
+  editMode.value = true
+}
+
+function resetForm() {
+  newsForm.value = { id: '', title: '', content: '', imageUrl: '' }
+  editMode.value = false
+}
+
+async function saveNews() {
+  if (!newsForm.value.title || !newsForm.value.content) {
+    newsMsg.value = 'Tytul i tresc wymagane.'
+    return
+  }
+  newsLoad.value = true
+  newsMsg.value = ''
+  try {
+    const result = await saveNewsAdmin({
+      id: editMode.value ? newsForm.value.id : undefined,
+      title: newsForm.value.title,
+      content: newsForm.value.content,
+      imageUrl: newsForm.value.imageUrl || undefined,
+    })
+    if (result.success) {
+      resetForm()
+      await fetchNews()
+      newsMsg.value = 'Zapisano!'
+    } else newsMsg.value = result.message || 'Blad'
+  } catch (err: unknown) {
+    newsMsg.value = errorText(err)
+  } finally {
+    newsLoad.value = false
+  }
+}
+
+async function delNews(id: string) {
+  if (!confirm('Usunac news?')) return
+  try {
+    await deleteNewsAdmin({ id })
+    await fetchNews()
+  } catch (err: unknown) {
+    alert(errorText(err))
+  }
+}
+
+const socDiscord = ref('')
+const socTiktok = ref('')
+const socFacebook = ref('')
+const socMsg = ref('')
+const socLoad = ref(false)
+
+async function loadSoc() {
+  try {
+    const db = getDatabaseClient()
+    const snap = await get(dbRef(db, 'settings/socialStats'))
+    const data = asRecord(snap.val())
+    if (!data) return
+    socDiscord.value = optStr(data.discord) ?? ''
+    socTiktok.value = optStr(data.tiktok) ?? ''
+    socFacebook.value = optStr(data.facebook) ?? ''
+  } catch (err: unknown) {
+    socMsg.value = errorText(err)
+  }
+}
+
+async function saveSoc() {
+  socLoad.value = true
+  socMsg.value = ''
+  try {
+    const db = getDatabaseClient()
+    await set(dbRef(db, 'settings/socialStats'), {
+      discord: socDiscord.value.trim() || 'Brak danych',
+      tiktok: socTiktok.value.trim() || 'Brak danych',
+      facebook: socFacebook.value.trim() || 'Brak danych',
+    })
+    socMsg.value = 'Zapisano!'
+  } catch (err: unknown) {
+    socMsg.value = errorText(err)
+  } finally {
+    socLoad.value = false
+  }
+}
+
+onMounted(() => {
+  fetchNews()
+  loadSoc()
+})
 </script>
 
 <template>
@@ -55,7 +172,8 @@ onMounted(()=>{ fetchNews();loadSoc() })
   </AdminSectionCard>
   <!-- LISTA NEWSOW -->
   <AdminSectionCard title="Lista Newsow" dot-color="bg-amber-500">
-    <div v-if="newsList.length===0" class="text-center py-4 text-xs text-muted italic">Brak newsow.</div>
+    <p v-if="newsError" class="text-sm font-bold text-red-400">{{ newsError }}</p>
+    <div v-else-if="newsList.length===0" class="text-center py-4 text-xs text-muted italic">Brak newsow.</div>
     <div v-else class="space-y-2 max-h-[500px] overflow-y-auto pr-1">
       <div v-for="n in newsList" :key="n.id" class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
         <div class="min-w-0"><p class="text-sm font-bold text-fg truncate">{{ n.title }}</p><p class="text-[10px] text-muted">{{ n.date||'' }}</p></div>
