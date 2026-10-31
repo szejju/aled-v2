@@ -5,7 +5,7 @@
  * Kafelki bento prezentują: awatar, nick, Power Ranking (DPI), średnią oraz
  * Gablotę Osiągnięć (puchary, kamienie milowe, epickie momenty).
  */
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import ViewDartcounterModal from '@/components/profile/ViewDartcounterModal.vue'
 import { getPlayersList, type PlayerListItem } from '@/services/api'
@@ -27,25 +27,109 @@ interface DivisionTab {
   label: string
 }
 
-const divisions: DivisionTab[] = [
-  { id: 'DYWIZJA 1', label: 'Dywizja 1' },
-  { id: 'DYWIZJA 2', label: 'Dywizja 2' },
-  { id: 'DYWIZJA 3', label: 'Dywizja 3' },
-  { id: 'DYWIZJA 4', label: 'Dywizja 4' },
-  { id: 'DYWIZJA 5', label: 'Dywizja 5' },
-]
+/** Wyodrębnij numer głównej dywizji. */
+const extractDivNum = (divId: string): string => {
+  const match = String(divId).match(/(\d+)/)
+  return match ? match[1] : ''
+}
+
+/** Wyodrębnij literę grupy. */
+const extractGroup = (divId: string): string | null => {
+  const match = String(divId).match(/GRUPA\s+([A-Z]+)/i)
+  return match ? match[1].toUpperCase() : null
+}
+
+const allRawDivisions = ref<DivisionTab[]>([])
+
+/** Główne dywizje (unikalne numery). */
+const mainDivisions = computed<{ id: string; label: string }[]>(() => {
+  const nums = new Set<string>()
+  allRawDivisions.value.forEach((d) => {
+    const n = extractDivNum(d.id)
+    if (n) nums.add(n)
+  })
+  return [...nums].sort((a, b) => parseInt(a) - parseInt(b)).map((n) => ({
+    id: n,
+    label: `Dywizja ${n}`,
+  }))
+})
+
+const selectedMainDiv = ref('')
+const selectedGroup = ref<string | null>(null)
+
+/** Grupy dostępne w ramach wybranej głównej dywizji. */
+const availableGroups = computed<{ id: string; label: string }[]>(() => {
+  if (!selectedMainDiv.value) return []
+  const groups = new Set<string>()
+  allRawDivisions.value.forEach((d) => {
+    const n = extractDivNum(d.id)
+    if (n === selectedMainDiv.value) {
+      const g = extractGroup(d.id)
+      if (g) groups.add(g)
+    }
+  })
+  return [...groups].sort().map((g) => ({ id: g, label: `Grupa ${g}` }))
+})
+
+/** Rozwiązany pełny identyfikator dywizji do API. */
+const resolvedDivisionId = computed<string>(() => {
+  if (!selectedMainDiv.value) return ''
+  if (selectedGroup.value) {
+    const fullId = `DYWIZJA ${selectedMainDiv.value} GRUPA ${selectedGroup.value}`
+    const found = allRawDivisions.value.find((d) => d.id.toUpperCase() === fullId.toUpperCase())
+    return found ? found.id : fullId
+  }
+  const mainId = `DYWIZJA ${selectedMainDiv.value}`
+  const found = allRawDivisions.value.find((d) => {
+    return extractDivNum(d.id) === selectedMainDiv.value && !extractGroup(d.id)
+  })
+  return found ? found.id : mainId
+})
+
+/** Dynamicznie odkrywa wszystkie dywizje z listy graczy, odrzuca POCZEKALNIA */
+onMounted(async () => {
+  try {
+    const res = await getPlayersList({})
+    const uniqueDivs = [...new Set(
+      (res.players ?? [])
+        .map((p) => p.div)
+        .filter((d): d is string => !!d && !/poczekalnia/i.test(d))
+    )].sort((a, b) => {
+      const na = parseInt(a.replace(/\D/g, ''), 10) || 99
+      const nb = parseInt(b.replace(/\D/g, ''), 10) || 99
+      return na - nb || a.localeCompare(b)
+    })
+    allRawDivisions.value = uniqueDivs.map((id) => ({ id, label: id }))
+  } catch { /* fallback */ }
+})
 
 /* ------------------------------------------------------------------ *
  *  Stan + pobieranie danych
  * ------------------------------------------------------------------ */
 
-const activeDiv = ref('') // '' = wszyscy
+// '' = wszyscy; używamy selectedMainDiv zamiast activeDiv
+const isAllActive = computed(() => !selectedMainDiv.value)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const players = ref<PlayerListItem[]>([])
 
-const setActiveDivision = (divId: string) => {
-  activeDiv.value = divId
+const setDivision = (divId: string) => {
+  selectedMainDiv.value = divId
+  // Auto-wybór pierwszej grupy, jeśli dywizja ma grupy
+  if (availableGroups.value.length > 0) {
+    selectedGroup.value = availableGroups.value[0].id
+  } else {
+    selectedGroup.value = null
+  }
+}
+
+const setGroup = (groupId: string | null) => {
+  selectedGroup.value = groupId
+}
+
+const setAll = () => {
+  selectedMainDiv.value = ''
+  selectedGroup.value = null
 }
 
 const filteredPlayers = computed(() => players.value)
@@ -54,7 +138,8 @@ const fetchPlayers = async () => {
   loading.value = true
   error.value = null
   try {
-    const res = await getPlayersList(activeDiv.value ? { division: activeDiv.value } : {})
+    const divId = resolvedDivisionId.value
+    const res = await getPlayersList(divId ? { division: divId } : {})
     players.value = res.players ?? []
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Nie udało się pobrać listy zawodników'
@@ -64,9 +149,9 @@ const fetchPlayers = async () => {
   }
 }
 
-// Pobranie przy montowaniu + reakcja na zmianę zakładki.
+// Pobranie przy montowaniu + reakcja na zmianę dywizji/grupy.
 fetchPlayers()
-watch(activeDiv, fetchPlayers)
+watch(resolvedDivisionId, fetchPlayers)
 
 /* ------------------------------------------------------------------ *
  *  Gablota osiągnięć
@@ -208,21 +293,40 @@ function openDcModal(name: string, dartcounterUsername: string) {
       <span class="label mr-1 text-muted">Dywizja</span>
       <button
         type="button"
-        @click="setActiveDivision('')"
+        @click="setAll()"
         class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-        :class="!activeDiv ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+        :class="isAllActive ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
       >
         Wszyscy
       </button>
       <button
-        v-for="division in divisions"
-        :key="division.id"
+        v-for="div in mainDivisions"
+        :key="div.id"
         type="button"
-        @click="setActiveDivision(division.id)"
+        @click="setDivision(div.id)"
         class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-        :class="activeDiv === division.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+        :class="selectedMainDiv === div.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
       >
-        {{ division.label }}
+        {{ div.label }}
+      </button>
+    </nav>
+
+    <!-- Drugi rząd – Grupy -->
+    <nav
+      v-if="selectedMainDiv && availableGroups.length > 0"
+      aria-label="Wybór grupy"
+      class="flex flex-wrap items-center gap-2"
+    >
+      <span class="label mr-1 text-muted">Grupa</span>
+      <button
+        v-for="g in availableGroups"
+        :key="g.id"
+        type="button"
+        class="rounded-full px-3 py-1.5 font-display text-xs font-bold uppercase tracking-[0.1em] transition-colors"
+        :class="selectedGroup === g.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+        @click="setGroup(g.id)"
+      >
+        {{ g.label }}
       </button>
     </nav>
 

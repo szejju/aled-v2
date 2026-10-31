@@ -41,6 +41,7 @@ export const navLinks: NavLink[] = [
   { label: 'Puchar Ligi', to: '/puchar' },
   { label: 'Zawodnicy', to: '/zawodnicy' },
   { label: 'Rankingi', to: '/rankingi' },
+  { label: 'Newsy', to: '/news' },
   { label: 'Archiwum', to: '/#wyniki' },
 ]
 

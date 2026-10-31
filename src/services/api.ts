@@ -143,6 +143,7 @@ export interface PlayerListItem {
   short?: number | string
   max?: number | string
   dartcounter?: string
+  isDisqualified?: boolean
   stats: {
     realAvg: number
     dpi: number
@@ -279,13 +280,14 @@ export const enrollForNextSeason = makeCallable<
 
 export interface CupDataResponse {
   groups: Record<string, string[]>
-  participants: Record<string, boolean | { joinedAt?: number }>
+  participants: Record<string, boolean | { joinedAt?: number; firstName?: string; lastName?: string }>
   schedule: Record<string, {
     id?: string
     p1Id: string; p2Id: string
     p1Name: string; p2Name: string
     group?: string; round?: number; roundNum?: number
     score1?: number; score2?: number
+    legs1?: number; legs2?: number
     status?: string
     isKnockout?: boolean; isDoubleWO?: boolean
     proposedDate?: string; proposedTime?: string; proposedTimestamp?: number
@@ -303,6 +305,15 @@ export const getCupData = makeCallable<
   { cupId?: string },
   CupDataResponse
 >('getCupData')
+
+// ─── fetchCupData (direct RTDB – lightweight, no Cloud Function overhead) ──────
+
+/** Pobiera surowe dane pucharu bezpośrednio z RTDB (omija Cloud Functions). */
+export const fetchCupData = async () => {
+  const { getDatabase, ref, get } = await import('firebase/database')
+  const snap = await get(ref(getDatabase(), 'cup'))
+  return snap.val() || {}
+}
 // ─── updateProfile ─────────────────────────────────────────────────────────────
 
 export interface UpdateProfilePayload {
@@ -566,3 +577,316 @@ export const adminSaveMatchResult = makeCallable<
   AdminSaveMatchPayload,
   { success: boolean; message: string }
 >('adminSaveMatchResult')
+
+// ─── addSinglePlayer (Dodawanie nowego gracza przez Admina) ──────────────────
+
+export interface AddSinglePlayerPayload {
+  firstName: string
+  lastName: string
+  nick?: string
+  div?: string
+}
+
+export const addSinglePlayer = makeCallable<
+  AddSinglePlayerPayload,
+  { success: boolean; message: string }
+>('addSinglePlayer')
+
+// ─── deletePlayerAdmin (Usuwanie gracza przez Admina) ──────────────────────
+
+export interface DeletePlayerAdminPayload {
+  playerId: string
+}
+
+export const deletePlayerAdmin = makeCallable<
+  DeletePlayerAdminPayload,
+  { success: boolean; message: string }
+>('deletePlayerAdmin')
+
+// ─── generateLeagueSchedule (Generowanie terminarza ligowego) ───────────────
+
+export interface GenerateLeagueSchedulePayload {
+  division: string
+}
+
+export const generateLeagueSchedule = makeCallable<
+  GenerateLeagueSchedulePayload,
+  { success: boolean; message: string }
+>('generateLeagueSchedule')
+
+// ─── saveNewsAdmin (Zarządzanie Newsami) ─────
+
+export interface SaveNewsAdminPayload {
+  id?: string
+  title: string
+  content: string
+  imageUrl?: string
+}
+
+export const saveNewsAdmin = makeCallable<
+  SaveNewsAdminPayload,
+  { success: boolean; message: string }
+>('saveNewsAdmin')
+
+export interface DeleteNewsAdminPayload { id: string }
+
+export const deleteNewsAdmin = makeCallable<
+  DeleteNewsAdminPayload,
+  { success: boolean; message: string }
+>('deleteNewsAdmin')
+
+// ─── updateGlobalSettings (Ustawienia Globalne Ligi) ─
+
+export interface UpdateGlobalSettingsPayload {
+  startDate?: string
+  enrollmentEndDate?: string
+  currentSeason?: number
+}
+
+export const updateGlobalSettings = makeCallable<
+  UpdateGlobalSettingsPayload,
+  { success: boolean; message: string }
+>('updateGlobalSettings')
+
+// ─── forceMatchDateAdmin (Boska Interwencja) ─
+
+export interface ForceMatchDatePayload {
+  matchId: string
+  isCup: boolean
+  date: string
+  time: string
+}
+
+export const forceMatchDateAdmin = makeCallable<
+  ForceMatchDatePayload,
+  { success: boolean; message: string }
+>('forceMatchDateAdmin')
+
+// ─── archiveCurrentSeason (Archiwizacja Sezonu) ─
+
+export const archiveCurrentSeason = makeCallable<
+  {},
+  { success: boolean; message: string }
+>('archiveCurrentSeason')
+
+// ─── setCupStatusAdmin (Status Pucharu Ligi) ────────────────────────────────
+
+export interface SetCupStatusPayload {
+  status: string
+}
+
+/** Admin zmienia status Pucharu Ligi (registration/groups/knockout/completed). */
+export const setCupStatusAdmin = makeCallable<
+  SetCupStatusPayload,
+  { success: boolean; message: string }
+>('setCupStatusAdmin')
+
+// ─── generateCupGroupsAdmin (Faza Grupowa Pucharu) ──────────────────────────
+
+export interface GenerateCupGroupsPayload {
+  groupsCount: number
+  playersPerGroup: number
+}
+
+/** Admin generuje fazę grupową (Fisher-Yates + Round-Robin). */
+export const generateCupGroupsAdmin = makeCallable<
+  GenerateCupGroupsPayload,
+  { success: boolean; message: string }
+>('generateCupGroupsAdmin')
+
+// ─── generateCupKnockoutAdmin (Drabinka Pucharu) ────────────────────────────
+
+export interface GenerateCupKnockoutPayload {
+  advancingInput: number
+  luckyLoserInput: number
+}
+
+/** Admin generuje drabinkę pucharową (getBracketSeeding + sortowanie tabel). */
+export const generateCupKnockoutAdmin = makeCallable<
+  GenerateCupKnockoutPayload,
+  { success: boolean; message: string }
+>('generateCupKnockoutAdmin')
+
+// ─── setDoubleWalkoverAdmin (Obustronny Walkower 0:0) ───────────────────────
+
+export interface SetDoubleWalkoverPayload {
+  matchId: string
+}
+
+/** Admin zapisuje obustronny walkower 0:0 (liga lub puchar). */
+export const setDoubleWalkoverAdmin = makeCallable<
+  SetDoubleWalkoverPayload,
+  { success: boolean; message: string }
+>('setDoubleWalkoverAdmin')
+
+// ─── generateAllSchedulesAdmin (Globalny Terminarz) ─────────────────────────
+
+/** Admin generuje terminarz Round-Robin dla wszystkich dywizji naraz. */
+export const generateAllSchedulesAdmin = makeCallable<
+  {},
+  { success: boolean; message: string }
+>('generateAllSchedulesAdmin')
+
+// ─── runArcheologAdmin (Archeolog – Osiągnięcia) ─────────────────────────────
+
+/** Admin przelicza i zapisuje osiągnięcia (milestones + epickie momenty). */
+export const runArcheologAdmin = makeCallable<
+  {},
+  { success: boolean; message: string }
+>('runArcheologAdmin')
+
+// ─── distributeSeasonTrophiesAdmin (Ceremoniarz – Puchary Sezonowe) ──────────
+
+/** Admin rozdaje puchary sezonowe (Mistrz, Król Średniej, Król Maksów itp.). */
+export const distributeSeasonTrophiesAdmin = makeCallable<
+  {},
+  { success: boolean; message: string }
+>('distributeSeasonTrophiesAdmin')
+
+// ─── manageAdminEmails (Zarządzanie Uprawnieniami Admina) ────────────────────
+
+export interface ManageAdminEmailsPayload {
+  email: string
+  action: 'add' | 'remove'
+}
+
+/** Admin dodaje lub usuwa adres e-mail z listy sędziów/adminów. */
+export const manageAdminEmails = makeCallable<
+  ManageAdminEmailsPayload,
+  { success: boolean; message: string }
+>('manageAdminEmails')
+
+// ─── linkAdminProfile (Linkowanie Konta Admina do Profilu Gracza) ────────────
+
+export interface LinkAdminProfilePayload {
+  playerId: string
+}
+
+/** Admin łączy swoje konto Firebase z profilem gracza w lidze. */
+export const linkAdminProfile = makeCallable<
+  LinkAdminProfilePayload,
+  { success: boolean; message: string }
+>('linkAdminProfile')
+
+// ─── generatePlayoffsAdmin (Generator Baraży) ────────────────────────────────
+
+export interface PlayoffMatch {
+  round: string | number
+  p1Id: string
+  p1Name: string
+  p2Id: string
+  p2Name: string
+}
+
+export interface GeneratePlayoffsPayload {
+  target: string
+  matches: PlayoffMatch[]
+}
+
+/** Admin generuje mecze barażowe (półfinały/finały). */
+export const generatePlayoffsAdmin = makeCallable<
+  GeneratePlayoffsPayload,
+  { success: boolean; message: string }
+>('generatePlayoffsAdmin')
+
+// ─── updateRules (Edycja Regulaminu) ───────────────────────────────────────
+
+export interface UpdateRulesPayload {
+  content: string
+}
+
+/** Admin aktualizuje treść regulaminu w RTDB (settings/rules). */
+export const updateRules = makeCallable<
+  UpdateRulesPayload,
+  { success: boolean; message: string }
+>('updateRules')
+
+// ─── addPenalty (Kary dla graczy) ───────────────────────────────────────────
+
+export interface AddPenaltyPayload {
+  playerId: string
+  points: number
+  reason: string
+}
+
+export const addPenalty = makeCallable<
+  AddPenaltyPayload,
+  { success: boolean; message: string }
+>('addPenalty')
+
+// ─── sendPlayerNotification (Powiadomienia) ─────────────────────────────────
+
+export interface SendNotificationPayload {
+  playerId: string
+  title: string
+  message: string
+}
+
+export const sendPlayerNotification = makeCallable<
+  SendNotificationPayload,
+  { success: boolean; message: string }
+>('sendPlayerNotification')
+
+// ─── generateSummerGroups (Generator Grup Letnich) ──────────────────────────
+
+export interface GenerateSummerGroupsPayload {
+  numberOfGroups: number
+}
+
+export const generateSummerGroups = makeCallable<
+  GenerateSummerGroupsPayload,
+  { success: boolean; message: string; groups?: Record<string, string[]> }
+>('generateSummerGroups')
+
+// ─── replacePlayerWithHistory (Podmiana z historia rund) ───────────────────
+
+export interface ReplacePlayerWithHistoryPayload {
+  oldPlayerId: string
+  newPlayerId: string
+  fromRound: number
+  walkoverScore: number
+}
+
+export const replacePlayerWithHistory = makeCallable<
+  ReplacePlayerWithHistoryPayload,
+  { success: boolean; message: string; walkoverCount: number; cleanCount: number }
+>('replacePlayerWithHistory')
+
+// ─── fetchArchiveData (REST – Archiwum bez SDK) ────────────────────────────
+
+/**
+ * Pobiera dane archiwalne przez REST API, omijając SDK Firebase.
+ * Używa zewnętrznej bazy (VITE_ARCHIVE_DB_URL), by nie obciążać głównej RTDB.
+ * Fallback do głównej bazy przez SDK, gdy zmienna nie jest skonfigurowana.
+ */
+export const fetchArchiveData = async () => {
+  const archiveUrl = import.meta.env.VITE_ARCHIVE_DB_URL
+  if (!archiveUrl) {
+    console.warn('Brak VITE_ARCHIVE_DB_URL, próba odczytu z głównej bazy przez SDK.')
+    const { getDatabase, ref, get } = await import('firebase/database')
+    const snap = await get(ref(getDatabase(), 'archive'))
+    return snap.val()
+  }
+
+  const response = await fetch(`${archiveUrl}/archive.json`)
+  if (!response.ok) throw new Error('Błąd pobierania archiwum po REST.')
+  return await response.json()
+}
+
+// ─── getSocialStats (Statystyki Social Media) ─────────────────────────────────
+
+export interface SocialStats {
+  discord: string
+  tiktok: string
+  facebook: string
+}
+
+/**
+ * Pobiera statystyki społeczności (Discord, TikTok, Facebook) z RTDB.
+ * Ścieżka: settings/socialStats
+ */
+export const getSocialStats = async (): Promise<SocialStats> => {
+  const { getDatabase, ref, get } = await import('firebase/database')
+  const snap = await get(ref(getDatabase(), 'settings/socialStats'))
+  return snap.val() || { discord: 'Brak danych', tiktok: 'Brak danych', facebook: 'Brak danych' }
+}

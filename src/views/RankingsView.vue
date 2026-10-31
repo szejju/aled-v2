@@ -1,24 +1,15 @@
-<script setup lang="ts">
-import { computed, ref } from 'vue'
+﻿<script setup lang="ts">
+import { computed, ref, onMounted } from 'vue'
+import { ref as dbRef, get } from 'firebase/database'
+import { getDatabaseClient } from '@/services/firebase'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 
 /**
- * Podstrona „Rankingi” – port silnika `window.initRankingi()` (Vanilla JS).
+ * Podstrona „Rankingi” – Top 10 w 7 kategoriach.
  *
- * Przeniesione 1:1 ze starego kodu:
- *  - 7 list rankingowych: średnia meczowa, najwyższa średnia w meczu, maksy 180,
- *    najwyższy checkout, najszybszy leg, skuteczność dablów, Power Ranking / DPI
- *  - filtrowanie po zakresie („ALL”, dywizje, „CUP”) oraz po grupie
- *  - przełącznik „Kameleon Theme”: akcent fioletowy dla Pucharu, limonkowy dla ligi
- *  - ukrywanie karty DPI, gdy aktywny jest Puchar Ligi
- *  - top 10 + sortowanie (rosnąco tylko dla najszybszego lega)
- *
- * Różnice względem oryginału:
- *  - `window.rankingiState` -> `ref` (stan reaktywny)
- *  - `renderList(..., containerId)` + `innerHTML` -> deklaratywny `<template>` + `v-for`
- *  - `onclick="window.openPlayerModal(id)"` -> `@click="openPlayerModal(id)"`
- *  - twarde rozmiary czcionek (`text-[8px]/[10px]/[11px]`) -> `text-xs` / `text-sm` / `text-base`
- *  - dane tymczasowe (mock) w `<script setup>` – docelowo zastąpi je Firebase
+ * Dane pobierane z RTDB (players, schedule, cup/schedule).
+ * Statystyki liczone bezpośrednio z surowych danych meczowych,
+ * zgodnie z logiką starego `window.initRankingi()`.
  */
 
 /* ------------------------------------------------------------------ *
@@ -28,7 +19,37 @@ import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 /** Identyfikator zakładki: „ALL” (wszyscy), „CUP” (puchar) lub id dywizji. */
 type TabId = 'ALL' | 'CUP' | string
 
-/** Odpowiednik rekordu zwracanego przez `window.calculateAllStats()` / `calculateCupStats()`. */
+/** Surowy rekord meczu (liga lub puchar). */
+interface RawMatch {
+  div?: string
+  group?: string
+  round?: string | number
+  p1Id?: string
+  p2Id?: string
+  p1Name?: string
+  p2Name?: string
+  p1Stats?: Record<string, unknown>
+  p2Stats?: Record<string, unknown>
+  score1?: number | string
+  score2?: number | string
+  status?: string
+  isDoubleWO?: boolean
+}
+
+/** Zagregowane statystyki zawodnika wyliczone z meczów. */
+interface AggregatedStats {
+  avgSum: number
+  avgCount: number
+  bestAvg: number
+  bestAvgOpp: string
+  totalMax: number
+  bestFinish: number
+  bestShort: number
+  doublesHit: number
+  doublesAttempts: number
+}
+
+/** Ostateczny rekord statystyk (taki sam kształt jak stary mock). */
 interface PlayerStats {
   realAvg: number
   bestAvg: number
@@ -40,7 +61,7 @@ interface PlayerStats {
   doublesPct: number
 }
 
-/** Surowy zawodnik (odpowiednik dokumentu z kolekcji `players`). */
+/** Surowy zawodnik. */
 interface Player {
   id: string
   uid?: string
@@ -50,7 +71,7 @@ interface Player {
   lastName: string
 }
 
-/** Pojedynczy wiersz listy rankingowej (dawniej `{ id, name, val, info }`). */
+/** Pojedynczy wiersz listy rankingowej. */
 interface RankingItem {
   id: string
   name: string
@@ -58,7 +79,7 @@ interface RankingItem {
   info: string
 }
 
-/** Sekcja rankingowa renderowana jako karta Bento. */
+/** Sekcja rankingowa (karta Bento). */
 interface RankingList {
   id: string
   icon: string
@@ -69,7 +90,7 @@ interface RankingList {
   items: RankingItem[]
 }
 
-/** Zakładka / filtr (wspólny kształt dla dywizji i zakresu). */
+/** Zakładka / filtr. */
 interface DivisionTab {
   id: string
   label: string
@@ -77,7 +98,6 @@ interface DivisionTab {
 
 type FormResult = 'W' | 'D' | 'L' | 'N'
 
-/** Kształt zawodnika akceptowany przez `PlayerCardModal`. */
 interface ModalPlayer extends Player {
   st: {
     m: number
@@ -97,86 +117,54 @@ interface ModalPlayer extends Player {
   max: number
 }
 
-const EMPTY_STATS: PlayerStats = {
-  realAvg: 0,
-  bestAvg: 0,
-  bestAvgOpp: '',
-  max: 0,
-  hf: 0,
-  sl: 0,
-  dpi: 0,
-  doublesPct: 0,
-}
-
 /* ------------------------------------------------------------------ *
- *  MOCK – docelowo: FirebaseService.getPlayers() / calculateAllStats()
+ *  Stan ładowania i surowe dane z RTDB
  * ------------------------------------------------------------------ */
 
-const divisions: DivisionTab[] = [
-  { id: 'D1', label: 'Dywizja 1' },
-  { id: 'D2', label: 'Dywizja 2' },
-  { id: 'D3', label: 'Dywizja 3' },
-  { id: 'D4', label: 'Dywizja 4' },
-]
+const loading = ref(true)
+const error = ref<string | null>(null)
 
-const players: Player[] = [
-  { id: 'p1', div: 'D1', group: 'A', firstName: 'Mateusz', lastName: 'Kozioł' },
-  { id: 'p2', div: 'D1', group: 'A', firstName: 'Daniel', lastName: 'Chojnacki' },
-  { id: 'p3', div: 'D1', group: 'B', firstName: 'Bartosz', lastName: 'Krych' },
-  { id: 'p4', div: 'D1', group: 'B', firstName: 'Patryk', lastName: 'Przybyszewski' },
-  { id: 'p5', div: 'D2', group: 'A', firstName: 'Dominik', lastName: 'Wróblewski' },
-  { id: 'p6', div: 'D2', group: 'B', firstName: 'Kornel', lastName: 'Sadowski' },
-  { id: 'p7', div: 'D2', group: 'A', firstName: 'Łukasz', lastName: 'Tarczyński' },
-  { id: 'p8', div: 'D3', group: 'A', firstName: 'Kuba', lastName: 'Wiński' },
-  { id: 'p9', div: 'D3', group: 'B', firstName: 'Wojciech', lastName: 'Orłecki' },
-  { id: 'p10', div: 'D4', group: 'A', firstName: 'Hubert', lastName: 'Świerczyński' },
-  { id: 'p11', div: 'D4', group: 'B', firstName: 'Mariusz', lastName: 'Larenta' },
-  { id: 'p12', div: 'D4', group: 'A', firstName: 'Kacper', lastName: 'Zawadzki' },
-]
+const allPlayers = ref<Player[]>([])
+const scheduleData = ref<Record<string, RawMatch>>({})
+const cupScheduleData = ref<Record<string, RawMatch>>({})
+const divisions = ref<DivisionTab[]>([])
 
-/**
- * Skrót do budowania rekordu statystyk rankingowych.
- * Kolejność: realAvg, bestAvg, bestAvgOpp, max(180), hf(checkout), sl(leg), dpi, doublesPct.
- */
-const stat = (
-  realAvg: number,
-  bestAvg: number,
-  bestAvgOpp: string,
-  max: number,
-  hf: number,
-  sl: number,
-  dpi: number,
-  doublesPct: number,
-): PlayerStats => ({ realAvg, bestAvg, bestAvgOpp, max, hf, sl, dpi, doublesPct })
+onMounted(async () => {
+  try {
+    const db = getDatabaseClient()
+    const [playersSnap, scheduleSnap, cupSnap, structureSnap] = await Promise.all([
+      get(dbRef(db, '/players')),
+      get(dbRef(db, '/schedule')),
+      get(dbRef(db, '/cup/schedule')),
+      get(dbRef(db, '/settings/leagueStructure')),
+    ])
+    const rawPlayers = (playersSnap.val() || {}) as Record<string, any>
+    allPlayers.value = Object.entries(rawPlayers).map(([id, data]) => ({
+      id,
+      div: String(data.div ?? ''),
+      group: data.group ? String(data.group) : undefined,
+      firstName: String(data.firstName ?? ''),
+      lastName: String(data.lastName ?? ''),
+    }))
+    scheduleData.value = (scheduleSnap.val() || {}) as Record<string, RawMatch>
+    cupScheduleData.value = (cupSnap.val() || {}) as Record<string, RawMatch>
+    const structure = (structureSnap.val() || {}) as Record<string, { name?: string }>
+    const divTabs: DivisionTab[] = []
+    for (const [key, val] of Object.entries(structure)) {
+      if (val && typeof val === 'object' && !/poczekalnia/i.test(key)) {
+        divTabs.push({ id: key, label: val.name || key })
+      }
+    }
+    if (divTabs.length > 0) divisions.value = divTabs
+  } catch (e: any) {
+    error.value = e.message || 'Błąd pobierania danych'
+  } finally {
+    loading.value = false
+  }
+})
 
-const leagueStats: Record<string, PlayerStats> = {
-  p1: stat(88.42, 92.1, 'Daniel Chojnacki', 24, 164, 12, 145.67, 42.5),
-  p2: stat(86.15, 90.7, 'Bartosz Krych', 18, 156, 14, 138.92, 38.2),
-  p3: stat(84.3, 89.2, 'Patryk Przybyszewski', 15, 141, 15, 129.4, 35.1),
-  p4: stat(83.75, 88.6, 'Mateusz Kozioł', 21, 152, 13, 126.85, 40.0),
-  p5: stat(80.9, 85.4, 'Kornel Sadowski', 12, 128, 16, 118.33, 33.7),
-  p6: stat(79.2, 83.9, 'Łukasz Tarczyński', 9, 122, 17, 112.6, 31.4),
-  p7: stat(78.4, 82.1, 'Dominik Wróblewski', 7, 116, 18, 108.9, 29.8),
-  p8: stat(76.8, 80.5, 'Wojciech Orłecki', 6, 104, 19, 101.2, 27.3),
-  p9: stat(74.2, 79.0, 'Kuba Wiński', 4, 96, 20, 95.4, 25.6),
-  p10: stat(72.1, 76.4, 'Mariusz Larenta', 3, 88, 21, 88.7, 22.9),
-  p11: stat(70.5, 74.2, 'Hubert Świerczyński', 2, 81, 22, 82.3, 20.4),
-  p12: stat(69.8, 73.0, 'Hubert Świerczyński', 1, 76, 23, 76.9, 18.1),
-}
-
-/** Statystyki Pucharu Ligi – używane, gdy aktywna jest zakładka „CUP”. */
-const cupStats: Record<string, PlayerStats> = {
-  p1: stat(91.2, 94.6, 'Daniel Chojnacki', 18, 170, 11, 152.4, 46.0),
-  p2: stat(88.7, 92.0, 'Bartosz Krych', 15, 160, 13, 143.1, 41.8),
-  p3: stat(86.4, 90.1, 'Patryk Przybyszewski', 11, 148, 14, 133.7, 39.2),
-  p4: stat(85.9, 89.5, 'Mateusz Kozioł', 16, 155, 12, 130.5, 42.4),
-  p5: stat(82.3, 86.2, 'Kornel Sadowski', 9, 132, 15, 121.8, 34.9),
-  p6: stat(80.6, 84.8, 'Łukasz Tarczyński', 7, 126, 16, 115.2, 32.6),
-  p7: stat(79.9, 83.3, 'Dominik Wróblewski', 5, 119, 17, 111.4, 30.5),
-  p8: stat(77.5, 81.6, 'Wojciech Orłecki', 4, 108, 18, 104.9, 28.2),
-}
 /* ------------------------------------------------------------------ *
- *  Stan + silnik rankingów (dawniej `window.rankingiState` / `initRankingi`)
+ *  Filtry
  * ------------------------------------------------------------------ */
 
 const activeTab = ref<TabId>('ALL')
@@ -185,50 +173,156 @@ const activeGroup = ref<string | null>(null)
 const isAllActive = computed(() => activeTab.value === 'ALL')
 const isCupActive = computed(() => activeTab.value === 'CUP')
 
-/**
- * Przełącznik „Kameleon Theme”: fioletowy akcent dla Pucharu Ligi,
- * limonkowy (token `accent`) dla ligi.
- */
-const themeAccentText = computed(() => (isCupActive.value ? 'text-purple-400' : 'text-accent'))
-
-/** Statystyki zależne od aktywnej zakładki (liga vs puchar). */
-const statsMap = computed<Record<string, PlayerStats>>(() =>
-  isCupActive.value ? cupStats : leagueStats,
+const themeAccentText = computed(() =>
+  isCupActive.value ? 'text-purple-400' : 'text-accent',
 )
 
-/** Dawne `window.formatDivShort` – „DYWIZJA 1” / „D1” -> „D1”. */
+/** Parsowanie wartości numerycznej ze statystyk (może być string). */
+const parseNum = (v: unknown): number => {
+  if (typeof v === 'number') return v
+  if (typeof v === 'string') {
+    const n = parseFloat(v)
+    return isNaN(n) ? 0 : n
+  }
+  return 0
+}
+
+/* ------------------------------------------------------------------ *
+ *  Obliczanie statystyk z meczów
+ * ------------------------------------------------------------------ */
+
+const statsMap = computed<Record<string, PlayerStats>>(() => {
+  const acc: Record<string, AggregatedStats> = {}
+
+  const ensure = (id: string) => {
+    if (!acc[id]) {
+      acc[id] = {
+        avgSum: 0, avgCount: 0, bestAvg: 0, bestAvgOpp: '',
+        totalMax: 0, bestFinish: 0, bestShort: 999,
+        doublesHit: 0, doublesAttempts: 0,
+      }
+    }
+    return acc[id]
+  }
+
+  const processPlayer = (
+    playerId: string,
+    opponentName: string,
+    stats: Record<string, unknown> | undefined,
+  ) => {
+    if (!playerId || !stats) return
+    const s = ensure(playerId)
+    const avg = parseNum(stats.avg)
+    const max = parseNum(stats.max)
+    const hf = parseNum(stats.hf)
+    const sl = parseNum(stats.sl)
+    const da = parseNum(stats.da)
+
+    if (avg > 0) {
+      s.avgSum += avg
+      s.avgCount++
+      if (avg > s.bestAvg) {
+        s.bestAvg = avg
+        s.bestAvgOpp = opponentName
+      }
+    }
+    if (max > 0) s.totalMax += max
+    if (hf > 0 && hf > s.bestFinish) s.bestFinish = hf
+    if (sl > 0 && sl < s.bestShort) s.bestShort = sl
+    if (da > 0) {
+      s.doublesAttempts += Math.round(da)
+      s.doublesHit += Math.round(da * 0.4)
+    }
+  }
+
+  if (isCupActive.value) {
+    const cupMatches = Object.values(cupScheduleData.value) as RawMatch[]
+    for (const m of cupMatches) {
+      if (!m.p1Stats && !m.p2Stats) continue
+      processPlayer(m.p1Id || '', m.p2Name || '', m.p1Stats as Record<string, unknown> | undefined)
+      processPlayer(m.p2Id || '', m.p1Name || '', m.p2Stats as Record<string, unknown> | undefined)
+    }
+  } else {
+    const scope = activeScope.value
+    const leagueMatches = Object.values(scheduleData.value) as RawMatch[]
+    for (const m of leagueMatches) {
+      if (!m.p1Stats && !m.p2Stats) continue
+      if (scope !== 'ALL') {
+        const mDiv = (m.div || '').toUpperCase()
+        const scopeNum = extractDivNumber(scope)
+        const mDivNum = extractDivNumber(mDiv)
+        if (scopeNum && mDivNum === scopeNum) {
+          // Pasuje po numerze dywizji – kontynuuj
+        } else if (mDiv === scope.toUpperCase()) {
+          // Pasuje dokładnie
+        } else {
+          continue
+        }
+      }
+      processPlayer(m.p1Id || '', m.p2Name || '', m.p1Stats as Record<string, unknown> | undefined)
+      processPlayer(m.p2Id || '', m.p1Name || '', m.p2Stats as Record<string, unknown> | undefined)
+    }
+  }
+
+  const result: Record<string, PlayerStats> = {}
+  for (const [id, s] of Object.entries(acc)) {
+    const realAvg = s.avgCount > 0 ? s.avgSum / s.avgCount : 0
+    const doublesPct = s.doublesAttempts > 0
+      ? (s.doublesHit / s.doublesAttempts) * 100
+      : 0
+    const dpi = realAvg > 0 ? realAvg * 3 * (1 + doublesPct / 100) : 0
+
+    result[id] = {
+      realAvg: Math.round(realAvg * 100) / 100,
+      bestAvg: Math.round(s.bestAvg * 100) / 100,
+      bestAvgOpp: s.bestAvgOpp,
+      max: s.totalMax,
+      hf: s.bestFinish,
+      sl: s.bestShort < 999 ? s.bestShort : 0,
+      dpi: Math.round(dpi * 100) / 100,
+      doublesPct: Math.round(doublesPct * 10) / 10,
+    }
+  }
+  return result
+})
+/* ------------------------------------------------------------------ *
+ *  Filtrowanie zawodników
+ * ------------------------------------------------------------------ */
+
 const formatDivShort = (div: string): string => {
   const cleaned = div.replace(/DYWIZJA/gi, '').trim()
   return /^\d+$/.test(cleaned) ? `D${cleaned}` : cleaned.toUpperCase()
 }
 
-/** Zawodnicy aktywnej dywizji (bez filtra grupy). */
 const divisionPlayers = computed<Player[]>(() => {
-  const currentDiv = activeTab.value
-  if (currentDiv === 'ALL' || currentDiv === 'CUP') return players
-  const currentDivNum = currentDiv.replace(/DYWIZJA/gi, '').trim().toUpperCase()
-  return players.filter(
-    (p) => (p.div || '').replace(/DYWIZJA/gi, '').trim().toUpperCase() === currentDivNum,
-  )
-})
-
-/** Grupy dostępne w aktywnej dywizji (do filtra grupowego). */
-const availableGroups = computed<string[]>(() => {
-  const groups = new Set<string>()
-  divisionPlayers.value.forEach((p) => {
-    if (p.group) groups.add(p.group)
+  const scope = activeScope.value
+  if (scope === 'ALL' || scope === 'CUP') return allPlayers.value
+  // Dopasuj graczy do konkretnej dywizji (z opcjonalną grupą)
+  return allPlayers.value.filter((p) => {
+    const pDivNorm = (p.div || '').replace(/DYWIZJA/gi, '').trim().toUpperCase()
+    // Jeśli mamy aktywną grupę, filtruj też po polu group gracza
+    if (activeGroup.value) {
+      const groupMatch = (p.group || '').toUpperCase() === activeGroup.value.toUpperCase()
+      if (!groupMatch) return false
+    }
+    // Porównaj z numerem wybranej dywizji
+    const scopeNum = extractDivNumber(scope)
+    const playerNum = extractDivNumber(pDivNorm)
+    // Gracz pasuje do dywizji, jeśli numery się zgadzają
+    // lub pełny ID pasuje (fallback dla niestandardowych formatów)
+    if (scopeNum && playerNum === scopeNum) return true
+    return pDivNorm === scope.toUpperCase()
   })
-  return [...groups].sort()
 })
 
-/** Zawodnicy po uwzględnieniu filtra dywizji i grupy (dawne `filteredPlayers`). */
 const filteredPlayers = computed<Player[]>(() => {
-  const group = activeGroup.value
-  if (!group) return divisionPlayers.value
-  return divisionPlayers.value.filter((p) => (p.group || '').toUpperCase() === group.toUpperCase())
+  return divisionPlayers.value
 })
 
-/** Budowanie 7 list rankingowych – dokładny port pętli `filteredPlayers.forEach`. */
+/* ------------------------------------------------------------------ *
+ *  Budowanie 7 list rankingowych
+ * ------------------------------------------------------------------ */
+
 const rankingRows = computed(() => {
   const rows = {
     avg: [] as RankingItem[],
@@ -241,7 +335,8 @@ const rankingRows = computed(() => {
   }
 
   filteredPlayers.value.forEach((p) => {
-    const st = statsMap.value[p.id] ?? EMPTY_STATS
+    const st = statsMap.value[p.id]
+    if (!st) return
     const name = `${p.lastName || ''} ${p.firstName || ''}`.trim()
     const divShort = formatDivShort(p.div)
 
@@ -257,11 +352,9 @@ const rankingRows = computed(() => {
   return rows
 })
 
-/** Dawna logika `renderList`: sortowanie + top 10. */
 const sortTop = (data: RankingItem[], isAsc: boolean): RankingItem[] =>
   [...data].sort((a, b) => (isAsc ? a.val - b.val : b.val - a.val)).slice(0, 10)
 
-/** Karty Bento – kolejność i konfiguracja jak wywołania `renderList(...)` w `initRankingi`. */
 const rankingLists = computed<RankingList[]>(() => [
   { id: 'avg', icon: '🎯', title: 'Średnia meczowa', hint: 'śr. 3-rzutkowa', isPct: false, highlight: false, items: sortTop(rankingRows.value.avg, false) },
   { id: 'bestAvg', icon: '🚀', title: 'Najwyższa średnia w meczu', hint: 'rekord meczu', isPct: false, highlight: false, items: sortTop(rankingRows.value.bestAvg, false) },
@@ -272,50 +365,152 @@ const rankingLists = computed<RankingList[]>(() => [
   { id: 'dpi', icon: '👑', title: 'Power Ranking / DPI', hint: 'indeks DPI', isPct: false, highlight: true, items: sortTop(rankingRows.value.dpi, false) },
 ])
 
-/** Karty widoczne na stronie – DPI ukryty, gdy aktywny jest Puchar Ligi. */
 const visibleLists = computed<RankingList[]>(() =>
   rankingLists.value.filter((list) => list.id !== 'dpi' || !isCupActive.value),
 )
 
-/** Formatowanie wartości (dawna logika wewnątrz `renderList`). */
 const formatVal = (item: RankingItem, isPct: boolean): string => {
   const displayVal = item.val.toFixed(Number.isInteger(item.val) && !isPct ? 0 : 2)
   return isPct ? `${displayVal}%` : displayVal
 }
 
-/** Zakładki: wszyscy + dywizje + Puchar Ligi. */
-const tabOptions = computed<DivisionTab[]>(() => [
-  { id: 'ALL', label: 'Wszyscy' },
-  ...divisions,
-  { id: 'CUP', label: '🏆 Puchar Ligi' },
-])
+/* ------------------------------------------------------------------ *
+ *  Zakładki – dwupoziomowa nawigacja: Dywizja → Grupa
+ * ------------------------------------------------------------------ */
 
-/** Klasa aktywnej / nieaktywnej zakładki (dawne style przycisków filtra). */
+/** Wyodrębnia numer głównej dywizji z identyfikatora (np. "DYWIZJA 2 GRUPA A" → "2"). */
+const extractDivNumber = (divId: string): string => {
+  const match = String(divId).match(/(\d+)/)
+  return match ? match[1] : ''
+}
+
+/** Wyodrębnia literę grupy z identyfikatora (np. "DYWIZJA 2 GRUPA A" → "A"). */
+const extractGroupLetter = (divId: string): string | null => {
+  const match = String(divId).match(/GRUPA\s+([A-Z]+)/i)
+  return match ? match[1].toUpperCase() : null
+}
+
+/** Główne dywizje (unikalne numery) – pierwszy rząd przycisków. */
+const mainDivisions = computed<{ id: string; label: string }[]>(() => {
+  const nums = new Set<string>()
+  divisions.value.forEach((d) => {
+    const n = extractDivNumber(d.id)
+    if (n) nums.add(n)
+  })
+  return [...nums].sort((a, b) => parseInt(a) - parseInt(b)).map((n) => ({
+    id: n,
+    label: `D${n}`,
+  }))
+})
+
+const selectedDivision = ref<string>('')
+
+/** Grupy dostępne w ramach aktualnie wybranej dywizji głównej. */
+const availableGroupsForDivision = computed<{ id: string; label: string }[]>(() => {
+  if (!selectedDivision.value) return []
+  const groups = new Set<string>()
+  // Zbieramy wszystkie wpisy w divisions, które pasują do wybranej dywizji
+  divisions.value.forEach((d) => {
+    const n = extractDivNumber(d.id)
+    if (n === selectedDivision.value) {
+      const g = extractGroupLetter(d.id)
+      if (g) groups.add(g)
+    }
+  })
+  // Również z danych graczy – jeśli dywizja ma grupy w polu group
+  allPlayers.value.forEach((p) => {
+    const pDiv = (p.div || '').replace(/DYWIZJA/gi, '').trim()
+    const n = extractDivNumber(pDiv)
+    if (n === selectedDivision.value && p.group) {
+      groups.add(p.group.toUpperCase())
+    }
+  })
+  return [...groups].sort().map((g) => ({ id: g, label: `Grupa ${g}` }))
+})
+
+/** Zbuduj pełne ID dywizji do filtrowania (np. "DYWIZJA 2 GRUPA A" lub "DYWIZJA 2"). */
+const resolvedDivisionId = computed<string>(() => {
+  if (!selectedDivision.value) return ''
+  const groupId = activeGroup.value
+  if (groupId) {
+    const fullId = `DYWIZJA ${selectedDivision.value} GRUPA ${groupId}`
+    // Sprawdź, czy taki wpis istnieje w divisions
+    const found = divisions.value.find((d) => d.id.toUpperCase() === fullId.toUpperCase())
+    if (found) return found.id
+    return fullId
+  }
+  // Bez grupy – szukamy głównej dywizji
+  const mainId = `DYWIZJA ${selectedDivision.value}`
+  const found = divisions.value.find((d) => {
+    const n = extractDivNumber(d.id)
+    const g = extractGroupLetter(d.id)
+    return n === selectedDivision.value && !g
+  })
+  return found ? found.id : mainId
+})
+
+/** Aktualny filtr zakresu: ALL, CUP, lub konkretny identyfikator dywizji. */
+const activeScope = computed<TabId>(() => {
+  if (isAllActive.value) return 'ALL'
+  if (isCupActive.value) return 'CUP'
+  return resolvedDivisionId.value
+})
+
+const tabOptions = computed<DivisionTab[]>(() => {
+  const tabs: DivisionTab[] = [
+    { id: 'ALL', label: 'Wszyscy' },
+  ]
+  // Dodajemy przyciski głównych dywizji
+  mainDivisions.value.forEach((d) => {
+    tabs.push({ id: d.id, label: d.label })
+  })
+  tabs.push({ id: 'CUP', label: '🏆 Puchar Ligi' })
+  return tabs
+})
+
 const tabButtonClass = (tab: TabId): string => {
   const isActive = activeTab.value === tab
   if (!isActive) return 'bg-surface-2 text-muted hover:text-fg'
   return tab === 'CUP' ? 'bg-purple-600 text-white' : 'bg-lime text-on-lime'
 }
 
-/** Dawne `setRankingiFilter(div, group)` – zmiana zakładki resetuje grupę. */
 const setFilter = (div: TabId) => {
-  activeTab.value = div
-  activeGroup.value = null
+  if (div === 'ALL' || div === 'CUP') {
+    activeTab.value = div
+    selectedDivision.value = ''
+    activeGroup.value = null
+  } else {
+    // Kliknięto główną dywizję
+    activeTab.value = div
+    selectedDivision.value = div
+    // Auto-wybór pierwszej grupy, jeśli dywizja ma grupy
+    if (availableGroupsForDivision.value.length > 0) {
+      activeGroup.value = availableGroupsForDivision.value[0].id
+    } else {
+      activeGroup.value = null
+    }
+  }
 }
 
 const setGroup = (group: string | null) => {
   activeGroup.value = group
+  // Upewnij się, że activeTab wskazuje na główną dywizję
+  if (selectedDivision.value && activeTab.value !== selectedDivision.value) {
+    activeTab.value = selectedDivision.value
+  }
 }
+
 /* ------------------------------------------------------------------ *
- *  Modal profilu gracza (dawniej `window.openPlayerModal(id)`)
+ *  Modal profilu gracza
  * ------------------------------------------------------------------ */
 
 const selectedPlayer = ref<ModalPlayer | null>(null)
 
 const openPlayerModal = (id: string) => {
-  const p = players.find((player) => player.id === id)
+  const p = allPlayers.value.find((player) => player.id === id)
   if (!p) return
-  const st = statsMap.value[id] ?? EMPTY_STATS
+  const st = statsMap.value[id]
+  if (!st) return
   selectedPlayer.value = {
     ...p,
     st: {
@@ -356,9 +551,9 @@ const openPlayerModal = (id: string) => {
       </p>
     </header>
 
-    <!-- Zakładki zakresu (dawniej #rank-tabs-container + generateDropdownTabsHtml) -->
-    <nav aria-label="Wybór zakresu rankingu" class="flex flex-wrap items-center gap-2">
-      <span class="label mr-1 text-muted">Zakres</span>
+    <!-- Zakładki zakresu: pierwszy rząd – Dywizje główne -->
+    <nav aria-label="Wybór dywizji" class="flex flex-wrap items-center gap-2">
+      <span class="label mr-1 text-muted">Dywizja</span>
       <button
         v-for="tab in tabOptions"
         :key="tab.id"
@@ -368,34 +563,28 @@ const openPlayerModal = (id: string) => {
         :class="tabButtonClass(tab.id)"
         @click="setFilter(tab.id)"
       >
-        {{ tab.label }}
+        <template v-if="tab.id === 'ALL'">Wszyscy</template>
+        <template v-else-if="tab.id === 'CUP'">🏆 Puchar Ligi</template>
+        <template v-else>Dywizja {{ tab.label.replace('D', '') }}</template>
       </button>
     </nav>
 
-    <!-- Filtr grupy – widoczny tylko dla konkretnej dywizji -->
+    <!-- Drugi rząd – Grupy (warunkowy, tylko gdy wybrano dywizję która ma grupy) -->
     <nav
-      v-if="!isAllActive && !isCupActive && availableGroups.length > 0"
+      v-if="selectedDivision && availableGroupsForDivision.length > 0"
       aria-label="Wybór grupy"
       class="flex flex-wrap items-center gap-2"
     >
       <span class="label mr-1 text-muted">Grupa</span>
       <button
+        v-for="g in availableGroupsForDivision"
+        :key="g.id"
         type="button"
-        class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-        :class="activeGroup === null ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
-        @click="setGroup(null)"
+        class="rounded-full px-3 py-1.5 font-display text-xs font-bold uppercase tracking-[0.1em] transition-colors"
+        :class="activeGroup === g.id ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
+        @click="setGroup(g.id)"
       >
-        Wszystkie
-      </button>
-      <button
-        v-for="group in availableGroups"
-        :key="group"
-        type="button"
-        class="rounded-full px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] transition-colors"
-        :class="activeGroup === group ? 'bg-lime text-on-lime' : 'bg-surface-2 text-muted hover:text-fg'"
-        @click="setGroup(group)"
-      >
-        {{ group }}
+        {{ g.label }}
       </button>
     </nav>
 

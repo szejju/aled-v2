@@ -55,6 +55,27 @@ const router = createRouter({
       meta: { title: 'Rankingi' },
     },
     {
+      // Newsy – aktualności ligowe
+      path: '/news',
+      name: 'news',
+      component: () => import('@/views/NewsView.vue'),
+      meta: { title: 'Newsy' },
+    },
+    {
+      // Pojedynczy news
+      path: '/news/:id',
+      name: 'news-detail',
+      component: () => import('@/views/NewsView.vue'),
+      meta: { title: 'News' },
+    },
+    {
+      // Archiwum Ligi – historia minionych sezonów
+      path: '/archiwum',
+      name: 'archive',
+      component: () => import('@/views/ArchiveView.vue'),
+      meta: { title: 'Archiwum Ligi' },
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/views/LoginView.vue'),

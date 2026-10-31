@@ -6,6 +6,7 @@ import AuthRequiredModal from '@/components/modals/AuthRequiredModal.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
 import ScrollToTop from '@/components/ui/ScrollToTop.vue'
 import PollWidget from '@/components/ui/PollWidget.vue'
+import OverdueNagger from '@/components/ui/OverdueNagger.vue'
 import { setAuthRouter } from '@/composables/useAuth'
 
 /**
@@ -46,4 +47,5 @@ setAuthRouter(router)
   <!-- Globalne UI Goodies -->
   <ScrollToTop />
   <PollWidget />
+  <OverdueNagger />
 </template>

@@ -42,6 +42,8 @@ export interface CupMatch {
   round: number
   score1: number | null
   score2: number | null
+  legs1?: number
+  legs2?: number
   status?: string
   date?: string
   time?: string
@@ -50,6 +52,7 @@ export interface CupMatch {
   proposedTimestamp?: number
   isKnockout?: boolean
   roundNum?: number
+  isDoubleWO?: boolean
   // Opcjonalne statystyki dla modali
   p1Stats?: {
     avg?: number | string

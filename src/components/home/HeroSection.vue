@@ -35,7 +35,7 @@
 
   <!-- Przycisk Discord w oficjalnych barwach i stylu projektu -->
   <a
-    href="https://discord.gg/TWOJ_LINK_DISCORD"
+    href="https://discord.gg/Q9kXAddFCW"
     target="_blank"
     rel="noopener noreferrer"
     class="inline-flex items-center gap-2.5 rounded-full border border-[#5865F2]/30 bg-[#5865F2]/10 px-6 py-3 font-display text-base font-bold uppercase tracking-[0.08em] text-[#5865F2] backdrop-blur transition hover:border-[#5865F2] hover:bg-[#5865F2] hover:text-white"

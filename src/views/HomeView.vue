@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import HeroSection from '@/components/home/HeroSection.vue'
 import MatchOfTheDay from '@/components/home/MatchOfTheDay.vue'
 import StatsStrip from '@/components/home/StatsStrip.vue'
@@ -7,7 +8,71 @@ import MatchList from '@/components/home/MatchList.vue'
 import DivisionLeaders from '@/components/home/DivisionLeaders.vue'
 import NewsCarousel from '@/components/home/NewsCarousel.vue'
 import JoinCta from '@/components/home/JoinCta.vue'
-import { upcomingMatches, recentResults } from '@/data/league'
+import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
+import { getSchedule, getSocialStats, type ScheduleMatch, type SocialStats } from '@/services/api'
+import { upcomingMatches } from '@/data/league'
+
+/* ─── Ostatnie wyniki pobierane z API ─────────────────────────── */
+const recentResultsLoading = ref(false)
+const recentResultsMatches = ref<ScheduleMatch[]>([])
+
+const recentResults = computed(() =>
+  recentResultsMatches.value
+    .filter((m) => typeof m.score1 === 'number' && typeof m.score2 === 'number')
+    .sort((a, b) => {
+      const aRound = parseInt(String(a.round).replace(/\D/g, ''), 10) || 0
+      const bRound = parseInt(String(b.round).replace(/\D/g, ''), 10) || 0
+      return bRound - aRound
+    })
+    .slice(0, 5)
+)
+
+onMounted(async () => {
+  // Pobieranie ostatnich wyników
+  try {
+    recentResultsLoading.value = true
+    const allDivs = ['DYWIZJA 1', 'DYWIZJA 2', 'DYWIZJA 3', 'DYWIZJA 4', 'DYWIZJA 5']
+    const allMatches: ScheduleMatch[] = []
+    for (const div of allDivs) {
+      try {
+        const res = await getSchedule({ division: div })
+        for (const r of res.schedule ?? []) {
+          allMatches.push(...r.matches)
+        }
+      } catch { /* pomijamy błędy na etapie ładowania */ }
+    }
+    recentResultsMatches.value = allMatches
+  } finally {
+    recentResultsLoading.value = false
+  }
+
+  // Pobieranie statystyk społecznościowych
+  try {
+    const stats = await getSocialStats()
+    socialStats.value = stats
+  } catch {
+    // zostawiamy domyślne wartości
+  }
+})
+
+/* ─── Modal szczegółów meczu ───────────────────────────────────── */
+const selectedResultMatch = ref<ScheduleMatch | null>(null)
+const openMatchDetails = (match: ScheduleMatch) => {
+  selectedResultMatch.value = match
+}
+
+/* ─── Kafelek Społeczność ──────────────────────────────────────── */
+const socialLinks = {
+  discord: 'https://discord.com/invite/RU4RZUTZZU',
+  tiktok: 'https://www.tiktok.com/@aledarts4',
+  facebook: 'https://www.facebook.com/profile.php?id=61573328798869',
+}
+
+const socialStats = ref<SocialStats>({
+  discord: 'Brak danych',
+  tiktok: 'Brak danych',
+  facebook: 'Brak danych',
+})
 </script>
 
 <template>
@@ -39,39 +104,39 @@ import { upcomingMatches, recentResults } from '@/data/league'
 
       <ul class="mt-6 flex flex-col gap-2">
         <li>
-          <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+          <a :href="socialLinks.discord" target="_blank" rel="noopener" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
             <span class="grid size-11 place-items-center rounded-xl bg-[#5865F2] text-white">
               <svg viewBox="0 0 24 24" class="size-6" fill="currentColor" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" /></svg>
             </span>
             <span class="flex-1">
               <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">Discord</span>
-              <span class="label text-muted">1.2k członków</span>
+              <span class="label text-muted">{{ socialStats.discord }}</span>
             </span>
             <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
           </a>
         </li>
 
         <li>
-          <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+          <a :href="socialLinks.tiktok" target="_blank" rel="noopener" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
             <span class="grid size-11 place-items-center rounded-xl bg-[#010101] text-white ring-1 ring-white/10">
-              <svg viewBox="0 0 24 24" class="size-5 drop-shadow-[1.5px_1.5px_0_#fe2c55] [filter:drop-shadow(-1.5px_-1.5px_0_#25f4ee)_drop-shadow(1.5px_1.5px_0_#fe2c55)]" fill="currentColor" aria-hidden="true"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.430.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.720.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" /></svg>
+              <svg viewBox="0 0 24 24" class="size-5 [filter:drop-shadow(-1.5px_-1.5px_0_#25f4ee)_drop-shadow(1.5px_1.5px_0_#fe2c55)]" fill="currentColor" aria-hidden="true"><path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.53.63 3.09 1.75 4.17 1.12 1.11 2.7 1.62 4.24 1.79v4.03c-1.44-.05-2.89-.35-4.2-.97-.57-.26-1.1-.59-1.62-.93-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.430.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.720.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" /></svg>
             </span>
             <span class="flex-1">
               <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">TikTok</span>
-              <span class="label text-muted">3.4k obserwujących</span>
+              <span class="label text-muted">{{ socialStats.tiktok }}</span>
             </span>
             <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
           </a>
         </li>
 
         <li>
-          <a href="#" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
+          <a :href="socialLinks.facebook" target="_blank" rel="noopener" class="group/s flex items-center gap-3 rounded-2xl bg-surface-2 p-3 transition hover:bg-line">
             <span class="grid size-11 place-items-center rounded-xl bg-[#0866FF] text-white">
               <svg viewBox="0 0 24 24" class="size-6" fill="currentColor" aria-hidden="true"><path d="M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z" /></svg>
             </span>
             <span class="flex-1">
               <span class="block font-display text-lg font-extrabold uppercase leading-none tracking-wide">Facebook</span>
-              <span class="label text-muted">5.8k fanów</span>
+              <span class="label text-muted">{{ socialStats.facebook }}</span>
             </span>
             <svg viewBox="0 0 24 24" class="size-5 text-muted transition group-hover/s:translate-x-0.5 group-hover/s:text-accent" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
           </a>
@@ -94,6 +159,8 @@ import { upcomingMatches, recentResults } from '@/data/league'
         id="wyniki"
         title="Ostatnie wyniki"
         :matches="recentResults"
+        :clickable="true"
+        @match-click="openMatchDetails"
       />
     </div>
 
@@ -102,7 +169,8 @@ import { upcomingMatches, recentResults } from '@/data/league'
       <DivisionLeaders id="liderzy" />
     </div>
 
-    <!-- CTA -->
     <JoinCta />
+
+    <MatchDetailsModal v-if="selectedResultMatch" :match="selectedResultMatch as any" @close="selectedResultMatch = null" />
   </div>
 </template>

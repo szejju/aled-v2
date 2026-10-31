@@ -37,6 +37,36 @@ export {
   kickPlayer,
   replacePlayer,
   handleExceptionRequest,
+  // actions.ts – migracja z admin.js
+  saveLeagueLevel,
+  deleteLeagueLevel,
+  adminSaveMatchResult,
+  addSinglePlayer,
+  deletePlayerAdmin,
+  generateLeagueSchedule,
+  saveNewsAdmin,
+  deleteNewsAdmin,
+  updateGlobalSettings,
+  forceMatchDateAdmin,
+  archiveCurrentSeason,
+  setDoubleWalkoverAdmin,
+  generateAllSchedulesAdmin,
+  // cupActions.ts
+  setCupStatusAdmin,
+  generateCupGroupsAdmin,
+  generateCupKnockoutAdmin,
+  // rewardsActions.ts
+  runArcheologAdmin,
+  distributeSeasonTrophiesAdmin,
+  // actions.ts – ciąg dalszy migracji z admin.js
+  manageAdminEmails,
+  linkAdminProfile,
+  generatePlayoffsAdmin,
+  // adminFunctions.ts
+  addPenalty,
+  sendPlayerNotification,
+  generateSummerGroups,
+  replacePlayerWithHistory,
 } from "./admin/index.js";
 
 // ─── Views ───────────────────────────────────────────────────────────────────

@@ -133,7 +133,7 @@ async function handleRegister() {
             Oficjalna komunikacja ligowa i umawianie meczów odbywa się na naszym serwerze Discord.
           </p>
           <a
-            href="https://discord.gg/aled"
+            href="https://discord.gg/Q9kXAddFCW"
             target="_blank"
             rel="noopener"
             class="mt-1 inline-block font-bold text-[#5865F2] hover:underline"

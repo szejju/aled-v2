@@ -12,9 +12,9 @@
       <h2 id="news-title" class="inline-flex items-center gap-2 rounded-full bg-lime px-3 py-1 font-display text-sm font-extrabold uppercase tracking-[0.14em] text-on-lime">
         <span class="size-1.5 rounded-full bg-on-lime"></span> Aktualności
       </h2>
-      <a href="#" class="font-display text-sm font-bold uppercase tracking-[0.12em] text-fg/80 transition hover:text-accent">
+      <RouterLink to="/news" class="font-display text-sm font-bold uppercase tracking-[0.12em] text-fg/80 transition hover:text-accent">
         Wszystkie newsy →
-      </a>
+      </RouterLink>
     </div>
 
     <div class="h-[300%] animate-news group-hover:[animation-play-state:paused] group-focus-within:[animation-play-state:paused]">
@@ -27,7 +27,7 @@
           <span class="label ml-auto text-fg/50">01 / 03</span>
         </div>
         <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Trzy 180-tki w jednym legu! Rosiak bije rekord ligi</a>
+          <RouterLink to="/news/1" class="hover:text-accent focus:outline-none focus-visible:underline">Trzy 180-tki w jednym legu! Rosiak bije rekord ligi</RouterLink>
         </h3>
         <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Lider power rankingu zakończył 8. kolejkę średnią 94.7 i pobił rekord sezonu.</p>
       </article>
@@ -41,7 +41,7 @@
           <span class="label ml-auto text-fg/50">02 / 03</span>
         </div>
         <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Losowanie fazy pucharowej – znamy pary ćwierćfinałów</a>
+          <RouterLink to="/news/2" class="hover:text-accent focus:outline-none focus-visible:underline">Losowanie fazy pucharowej – znamy pary ćwierćfinałów</RouterLink>
         </h3>
         <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Hitem rundy będzie starcie Chojnackiego z Przybyszewskim. Transmisja na Discordzie.</p>
       </article>
@@ -55,7 +55,7 @@
           <span class="label ml-auto text-fg/50">03 / 03</span>
         </div>
         <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <a href="#" class="hover:text-accent focus:outline-none focus-visible:underline">Nowy regulamin kamer i weryfikacji wyników</a>
+          <RouterLink to="/news/3" class="hover:text-accent focus:outline-none focus-visible:underline">Nowy regulamin kamer i weryfikacji wyników</RouterLink>
         </h3>
         <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Od 10. kolejki obowiązuje ujednolicone ustawienie kamery. Sprawdź, co się zmienia.</p>
       </article>

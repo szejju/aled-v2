@@ -14,6 +14,23 @@ const getDb = () => {
   return admin.database();
 };
 
+/** Inicjalizuje (lub zwraca już istniejącą) drugą aplikację Firebase
+ *  wskazującą na zewnętrzną bazę archiwum (ARCHIVE_DB_URL).
+ *  Gdy zmienna nie jest ustawiona, fallbackuje do głównej bazy. */
+const getArchiveDb = () => {
+  const archiveDbUrl = process.env.ARCHIVE_DB_URL;
+  if (!archiveDbUrl) {
+    console.warn("Brak ARCHIVE_DB_URL, używam głównej bazy jako fallback.");
+    return getDb();
+  }
+  const appName = 'archiveApp';
+  let archiveApp = admin.apps.find((app) => app?.name === appName);
+  if (!archiveApp) {
+    archiveApp = admin.initializeApp({ databaseURL: archiveDbUrl }, appName);
+  }
+  return archiveApp.database();
+};
+
 // ---- Helper: weryfikacja uprawnień admina --------------------------------
 
 const verifyAdmin = async (uid: string): Promise<boolean> => {
@@ -688,4 +705,449 @@ export const adminSaveMatchResult = functions.https.onCall(async (request) => {
       error.message,
     );
   }
+});
+
+// ---- addSinglePlayer -------------------------------------------------------
+
+export const addSinglePlayer = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+  const { firstName, lastName, nick, div } = request.data;
+  if (!firstName || !lastName)
+    throw new functions.https.HttpsError("invalid-argument", "Brakujące dane.");
+
+  await getDb().ref("players").push({
+    firstName,
+    lastName,
+    nick: nick || "",
+    div: div ? `DYWIZJA ${div.toUpperCase()}` : "",
+    avg: 0,
+    max: 0,
+    checkout: 0,
+    short: 0,
+  });
+  return { success: true, message: "Zawodnik dodany." };
+});
+
+// ---- deletePlayerAdmin -----------------------------------------------------
+
+export const deletePlayerAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+  const { playerId } = request.data;
+  if (!playerId)
+    throw new functions.https.HttpsError("invalid-argument", "Brak ID gracza.");
+
+  await getDb().ref(`players/${playerId}`).remove();
+  return { success: true, message: "Zawodnik usunięty." };
+});
+
+// ---- generateLeagueSchedule ------------------------------------------------
+
+export const generateLeagueSchedule = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+
+  const { division } = request.data;
+  if (!division)
+    throw new functions.https.HttpsError("invalid-argument", "Wybierz dywizję.");
+
+  const db = getDb();
+  const updates: any = {};
+  const divName = `DYWIZJA ${division}`.toUpperCase();
+
+  // 1. Usuwanie starego terminarza
+  const scheduleSnap = await db.ref("schedule").once("value");
+  const schedule = scheduleSnap.val() || {};
+  Object.keys(schedule).forEach((matchId) => {
+    if (schedule[matchId].div?.toUpperCase() === divName)
+      updates[`schedule/${matchId}`] = null;
+  });
+
+  // 2. Pobieranie graczy i ZEROWANIE STATYSTYK
+  const playersSnap = await db.ref("players").once("value");
+  const playersData = playersSnap.val() || {};
+  const divPlayers: any[] = [];
+
+  Object.keys(playersData).forEach((pId) => {
+    if (playersData[pId].div?.toUpperCase() === divName) {
+      updates[`players/${pId}/max`] = 0;
+      updates[`players/${pId}/checkout`] = 0;
+      updates[`players/${pId}/short`] = 0;
+      divPlayers.push({ id: pId, ...playersData[pId] });
+    }
+  });
+
+  if (divPlayers.length < 2)
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "Za mało graczy w dywizji.",
+    );
+
+  // 3. Tasowanie Fisher-Yates
+  for (let i = divPlayers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [divPlayers[i], divPlayers[j]] = [divPlayers[j], divPlayers[i]];
+  }
+
+  // 4. Algorytm Round Robin
+  if (divPlayers.length % 2 !== 0)
+    divPlayers.push({ id: "PAUZA", lastName: "PAUZA", firstName: "" });
+
+  const numPlayers = divPlayers.length;
+  const rounds = numPlayers - 1;
+  const half = numPlayers / 2;
+
+  for (let round = 1; round <= rounds; round++) {
+    for (let i = 0; i < half; i++) {
+      const p1 = divPlayers[i];
+      const p2 = divPlayers[numPlayers - 1 - i];
+
+      if (p1.id !== "PAUZA" && p2.id !== "PAUZA") {
+        const matchId = `M-${division}-${round}-${Date.now()}-${i}`;
+        updates[`schedule/${matchId}`] = {
+          div: divName,
+          round: round,
+          p1Id: p1.id,
+          p1Name: `${p2.lastName} ${p2.firstName}`.trim(),
+          p2Id: p2.id,
+          p2Name: `${p1.lastName} ${p1.firstName}`.trim(),
+          score1: "",
+          score2: "",
+        };
+      }
+    }
+    divPlayers.splice(1, 0, divPlayers.pop());
+  }
+
+  await db.ref().update(updates);
+  return { success: true, message: `Terminarz ${divName} wygenerowany!` };
+});
+
+// =============================================================================
+// Zarządzanie Newsami, Ustawienia Globalne, Boska Interwencja i Archiwizacja
+// - Ostatnie 4 systemy przeniesione z archaicznego admin.js
+// =============================================================================
+
+// ---- saveNewsAdmin -----------------------------------------------------------
+
+export const saveNewsAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
+  const { id, title, content, imageUrl } = request.data;
+  if (!title || !content)
+    throw new functions.https.HttpsError('invalid-argument', 'Tytul i tresc sa wymagane.');
+  
+  const db = getDb();
+  const now = new Date();
+  const dateString = now.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const newsData = { title, content, imageUrl: imageUrl || '', date: dateString, timestamp: now.getTime() };
+
+  if (id) {
+    await db.ref(`news/${id}`).update({ title, content, imageUrl: imageUrl || '' });
+  } else {
+    await db.ref('news').push(newsData);
+  }
+  return { success: true, message: 'Wiadomosc zapisana.' };
+});
+
+export const deleteNewsAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
+  if (!request.data.id)
+    throw new functions.https.HttpsError('invalid-argument', 'Brak ID.');
+  await getDb().ref(`news/${request.data.id}`).remove();
+  return { success: true, message: 'Wiadomosc usunieta.' };
+});
+
+// ---- updateGlobalSettings ---------------------------------------------------
+
+export const updateGlobalSettings = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
+  
+  const { startDate, enrollmentEndDate, currentSeason } = request.data;
+  const updates: any = {};
+  if (startDate) updates['settings/startDate'] = startDate;
+  if (enrollmentEndDate) updates['settings/enrollmentEndDate'] = enrollmentEndDate;
+  if (currentSeason) updates['settings/currentSeason'] = parseInt(currentSeason);
+  
+  await getDb().ref().update(updates);
+  return { success: true, message: 'Ustawienia globalne zaktualizowane.' };
+});
+
+// ---- forceMatchDateAdmin (Boska Interwencja) --------------------------------
+
+export const forceMatchDateAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
+  
+  const { matchId, isCup, date, time } = request.data;
+  if (!matchId || !date || !time)
+    throw new functions.https.HttpsError('invalid-argument', 'Brakujace dane.');
+  
+  const basePath = isCup ? 'cup/schedule' : 'schedule';
+  const ts = new Date(`${date}T${time}`).getTime();
+  
+  await getDb().ref(`${basePath}/${matchId}`).update({
+    proposedDate: date, proposedTime: time, proposedTimestamp: ts, status: 'accepted'
+  });
+  return { success: true, message: 'Termin zapisany i zatwierdzony przymusowo.' };
+});
+
+// ---- archiveCurrentSeason (Atomowy Reset) -------------------------------
+
+export const archiveCurrentSeason = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
+  
+  const db = getDb();
+  const snapSettings = await db.ref('settings/currentSeason').once('value');
+  const currentSeason = snapSettings.val() || 1;
+  const nextSeason = currentSeason + 1;
+  
+  const [snapPlayers, snapSchedule, snapCup] = await Promise.all([
+    db.ref('players').once('value'),
+    db.ref('schedule').once('value'),
+    db.ref('cup').once('value')
+  ]);
+  
+  const playersData = snapPlayers.val() || {};
+  const activePlayersArchive: any = {};
+  const updates: any = {};
+
+  Object.keys(playersData).forEach(playerId => {
+    const p = playersData[playerId];
+    if (p.div && !p.div.toUpperCase().includes('POCZEKALNIA')) {
+      activePlayersArchive[playerId] = p;
+    }
+    updates[`players/${playerId}/avg`] = 0;
+    updates[`players/${playerId}/max`] = 0;
+    updates[`players/${playerId}/checkout`] = 0;
+    updates[`players/${playerId}/short`] = 0;
+    updates[`players/${playerId}/div`] = 'POCZEKALNIA';
+  });
+
+  updates['schedule'] = null;
+  updates['cup'] = null;
+  updates['settings/currentSeason'] = nextSeason;
+
+  // Główne updates (czyszczenie, zerowanie, poczekalnia) do głównej bazy
+  await db.ref().update(updates);
+
+  // Zrzut archiwum do zewnętrznej / osobnej bazy
+  const archiveDb = getArchiveDb();
+  await archiveDb.ref(`archive/season_${currentSeason}`).set({
+    players: activePlayersArchive,
+    schedule: snapSchedule.val() || {},
+    cup: snapCup.val() || {},
+    timestamp: admin.database.ServerValue.TIMESTAMP,
+  });
+
+  return { success: true, message: `Sezon ${currentSeason} zarchiwizowany! Zaczynamy sezon ${nextSeason}.` };
+});
+
+// =============================================================================
+// Obustronny Walkower oraz Globalny Generator Terminarza
+// - Ostatnie mechanizmy przeniesione z archaicznego admin.js (OWASP: weryfikacja
+//   admina przed zapisem, atomowe multi-path update).
+// =============================================================================
+
+// ---- setDoubleWalkoverAdmin (Obustronny Walkower 0:0) -----------------------
+
+export const setDoubleWalkoverAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+
+  const { matchId } = request.data;
+  if (!matchId)
+    throw new functions.https.HttpsError('invalid-argument', 'Brak ID meczu.');
+
+  const isCup = matchId.startsWith('CUP-');
+  const basePath = isCup ? `cup/schedule/${matchId}` : `schedule/${matchId}`;
+
+  await getDb().ref(basePath).update({
+    score1: 0,
+    score2: 0,
+    isDoubleWO: true,
+    status: 'played',
+    isPlayed: true,
+  });
+
+  return { success: true, message: 'Obustronny walkower zapisany.' };
+});
+
+// ---- generateAllSchedulesAdmin (Globalny Terminarz) -------------------------
+
+export const generateAllSchedulesAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+
+  const db = getDb();
+  const [structureSnap, playersSnap, scheduleSnap] = await Promise.all([
+    db.ref('settings/leagueStructure').once('value'),
+    db.ref('players').once('value'),
+    db.ref('schedule').once('value'),
+  ]);
+
+  const structure = structureSnap.val() || {};
+  const playersData = playersSnap.val() || {};
+  const oldSchedule = scheduleSnap.val() || {};
+
+  const levels = Object.keys(structure).sort((a, b) => Number(a) - Number(b));
+  if (levels.length === 0)
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Brak skonfigurowanej struktury ligi.'
+    );
+
+  const updates: any = {};
+
+  // 1. Usuwamy cały dotychczasowy terminarz ligowy.
+  Object.keys(oldSchedule).forEach((matchId) => {
+    updates[`schedule/${matchId}`] = null;
+  });
+
+  let totalMatches = 0;
+  let totalDivisions = 0;
+
+  // 2. Dla każdej dywizji generujemy Round-Robin wśród aktywnych graczy.
+  for (const level of levels) {
+    const divName = `DYWIZJA ${level}`.toUpperCase();
+    const divPlayers: any[] = [];
+
+    Object.keys(playersData).forEach((pId) => {
+      const p = playersData[pId];
+      if ((p.div || '').toUpperCase() === divName && !p.isDisqualified) {
+        updates[`players/${pId}/max`] = 0;
+        updates[`players/${pId}/checkout`] = 0;
+        updates[`players/${pId}/short`] = 0;
+        divPlayers.push({ id: pId, ...p });
+      }
+    });
+
+    if (divPlayers.length < 2) continue;
+
+    // Tasowanie Fisher-Yates.
+    for (let i = divPlayers.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [divPlayers[i], divPlayers[j]] = [divPlayers[j], divPlayers[i]];
+    }
+
+    // Algorytm kołowy (Round-Robin) z pauzą dla nieparzystej liczby graczy.
+    const rrPlayers = [...divPlayers];
+    if (rrPlayers.length % 2 !== 0)
+      rrPlayers.push({ id: 'PAUZA', lastName: 'PAUZA', firstName: '' });
+
+    const numPlayers = rrPlayers.length;
+    const rounds = numPlayers - 1;
+    const half = numPlayers / 2;
+
+    for (let round = 1; round <= rounds; round++) {
+      for (let i = 0; i < half; i++) {
+        const p1 = rrPlayers[i];
+        const p2 = rrPlayers[numPlayers - 1 - i];
+        if (p1.id !== 'PAUZA' && p2.id !== 'PAUZA') {
+          const matchId = `M-${level}-${round}-${Date.now()}-${i}`;
+          updates[`schedule/${matchId}`] = {
+            div: divName,
+            round,
+            p1Id: p1.id,
+            p1Name: `${p1.lastName} ${p1.firstName}`.trim(),
+            p2Id: p2.id,
+            p2Name: `${p2.lastName} ${p2.firstName}`.trim(),
+            score1: '',
+            score2: '',
+          };
+          totalMatches++;
+        }
+      }
+      rrPlayers.splice(1, 0, rrPlayers.pop());
+    }
+    totalDivisions++;
+  }
+
+  await db.ref().update(updates);
+  return {
+    success: true,
+    message: `Terminarz wygenerowany dla ${totalDivisions} dywizji (${totalMatches} meczów).`,
+  };
+});
+
+// ---- manageAdminEmails (Zarządzanie Uprawnieniami) ---------------------------
+
+export const manageAdminEmails = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+  const { email, action } = request.data;
+  if (!email || !['add', 'remove'].includes(action))
+    throw new functions.https.HttpsError('invalid-argument', 'Błędne dane.');
+
+  const db = getDb();
+  const snap = await db.ref('settings/adminEmails').once('value');
+  let emails: string[] = snap.val() || [];
+
+  if (action === 'add' && !emails.includes(email)) emails.push(email);
+  if (action === 'remove') emails = emails.filter(e => e !== email);
+
+  await db.ref('settings/adminEmails').set(emails);
+  return { success: true, message: `Uprawnienia ${action === 'add' ? 'dodane' : 'usunięte'}.` };
+});
+
+// ---- linkAdminProfile (Linkowanie Konta) -------------------------------------
+
+export const linkAdminProfile = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  const email = request.auth?.token.email;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+  const { playerId } = request.data;
+  if (!playerId)
+    throw new functions.https.HttpsError('invalid-argument', 'Brak ID Gracza.');
+
+  await getDb().ref(`players/${playerId}`).update({
+    uid, email, isVerified: true, verifyAvg: 'verified', verifyCam: 'verified'
+  });
+  return { success: true, message: 'Konto powiązane i zweryfikowane!' };
+});
+
+// ---- generatePlayoffsAdmin (Generator Baraży) --------------------------------
+
+export const generatePlayoffsAdmin = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+  const { target, matches } = request.data;
+  if (!target || !Array.isArray(matches))
+    throw new functions.https.HttpsError('invalid-argument', 'Brakujące dane.');
+
+  const db = getDb();
+  const updates: any = {};
+  matches.forEach((m: any) => {
+    const key = db.ref('schedule').push().key;
+    updates[`schedule/${key}`] = {
+      div: `BARAŻ O ${target.toUpperCase()}`,
+      round: m.round,
+      p1Id: m.p1Id,
+      p1Name: m.p1Name,
+      p2Id: m.p2Id,
+      p2Name: m.p2Name,
+      isPlayoff: true,
+      timestamp: admin.database.ServerValue.TIMESTAMP,
+    };
+  });
+
+  await db.ref().update(updates);
+  return { success: true, message: `Baraże o ${target} wygenerowane!` };
 });
