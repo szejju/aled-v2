@@ -37,9 +37,9 @@ const top5 = computed<RankingEntry[]>(() =>
 
 <template>
   <section id="ranking" aria-labelledby="pr-title" class="bento p-6 md:col-span-3 lg:col-span-4">
-    <div class="flex items-center justify-between">
-      <h2 id="pr-title" class="font-display text-2xl font-black uppercase italic">Power <span class="text-accent">ranking</span></h2>
-      <span class="label rounded-full bg-surface-2 px-2.5 py-1 text-muted">Top 5</span>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h2 id="pr-title" class="font-display text-xl font-black uppercase italic sm:text-2xl">Power <span class="text-accent">ranking</span></h2>
+      <span class="label shrink-0 rounded-full bg-surface-2 px-2.5 py-1 text-muted">Top 5</span>
     </div>
 
     <!-- Loading -->
@@ -52,16 +52,16 @@ const top5 = computed<RankingEntry[]>(() =>
       <li
         v-for="entry in top5"
         :key="entry.player"
-        class="flex items-center gap-3 rounded-2xl p-3"
+        class="flex min-w-0 items-center gap-3 rounded-2xl p-3"
         :class="entry.position === 1 ? 'border border-lime/50 bg-lime/10' : 'bg-surface-2'"
       >
         <span
           class="grid size-9 place-items-center rounded-xl font-display text-lg text-on-lime"
           :class="entry.position === 1 ? 'bg-lime font-black' : 'bg-line font-extrabold'"
         >{{ entry.position }}</span>
-        <span class="flex-1 text-sm font-semibold tracking-wide">{{ entry.player }}</span>
+        <span class="min-w-0 flex-1 truncate text-sm font-semibold tracking-wide">{{ entry.player }}</span>
         <span
-          class="font-display text-lg font-extrabold tabular-nums"
+          class="shrink-0 font-display text-lg font-extrabold tabular-nums"
           :class="entry.position === 1 ? 'text-accent' : ''"
         >{{ entry.points.toFixed(2) }}</span>
       </li>

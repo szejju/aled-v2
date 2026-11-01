@@ -78,7 +78,7 @@ watch(() => props.modelValue, (val: boolean) => {
     <Transition name="modal" appear>
       <div
         v-if="modelValue"
-        class="fixed inset-0 z-[99999] flex items-center justify-center p-4"
+        class="force-dark fixed inset-0 z-[99999] flex items-center justify-center p-4"
         @click="handleBackdropClick"
         role="dialog"
         aria-modal="true"

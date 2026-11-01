@@ -12,7 +12,7 @@
       Sezon 4 · Kolejka 9 trwa
     </span>
 
-    <h1 id="hero-title" class="font-display text-5xl font-black uppercase italic leading-[0.88] tracking-tight sm:text-7xl xl:text-8xl">
+    <h1 id="hero-title" class="max-w-full font-display text-4xl font-black uppercase italic leading-[0.88] tracking-tight min-[380px]:text-5xl sm:text-7xl xl:text-8xl">
       Amatorska liga<br />
       <span class="text-glow text-accent">e-darta</span>
     </h1>
@@ -25,7 +25,7 @@
   <!-- Przycisk Rejestracji (Dołącz do ligi) -->
   <RouterLink
     to="/register"
-    class="inline-flex items-center gap-2 rounded-full bg-lime px-6 py-3 font-display text-base font-extrabold uppercase tracking-[0.08em] text-on-lime shadow-[0_0_40px_rgb(155_226_45/0.35)] transition hover:bg-lime-soft"
+    class="inline-flex items-center gap-2 rounded-full bg-lime px-4 py-3 font-display text-sm font-extrabold uppercase tracking-[0.06em] text-on-lime shadow-[0_0_40px_rgb(155_226_45/0.35)] transition hover:bg-lime-soft sm:px-6 sm:text-base sm:tracking-[0.08em]"
   >
     Dołącz do ligi
     <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
@@ -38,7 +38,7 @@
     href="https://discord.gg/Q9kXAddFCW"
     target="_blank"
     rel="noopener noreferrer"
-    class="inline-flex items-center gap-2.5 rounded-full border border-[#5865F2]/30 bg-[#5865F2]/10 px-6 py-3 font-display text-base font-bold uppercase tracking-[0.08em] text-[#5865F2] backdrop-blur transition hover:border-[#5865F2] hover:bg-[#5865F2] hover:text-white"
+    class="inline-flex items-center gap-2.5 rounded-full border border-[#5865F2]/30 bg-[#5865F2]/10 px-4 py-3 font-display text-sm font-bold uppercase tracking-[0.06em] text-[#5865F2] backdrop-blur transition hover:border-[#5865F2] hover:bg-[#5865F2] hover:text-white sm:px-6 sm:text-base sm:tracking-[0.08em]"
   >
     <!-- Ikona Discorda -->
     <svg class="size-4 fill-current" viewBox="0 0 24 24" aria-hidden="true">

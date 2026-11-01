@@ -2,6 +2,7 @@
 import * as functions from 'firebase-functions';
 import { db } from '../database/connection.js';
 import { StatsEngine } from '../stats_engine/calculator';
+import { collectOfficialLeagueMatches } from '../league/table';
 
 export const getPlayersList = functions.https.onCall(async (request) => {
   const division = request.data?.division || null; // np. "DYWIZJA 1"
@@ -22,8 +23,8 @@ export const getPlayersList = functions.https.onCall(async (request) => {
     const players = Array.isArray(rawPlayers) ? rawPlayers : Object.keys(rawPlayers).map(id => ({ id, ...rawPlayers[id] }));
     const schedule = Array.isArray(rawSchedule) ? rawSchedule : Object.keys(rawSchedule).map(id => ({ id, ...rawSchedule[id] }));
 
-    // 2. Odpalamy silnik statystyk, żeby wyliczyć DPI i realAvg dla każdego gracza
-    const allStats = StatsEngine.calculateAllStats(players, schedule);
+    // 2. DPI i średnia liczą się wyłącznie z zatwierdzonych meczów ligowych.
+    const allStats = StatsEngine.calculateAllStats(players, collectOfficialLeagueMatches(schedule));
 
     // 3. Filtrowanie po dywizji (opcjonalne) i grupie
     const cleanTargetDiv = division ? division.replace(/DYWIZJA/gi, '').trim().toUpperCase() : '';

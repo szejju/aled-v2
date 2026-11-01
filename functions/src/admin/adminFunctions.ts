@@ -7,7 +7,8 @@
 
 import * as functions from "firebase-functions";
 import admin from "firebase-admin";
-import { isBarrageMatch } from "../league/table.js";
+import { StatsEngine, type Player } from "../stats_engine/calculator.js";
+import { collectOfficialLeagueMatches, isBarrageMatch } from "../league/table.js";
 import {
   countsForCupGroup,
   rankCupGroup,
@@ -81,25 +82,68 @@ export const removePenalty = functions.https.onCall(async (request) => {
 
 // ---- sendPlayerNotification ----------------------------------------------
 
+const NOTIF_RECIPIENT_LIMIT = 200;
+const NOTIF_TITLE_LIMIT = 200;
+const NOTIF_MESSAGE_LIMIT = 4000;
+const BAD_PLAYER_KEY = /[.#$[\]/]/;
+
+function collectNotificationRecipients(data: { playerId?: unknown; playerIds?: unknown }): string[] {
+  const raw: unknown[] = Array.isArray(data.playerIds)
+    ? data.playerIds
+    : typeof data.playerId === "string"
+      ? [data.playerId]
+      : [];
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    if (id.length > 128 || BAD_PLAYER_KEY.test(id))
+      throw new functions.https.HttpsError("invalid-argument", "Nieprawidlowy identyfikator gracza.");
+    seen.add(id);
+    ids.push(id);
+  }
+
+  if (ids.length === 0)
+    throw new functions.https.HttpsError("invalid-argument", "Wybierz co najmniej jednego gracza.");
+  if (ids.length > NOTIF_RECIPIENT_LIMIT)
+    throw new functions.https.HttpsError("invalid-argument", `Maksymalnie ${NOTIF_RECIPIENT_LIMIT} odbiorcow naraz.`);
+  return ids;
+}
+
 export const sendPlayerNotification = functions.https.onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new functions.https.HttpsError("unauthenticated", "Brak autoryzacji.");
   if (!(await verifyAdmin(uid)))
     throw new functions.https.HttpsError("permission-denied", "Brak uprawnien admina.");
 
-  const { playerId, title, message } = request.data;
-  if (!playerId || !title || !message)
-    throw new functions.https.HttpsError("invalid-argument", "Brakujace dane.");
+  const data = (request.data ?? {}) as { playerId?: unknown; playerIds?: unknown; title?: unknown; message?: unknown };
+  const title = typeof data.title === "string" ? data.title.trim() : "";
+  const message = typeof data.message === "string" ? data.message.trim() : "";
+  if (!title || !message)
+    throw new functions.https.HttpsError("invalid-argument", "Brakujace dane: tytul i tresc.");
+  if (title.length > NOTIF_TITLE_LIMIT || message.length > NOTIF_MESSAGE_LIMIT)
+    throw new functions.https.HttpsError("invalid-argument", "Tytul lub tresc sa za dlugie.");
 
+  const playerIds = collectNotificationRecipients(data);
   const db = getDb();
-  const notifId = db.ref("notifications").push().key!;
+  const updates: Record<string, unknown> = {};
+  for (const playerId of playerIds) {
+    const notifId = db.ref("notifications").push().key;
+    if (!notifId) throw new functions.https.HttpsError("internal", "Nie udalo sie przygotowac powiadomienia.");
+    updates[`notifications/${notifId}`] = {
+      playerId, title, message, read: false,
+      createdAt: admin.database.ServerValue.TIMESTAMP, sentBy: uid,
+    };
+  }
 
-  await db.ref(`notifications/${notifId}`).set({
-    playerId, title, message, read: false,
-    createdAt: admin.database.ServerValue.TIMESTAMP, sentBy: uid,
-  });
-
-  return { success: true, message: "Powiadomienie wyslane." };
+  await db.ref().update(updates);
+  const sent = playerIds.length === 1
+    ? "Powiadomienie wyslane."
+    : `Wyslano powiadomienie do ${playerIds.length} graczy.`;
+  return { success: true, message: sent, count: playerIds.length };
 });
 // ---- generateSummerGroups -------------------------------------------------
 
@@ -913,15 +957,34 @@ function matchBelongsToGroup(raw: Record<string, unknown>, groupName: string, me
   });
 }
 
+function leagueDpiMap(playersRaw: unknown, scheduleRaw: unknown): Map<string, number> {
+  const source = playersRaw && typeof playersRaw === "object" ? playersRaw as Record<string, unknown> : {};
+  const players: Player[] = Object.entries(source).flatMap(([id, value]) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    return [{
+      id,
+      firstName: typeof row.firstName === "string" ? row.firstName : undefined,
+      lastName: typeof row.lastName === "string" ? row.lastName : undefined,
+      div: typeof row.div === "string" ? row.div : undefined,
+    }];
+  });
+  const stats = StatsEngine.calculateAllStats(players, collectOfficialLeagueMatches(scheduleRaw));
+  const dpi = new Map<string, number>();
+  for (const row of Object.values(stats)) dpi.set(row.id, row.dpi);
+  return dpi;
+}
+
 /**
  * Tabela grupy z zakończonych meczów, regulaminem pucharowym.
- * Niedokończony mecz blokuje drabinkę.
+ * Niedokończony mecz blokuje drabinkę. Remis domyka DPI ligowe.
  */
 function assessGroup(
   groupName: string,
   memberIds: string[],
   schedule: Record<string, unknown>,
   names: Map<string, string>,
+  leagueDpi: ReadonlyMap<string, number>,
 ): { rows: CupTableRow[]; played: CupPlayedMatch[] } {
   const members = new Set(memberIds);
   const played: CupPlayedMatch[] = [];
@@ -945,7 +1008,7 @@ function assessGroup(
       `Grupa ${groupName} ma niedokonczone mecze (${pending}). Drabinka liczy tylko komplet wynikow.`,
     );
   }
-  const rows = rankCupGroup(groupName, memberIds, played, names);
+  const rows = rankCupGroup(groupName, memberIds, played, names, leagueDpi);
   if (memberIds.length >= 2 && rows.every((row) => row.played === 0)) {
     throw new functions.https.HttpsError(
       "failed-precondition",
@@ -1013,6 +1076,7 @@ export function buildCupKnockoutStage(
   playersRaw: unknown,
   participantsRaw: unknown,
   now: number,
+  leagueDpi: ReadonlyMap<string, number> = new Map(),
 ): CupKnockoutPlan {
   const settings = plainRecord(settingsRaw) ?? {};
   if (settings.advancingPerGroup === undefined || settings.luckyLosers === undefined) {
@@ -1051,7 +1115,7 @@ export function buildCupKnockoutStage(
     for (const id of memberIds) {
       if (!names.has(id)) names.set(id, cupParticipantName(id, players, participants));
     }
-    const assessed = assessGroup(groupName, memberIds, schedule, names);
+    const assessed = assessGroup(groupName, memberIds, schedule, names, leagueDpi);
     tables.push(assessed.rows);
     played.push(...assessed.played);
   }
@@ -1164,12 +1228,13 @@ export const generateCupKnockoutStage = functions.https.onCall(async (request) =
   await requireAdmin(request);
 
   const db = getDb();
-  const [settingsSnap, groupsSnap, scheduleSnap, playersSnap, participantsSnap] = await Promise.all([
+  const [settingsSnap, groupsSnap, scheduleSnap, playersSnap, participantsSnap, leagueSnap] = await Promise.all([
     db.ref("cup/settings").once("value"),
     db.ref("cup/groups").once("value"),
     db.ref("cup/schedule").once("value"),
     db.ref("players").once("value"),
     db.ref("cup/participants").once("value"),
+    db.ref("schedule").once("value"),
   ]);
 
   const scheduleRaw = scheduleSnap.val();
@@ -1182,6 +1247,7 @@ export const generateCupKnockoutStage = functions.https.onCall(async (request) =
     playersSnap.val(),
     participantsSnap.val(),
     now,
+    leagueDpiMap(playersSnap.val(), leagueSnap.val()),
   );
 
   const kept = new Set<string>([

@@ -5,6 +5,7 @@
 
 import { onCall } from "firebase-functions/v2/https";
 import { db } from "../database/connection.js";
+import { buildHomeMatchLists } from "../league/upcoming.js";
 
 /**
  * Pobiera dane podsumowujące dla dashboardu:
@@ -21,22 +22,15 @@ export const getHomeData = onCall(
 
     const dbRef = db();
 
-    // Ostatnie 10 zweryfikowanych meczów
-    const recentSnap = await dbRef
-      .ref("schedule")
-      .orderByChild("playedAt")
-      .limitToLast(10)
-      .once("value");
-
-    const recentMatches: Array<Record<string, unknown>> = [];
-    recentSnap.forEach((child) => {
-      const val = child.val();
-      if (val?.verified) {
-        recentMatches.push({ matchKey: child.key, ...val });
-      }
-    });
-    recentMatches.sort(
-      (a, b) => ((b.playedAt as number) ?? 0) - ((a.playedAt as number) ?? 0)
+    const [scheduleSnap, cupSnap] = await Promise.all([
+      dbRef.ref("schedule").once("value"),
+      dbRef.ref("cup/schedule").once("value"),
+    ]);
+    const { upcoming, recent } = buildHomeMatchLists(
+      scheduleSnap.val(),
+      cupSnap.val(),
+      Date.now(),
+      10,
     );
 
     // Newsy
@@ -52,7 +46,8 @@ export const getHomeData = onCall(
 
     return {
       season: currentSeason,
-      recentMatches: recentMatches.slice(0, 10),
+      recentMatches: recent,
+      upcomingMatches: upcoming,
       news: news.reverse(),
       totalPlayers,
     };

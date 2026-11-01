@@ -8,6 +8,7 @@ import * as functions from "firebase-functions";
 import admin from "firebase-admin";
 import { archiveDatabase } from "../database/connection.js";
 import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
+import { awardSeasonTrophies } from "../league/ceremony.js";
 import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.js";
 
 // ---- Lazy init -----------------------------------------------------------
@@ -1009,6 +1010,10 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
     updates["settings/currentSeason"] = nextSeason;
 
     const snapshot = buildSeasonSnapshot(playersData, scheduleData, penaltiesData, cupData);
+    const trophies = awardSeasonTrophies(playersData, scheduleData, penaltiesData);
+    for (const [playerId, list] of Object.entries(trophies)) {
+      updates[`achievements/${playerId}/trophies`] = list;
+    }
     payload = {
       season: currentSeason,
       timestamp: admin.database.ServerValue.TIMESTAMP,
@@ -1020,6 +1025,7 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
       stats: toRtdb(snapshot.stats),
       cupStats: toRtdb(snapshot.cupStats),
       tables: toRtdb(snapshot.tables),
+      trophies: toRtdb(trophies),
     };
   } catch (err) {
     console.error(

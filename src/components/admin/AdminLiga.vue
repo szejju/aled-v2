@@ -42,13 +42,32 @@ interface PlayoffSlot {
 
 const emptyLevel = (): LevelForm => ({ level: '', groups: 1, promo: 0, playoffs: 0, releg: 0, playersLimit: 8 })
 
+/** RTDB z kluczami 1, 2, 3… wraca z SDK jako tablica. Poziom bierzemy z pola `level`, nie z indeksu. */
+function levelsFromSnapshot(value: unknown): Record<string, LeagueLevel> {
+  const rows = Array.isArray(value) ? value.entries() : Object.entries(asRecord(value) ?? {})
+  const levels: Record<string, LeagueLevel> = {}
+  for (const [index, row] of rows) {
+    const record = asRecord(row)
+    if (!record) continue
+    const stored = record.level
+    const key = typeof stored === 'string' && stored.trim()
+      ? stored.trim()
+      : typeof stored === 'number' && Number.isFinite(stored)
+        ? String(stored)
+        : String(index)
+    levels[key] = record as LeagueLevel
+  }
+  return levels
+}
+
 const structure = useRtdbValue(
   'settings/leagueStructure',
-  (snapshot) => (asRecord(snapshot.val()) ?? {}) as Record<string, LeagueLevel>,
+  (snapshot) => levelsFromSnapshot(snapshot.val()),
   {} as Record<string, LeagueLevel>,
 )
 const leagueStructure = structure.data
 const structureError = structure.error
+const structureReady = structure.ready
 const newLevel = ref<LevelForm>(emptyLevel())
 const strSaveLoad = ref(false)
 const { ids: strDelLoad, run: runDeleteLevel } = useBusyIds()
@@ -321,10 +340,11 @@ onMounted(() => {
     </div>
     <div class="space-y-2">
       <div v-for="(cfg,lvl) in leagueStructure" :key="lvl" class="flex items-center justify-between rounded-xl border border-line bg-surface-2 px-4 py-3">
-        <div><span class="font-bold text-fg">Dywizja {{ lvl }}</span><span class="text-xs text-muted ml-3">{{ cfg.groups }} grup, Awans:{{ cfg.promo }}, Baraze:{{ cfg.playoffs }}, Spadek:{{ cfg.releg }}, Limit:{{ cfg.playersLimit }}</span></div>
+        <div><span class="font-bold text-fg">Dywizja {{ lvl }}</span><span class="text-xs text-muted ml-3">{{ cfg.groups }} grup, Awans: {{ cfg.promo }}, Baraze: {{ cfg.playoffs }}, Spadek: {{ cfg.releg }}, Limit: {{ cfg.playersLimit }}</span></div>
         <button @click="delLvl(lvl)" :disabled="strDelLoad.has(lvl)" class="text-red-400 hover:text-red-300 text-xs font-bold uppercase">Usun</button>
       </div>
       <p v-if="structureError" class="text-sm font-bold text-red-400">{{ structureError }}</p>
+      <p v-else-if="!structureReady" class="text-xs text-muted italic">Wczytywanie struktury...</p>
       <p v-else-if="Object.keys(leagueStructure).length===0" class="text-xs text-muted italic">Brak zdefiniowanych poziomow.</p>
     </div>
   </AdminSectionCard>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { get, ref as dbRef } from 'firebase/database'
 import HeroSection from '@/components/home/HeroSection.vue'
 import MatchOfTheDay from '@/components/home/MatchOfTheDay.vue'
 import StatsStrip from '@/components/home/StatsStrip.vue'
@@ -9,41 +10,32 @@ import DivisionLeaders from '@/components/home/DivisionLeaders.vue'
 import NewsCarousel from '@/components/home/NewsCarousel.vue'
 import JoinCta from '@/components/home/JoinCta.vue'
 import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
-import { getSchedule, getSocialStats, type ScheduleMatch, type SocialStats } from '@/services/api'
-import { upcomingMatches } from '@/data/league'
+import MatchCompareModal, { type CompareMatchInput } from '@/components/home/MatchCompareModal.vue'
+import { getSocialStats, type ScheduleMatch, type SocialStats } from '@/services/api'
+import type { Match } from '@/data/league'
+import { getDatabaseClient } from '@/services/firebase'
+import { buildHomeMatchLists } from '../../functions/src/league/upcoming.ts'
 
-/* ─── Ostatnie wyniki pobierane z API ─────────────────────────── */
-const recentResultsLoading = ref(false)
-const recentResultsMatches = ref<ScheduleMatch[]>([])
-
-const recentResults = computed(() =>
-  recentResultsMatches.value
-    .filter((m) => typeof m.score1 === 'number' && typeof m.score2 === 'number')
-    .sort((a, b) => {
-      const aRound = parseInt(String(a.round).replace(/\D/g, ''), 10) || 0
-      const bRound = parseInt(String(b.round).replace(/\D/g, ''), 10) || 0
-      return bRound - aRound
-    })
-    .slice(0, 5)
-)
+/* ─── Mecze z terminarza i pucharu ────────────────────────────── */
+const matchesLoading = ref(false)
+const recentResults = ref<ScheduleMatch[]>([])
+const upcomingMatches = ref<ScheduleMatch[]>([])
 
 onMounted(async () => {
-  // Pobieranie ostatnich wyników
   try {
-    recentResultsLoading.value = true
-    const allDivs = ['DYWIZJA 1', 'DYWIZJA 2', 'DYWIZJA 3', 'DYWIZJA 4', 'DYWIZJA 5']
-    const allMatches: ScheduleMatch[] = []
-    for (const div of allDivs) {
-      try {
-        const res = await getSchedule({ division: div })
-        for (const r of res.schedule ?? []) {
-          allMatches.push(...r.matches)
-        }
-      } catch { /* pomijamy błędy na etapie ładowania */ }
-    }
-    recentResultsMatches.value = allMatches
+    matchesLoading.value = true
+    const db = getDatabaseClient()
+    const [scheduleSnap, cupSnap] = await Promise.all([
+      get(dbRef(db, '/schedule')),
+      get(dbRef(db, '/cup/schedule')),
+    ])
+    const lists = buildHomeMatchLists(scheduleSnap.val(), cupSnap.val())
+    recentResults.value = lists.recent
+    upcomingMatches.value = lists.upcoming
+  } catch (error) {
+    console.error('[HomeView] Błąd pobierania meczów:', error)
   } finally {
-    recentResultsLoading.value = false
+    matchesLoading.value = false
   }
 
   // Pobieranie statystyk społecznościowych
@@ -57,8 +49,41 @@ onMounted(async () => {
 
 /* ─── Modal szczegółów meczu ───────────────────────────────────── */
 const selectedResultMatch = ref<ScheduleMatch | null>(null)
-const openMatchDetails = (match: ScheduleMatch) => {
-  selectedResultMatch.value = match
+const openMatchDetails = (match: Match | ScheduleMatch) => {
+  if ('hasScore' in match) selectedResultMatch.value = match
+}
+
+function roundTitle(round: string | number | undefined): string {
+  if (round == null || round === '') return ''
+  const text = String(round).trim()
+  if (/^\d+$/.test(text)) return `Kolejka ${text}`
+  return text
+}
+
+const selectedCompare = ref<CompareMatchInput | null>(null)
+const openCompare = (match: Match | ScheduleMatch) => {
+  if ('hasScore' in match) {
+    const time = match.displayTime && match.displayTime !== '--:--' ? match.displayTime : undefined
+    selectedCompare.value = {
+      home: match.p1Name,
+      away: match.p2Name,
+      date: match.displayDate ?? undefined,
+      time,
+      competition: match.div,
+      round: roundTitle(match.round),
+      p1Id: match.p1Id,
+      p2Id: match.p2Id,
+    }
+    return
+  }
+  selectedCompare.value = {
+    home: match.home,
+    away: match.away,
+    date: match.date,
+    time: match.time,
+    competition: match.competition,
+    round: match.round,
+  }
 }
 
 /* ─── Kafelek Społeczność ──────────────────────────────────────── */
@@ -81,7 +106,7 @@ const socialStats = ref<SocialStats>({
   -->
   <div
     id="centrum"
-    class="grid scroll-mt-28 grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12"
+    class="grid min-w-0 scroll-mt-28 grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12 [&>*]:min-w-0"
   >
     <!-- r1-r2: hero (8/12, 2 wiersze) + po prawej hit kolejki i statystyki -->
     <HeroSection class="md:col-span-6 lg:col-span-8 lg:row-span-2" />
@@ -144,21 +169,27 @@ const socialStats = ref<SocialStats>({
       </ul>
     </section>
     <!-- WIERSZ 2: 3 równe kafelki – Power Ranking + Nadchodzące + Ostatnie wyniki -->
-    <div class="md:col-span-3 lg:col-span-4">
+    <div class="md:col-span-2 lg:col-span-4">
       <PowerRanking />
     </div>
-    <div class="md:col-span-3 lg:col-span-4">
+    <div class="md:col-span-2 lg:col-span-4">
       <MatchList
         id="mecze"
         title="Nadchodzące"
         :matches="upcomingMatches"
+        :loading="matchesLoading"
+        empty-label="Brak umówionych meczów."
+        clickable
+        @match-click="openCompare"
       />
     </div>
-    <div class="md:col-span-3 lg:col-span-4">
+    <div class="md:col-span-2 lg:col-span-4">
       <MatchList
         id="wyniki"
         title="Ostatnie wyniki"
         :matches="recentResults"
+        :loading="matchesLoading"
+        empty-label="Brak wyników."
         :clickable="true"
         @match-click="openMatchDetails"
       />
@@ -172,5 +203,6 @@ const socialStats = ref<SocialStats>({
     <JoinCta />
 
     <MatchDetailsModal v-if="selectedResultMatch" :match="selectedResultMatch as any" @close="selectedResultMatch = null" />
+    <MatchCompareModal v-if="selectedCompare" :match="selectedCompare" @close="selectedCompare = null" />
   </div>
 </template>

@@ -8,6 +8,7 @@ import { computed, ref, watch } from 'vue'
 import { ref as dbRef, get } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { useAuth } from '@/composables/useAuth'
+import { officialLeagueStats } from '@/utils/leagueDpi'
 import { uploadToCloudinary } from '@/services/cloudinary'
 import {
   getDivisionTable, getSchedule, getCupData, updateVacation, enrollForNextSeason,
@@ -77,9 +78,24 @@ async function fetchPlayerProfile(uid: string) {
         currentSeason: currentSeason.value,
       }
       const st = d.stats ?? d.statystyki ?? { liga: {}, puchar: {} }
+      let leagueDpi = 0
+      let leagueAvg = 0
+      try {
+        const scheduleSnap = await get(dbRef(db, 'schedule'))
+        const engine = officialLeagueStats([{
+          id: uid,
+          firstName: d.firstName ?? d.imie ?? '',
+          lastName: d.lastName ?? d.nazwisko ?? '',
+          div: d.div ?? d.dywizja ?? '',
+        }], scheduleSnap.val())
+        leagueDpi = engine[uid]?.dpi ?? 0
+        leagueAvg = engine[uid]?.realAvg ?? 0
+      } catch (statsError) {
+        console.error('[ProfileView] DPI:', statsError)
+      }
       playerStats.value = {
         liga: {
-          dpi: st.liga?.dpi ?? 0, realAvg: st.liga?.realAvg ?? 0,
+          dpi: leagueDpi, realAvg: leagueAvg,
           max: st.liga?.max ?? 0, hf: st.liga?.hf ?? 0,
           sl: st.liga?.sl ?? null, doublesPct: st.liga?.doublesPct ?? 0,
         },

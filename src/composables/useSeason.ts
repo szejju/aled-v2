@@ -8,6 +8,7 @@ import { ref as dbRef, onValue, set } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 
 const currentSeason = ref<number>(2)
+const seasonReady = ref(false)
 let isInitialized = false
 
 export function useSeason() {
@@ -19,15 +20,16 @@ export function useSeason() {
     const seasonRef = dbRef(db, 'settings/currentSeason')
 
     onValue(seasonRef, (snapshot) => {
-      const season = snapshot.val()
-      if (!season) {
+      const parsed = Number(snapshot.val())
+      if (!Number.isFinite(parsed) || parsed <= 0) {
         set(seasonRef, 2)
         currentSeason.value = 2
       } else {
-        currentSeason.value = season
+        currentSeason.value = parsed
       }
+      seasonReady.value = true
     })
   }
 
-  return { currentSeason, initSeasonListener }
+  return { currentSeason, seasonReady, initSeasonListener }
 }

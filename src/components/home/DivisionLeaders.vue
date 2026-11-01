@@ -90,10 +90,10 @@ onMounted(async () => {
           <li
             v-for="(leader, i) in division.leaders"
             :key="leader.player"
-            class="flex justify-between font-semibold"
+            class="flex min-w-0 justify-between gap-2 font-semibold"
           >
-            <span>{{ i + 1 }}. {{ leader.player }}</span>
-            <b class="font-display tabular-nums">{{ leader.points }}</b>
+            <span class="min-w-0 truncate">{{ i + 1 }}. {{ leader.player }}</span>
+            <b class="shrink-0 font-display tabular-nums">{{ leader.points }}</b>
           </li>
         </ol>
       </article>

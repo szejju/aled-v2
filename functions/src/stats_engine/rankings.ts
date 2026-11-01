@@ -20,8 +20,8 @@ export interface RankingRecord {
 }
 
 /**
- * Przelicza globalny ranking wszystkich graczy na podstawie wszystkich meczów.
  * Ranking sortowany po DPI (Power Ranking), malejąco.
+ * Do indeksu wchodzą tylko mecze ze statusem played/approved i z protokołem.
  */
 export function computeGlobalRanking(
   players: Player[],

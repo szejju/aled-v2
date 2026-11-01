@@ -5,12 +5,13 @@
 
 import { onCall } from "firebase-functions/v2/https";
 import { db } from "../database/connection.js";
-import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
+import { StatsEngine, type Player } from "../stats_engine/calculator.js";
+import { collectOfficialLeagueMatches } from "../league/table.js";
 
 /**
  * Pobiera szczegółowe statystyki gracza: historię meczów, formę, avg, DPI itp.
- * Wykorzystuje silnik StatsEngine.calculateAllStats() – te same przeliczenia
- * co w tabeli dywizji i rankingu.
+ * DPI i bilans ligowy biorą wyłącznie zatwierdzone mecze ligowe,
+ * tym samym koszykiem co tabela dywizji.
  */
 export const getPlayerStats = onCall(
   { cors: true },
@@ -35,11 +36,7 @@ export const getPlayerStats = onCall(
       ? rawPlayers
       : Object.keys(rawPlayers).map((id) => ({ id, ...rawPlayers[id] }));
 
-    const schedule: Match[] = Array.isArray(rawSchedule)
-      ? rawSchedule
-      : Object.keys(rawSchedule).map((id) => ({ id, ...rawSchedule[id] }));
-
-    const allStats = StatsEngine.calculateAllStats(players, schedule);
+    const allStats = StatsEngine.calculateAllStats(players, collectOfficialLeagueMatches(rawSchedule));
     const stats = allStats[playerId];
 
     if (!stats) {

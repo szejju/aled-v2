@@ -2,25 +2,27 @@
 import { ref, computed, onMounted } from 'vue'
 import { ref as dbRef, get } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
+import { officialLeagueStats } from '@/utils/leagueDpi'
+import { pickHitOfTheRound, type HitCandidate } from '@/utils/hitOfTheRound'
 
-interface RawScheduleMatch {
-  div?: string; round?: string | number
-  p1Id?: string; p2Id?: string
+interface RawScheduleMatch extends HitCandidate {
   p1Name?: string; p2Name?: string
   p1Stats?: Record<string, unknown>; p2Stats?: Record<string, unknown>
-  score1?: number | null; score2?: number | null
-  date?: string; time?: string
+  time?: string
+  proposedTime?: string
   displayDate?: string | null; displayTime?: string | null
 }
 
 interface PlayerRecord {
   firstName?: string; lastName?: string; div?: string
+  avatarUrl?: string; photoUrl?: string
   [key: string]: unknown
 }
 
 interface MatchOfDay {
   id: string; p1Id: string; p2Id: string
   p1Name: string; p2Name: string
+  p1Avatar: string | null; p2Avatar: string | null
   displayDate?: string | null; displayTime?: string | null
 }
 
@@ -35,8 +37,29 @@ interface ComparisonStat {
 
 const loading = ref(true)
 const match = ref<MatchOfDay | null>(null)
+const p1AvatarBroken = ref(false)
+const p2AvatarBroken = ref(false)
 const p1Stats = ref<FinalStats>({ realAvg: 0, max: 0, doublesPct: 0, dpi: 0 })
 const p2Stats = ref<FinalStats>({ realAvg: 0, max: 0, doublesPct: 0, dpi: 0 })
+
+function readStartDate(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function playerAvatar(player: PlayerRecord | undefined): string | null {
+  const url = player?.avatarUrl || player?.photoUrl
+  return typeof url === 'string' && url.trim() ? url.trim() : null
+}
+
+function shownSchedule(row: RawScheduleMatch): { date: string | null; time: string | null } {
+  if (row.status === 'accepted' && row.proposedDate) {
+    return { date: row.proposedDate, time: row.proposedTime ?? row.displayTime ?? row.time ?? null }
+  }
+  const date = typeof row.displayDate === 'string' && row.displayDate
+    ? row.displayDate
+    : typeof row.date === 'string' ? row.date : null
+  return { date, time: row.displayTime ?? row.time ?? null }
+}
 
 function parseNum(v: unknown): number {
   if (typeof v === 'number') return v
@@ -54,39 +77,31 @@ function person(name: string) {
 onMounted(async () => {
   try {
     const db = getDatabaseClient()
-    const [scheduleSnap, playersSnap] = await Promise.all([
+    const [scheduleSnap, playersSnap, startSnap, legacyStartSnap] = await Promise.all([
       get(dbRef(db, '/schedule')),
       get(dbRef(db, '/players')),
+      get(dbRef(db, 'settings/startDate')),
+      get(dbRef(db, 'settings/leagueStartDate')),
     ])
 
     const rawSchedule = (scheduleSnap.val() || {}) as Record<string, RawScheduleMatch>
     const rawPlayers = (playersSnap.val() || {}) as Record<string, PlayerRecord>
+    const startDateStr = readStartDate(startSnap.val()) ?? readStartDate(legacyStartSnap.val())
 
-    const now = new Date()
-    const allMatches: (RawScheduleMatch & { id: string })[] = Object.entries(rawSchedule)
-      .map(([id, m]) => ({ id, ...m }))
-      .filter(m => m.p1Id && m.p2Id)
+    const roster = Object.entries(rawPlayers).map(([id, player]) => ({
+      id,
+      firstName: player.firstName,
+      lastName: player.lastName,
+      div: player.div,
+    }))
+    const engine = officialLeagueStats(roster, rawSchedule)
 
-    const upcoming = allMatches.filter(m =>
-      (m.score1 === undefined || m.score1 === null) &&
-      (m.score2 === undefined || m.score2 === null)
-    )
+    const allMatches: RawScheduleMatch[] = Object.entries(rawSchedule)
+      .map(([id, row]) => ({ id, ...row }))
+      .filter(row => row.p1Id && row.p2Id)
 
-    let selectedMatch = upcoming[0] ?? allMatches[0]
-    let bestDiff = Infinity
-
-    for (const m of upcoming) {
-      const dateStr = m.displayDate || m.date
-      if (dateStr) {
-        const parsed = new Date(dateStr)
-        if (!isNaN(parsed.getTime())) {
-          const diff = parsed.getTime() - now.getTime()
-          if (diff > 0 && diff < bestDiff) { bestDiff = diff; selectedMatch = m }
-        }
-      }
-    }
-
-    if (!selectedMatch) { loading.value = false; return }
+    const selectedMatch = pickHitOfTheRound(allMatches, engine, startDateStr)
+    if (!selectedMatch?.p1Id || !selectedMatch.p2Id) { loading.value = false; return }
 
     const p1Name = selectedMatch.p1Name ||
       [rawPlayers[selectedMatch.p1Id!]?.lastName, rawPlayers[selectedMatch.p1Id!]?.firstName]
@@ -95,15 +110,18 @@ onMounted(async () => {
       [rawPlayers[selectedMatch.p2Id!]?.lastName, rawPlayers[selectedMatch.p2Id!]?.firstName]
         .filter(Boolean).join(' ') || '—'
 
+    const when = shownSchedule(selectedMatch)
     match.value = {
-      id: selectedMatch.id, p1Id: selectedMatch.p1Id!, p2Id: selectedMatch.p2Id!,
+      id: selectedMatch.id, p1Id: selectedMatch.p1Id, p2Id: selectedMatch.p2Id,
       p1Name, p2Name,
-      displayDate: selectedMatch.displayDate ?? selectedMatch.date ?? null,
-      displayTime: selectedMatch.displayTime ?? selectedMatch.time ?? null,
+      p1Avatar: playerAvatar(rawPlayers[selectedMatch.p1Id]),
+      p2Avatar: playerAvatar(rawPlayers[selectedMatch.p2Id]),
+      displayDate: when.date,
+      displayTime: when.time,
     }
 
-    const p1Id = selectedMatch.p1Id!
-    const p2Id = selectedMatch.p2Id!
+    const p1Id = selectedMatch.p1Id
+    const p2Id = selectedMatch.p2Id
 
     // Policz statystyki dla obu graczy
     const p1Acc: AggStats = { avgSum: 0, avgCount: 0, totalMax: 0, bestFinish: 0, doublesHit: 0, doublesAttempts: 0 }
@@ -126,15 +144,15 @@ onMounted(async () => {
       if (m.p2Id === p2Id) process(p2Acc, m.p2Stats as Record<string, unknown> | undefined)
     }
 
-    function finalize(acc: AggStats): FinalStats {
+    function finalize(acc: AggStats, playerId: string): FinalStats {
       const realAvg = acc.avgCount > 0 ? acc.avgSum / acc.avgCount : 0
       const doublesPct = acc.doublesAttempts > 0 ? (acc.doublesHit / acc.doublesAttempts) * 100 : 0
-      const dpi = realAvg > 0 ? realAvg * 3 * (1 + doublesPct / 100) : 0
+      const dpi = engine[playerId]?.dpi ?? 0
       return { realAvg: Math.round(realAvg * 100) / 100, max: acc.totalMax, doublesPct: Math.round(doublesPct * 10) / 10, dpi: Math.round(dpi * 100) / 100 }
     }
 
-    p1Stats.value = finalize(p1Acc)
-    p2Stats.value = finalize(p2Acc)
+    p1Stats.value = finalize(p1Acc, p1Id)
+    p2Stats.value = finalize(p2Acc, p2Id)
   } catch (e) {
     console.error('[MatchOfTheDay] Błąd pobierania danych:', e)
   } finally {
@@ -220,30 +238,44 @@ function fmtVal(stat: ComparisonStat, side: 'p1' | 'p2'): string {
         <!-- Glow blob za VS -->
         <div aria-hidden="true" class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 size-32 rounded-full bg-lime/10 blur-2xl -z-10" />
 
-        <div class="flex-1">
-          <div class="mx-auto grid size-20 md:size-24 place-items-center rounded-2xl bg-lime/10 ring-1 ring-lime/30 font-display text-2xl md:text-3xl font-extrabold text-lime">
-            {{ p1Person.initials }}
+        <div class="min-w-0 flex-1">
+          <div class="mx-auto grid size-16 place-items-center overflow-hidden rounded-2xl bg-lime/10 ring-1 ring-lime/30 font-display text-xl font-extrabold text-lime sm:size-20 sm:text-2xl md:size-24 md:text-3xl">
+            <img
+              v-if="match.p1Avatar && !p1AvatarBroken"
+              :src="match.p1Avatar"
+              alt=""
+              class="size-full object-cover"
+              @error="p1AvatarBroken = true"
+            />
+            <span v-else>{{ p1Person.initials }}</span>
           </div>
-          <p class="mt-2 font-display text-lg font-extrabold uppercase leading-tight text-fg">
+          <p class="mt-2 break-words font-display text-base font-extrabold uppercase leading-tight text-fg sm:text-lg">
             {{ p1Person.last }}<br /><span class="text-muted">{{ p1Person.first }}</span>
           </p>
         </div>
 
-        <div class="flex flex-col items-center gap-1">
-          <span class="font-display text-4xl font-black text-muted/30">VS</span>
+        <div class="flex shrink-0 flex-col items-center gap-1">
+          <span class="font-display text-3xl font-black text-muted/30 sm:text-4xl">VS</span>
           <span
             v-if="match.displayDate"
-            class="label whitespace-nowrap rounded-full bg-surface-2 px-2.5 py-1 text-muted"
+            class="label max-w-20 text-balance rounded-full bg-surface-2 px-2 py-1 text-center text-muted"
           >
             {{ match.displayDate }}<template v-if="match.displayTime"> · {{ match.displayTime }}</template>
           </span>
         </div>
 
-        <div class="flex-1">
-          <div class="mx-auto grid size-20 md:size-24 place-items-center rounded-2xl bg-danger/10 ring-1 ring-danger/30 font-display text-2xl md:text-3xl font-extrabold text-danger">
-            {{ p2Person.initials }}
+        <div class="min-w-0 flex-1">
+          <div class="mx-auto grid size-16 place-items-center overflow-hidden rounded-2xl bg-danger/10 ring-1 ring-danger/30 font-display text-xl font-extrabold text-danger sm:size-20 sm:text-2xl md:size-24 md:text-3xl">
+            <img
+              v-if="match.p2Avatar && !p2AvatarBroken"
+              :src="match.p2Avatar"
+              alt=""
+              class="size-full object-cover"
+              @error="p2AvatarBroken = true"
+            />
+            <span v-else>{{ p2Person.initials }}</span>
           </div>
-          <p class="mt-2 font-display text-lg font-extrabold uppercase leading-tight text-fg">
+          <p class="mt-2 break-words font-display text-base font-extrabold uppercase leading-tight text-fg sm:text-lg">
             {{ p2Person.last }}<br /><span class="text-muted">{{ p2Person.first }}</span>
           </p>
         </div>
@@ -254,17 +286,15 @@ function fmtVal(stat: ComparisonStat, side: 'p1' | 'p2'): string {
         <!-- Power Ranking – pełna szerokość, wyróżniony -->
         <template v-for="stat in comparisonStats.filter(s => s.label === 'Power Rank')" :key="stat.label">
           <div
-            class="w-full rounded-xl p-[3px] shadow-[0_0_20px_rgba(155,226,45,0.25)]"
-            :style="{
-              background: `linear-gradient(to right, #9be22d ${stat.p1Percentage}%, #ff4d55 ${stat.p1Percentage}%)`,
-            }"
+            class="hit-motd-frame hit-motd-frame--slow w-full rounded-xl p-[3px] shadow-[0_0_20px_rgba(155,226,45,0.25)]"
+            :style="{ '--split': `${stat.p1Percentage}%` }"
           >
             <div class="flex items-center justify-between rounded-[10px] bg-surface-2 ring-1 ring-lime/15 px-4 py-4">
               <div class="flex items-center gap-2">
                 <span class="text-xl">👑</span>
                 <span class="label font-extrabold text-muted">Power Ranking</span>
               </div>
-              <div class="font-display text-2xl md:text-3xl font-black tabular-nums">
+              <div class="shrink-0 font-display text-xl font-black tabular-nums sm:text-2xl md:text-3xl">
                 <span class="text-lime">{{ fmtVal(stat, 'p1') }}</span>
                 <span class="mx-1.5 text-muted">/</span>
                 <span class="text-danger">{{ fmtVal(stat, 'p2') }}</span>
@@ -275,16 +305,15 @@ function fmtVal(stat: ComparisonStat, side: 'p1' | 'p2'): string {
 
         <!-- Dolny wiersz: Średnia, 180-tki, Checkout % -->
         <div class="grid grid-cols-3 gap-2 md:gap-4">
-          <template v-for="stat in comparisonStats.filter(s => s.label !== 'Power Rank')" :key="stat.label">
+          <template v-for="(stat, index) in comparisonStats.filter(s => s.label !== 'Power Rank')" :key="stat.label">
             <div
-              class="rounded-xl p-[2px]"
-              :style="{
-                background: `linear-gradient(to right, #9be22d ${stat.p1Percentage}%, #ff4d55 ${stat.p1Percentage}%)`,
-              }"
+              class="hit-motd-frame rounded-xl p-[3px]"
+              :class="index === 1 ? 'hit-motd-d1' : index === 2 ? 'hit-motd-d2' : undefined"
+              :style="{ '--split': `${stat.p1Percentage}%` }"
             >
               <div class="flex flex-col items-center justify-center rounded-[10px] bg-surface-2 px-2 py-3 h-full gap-0.5">
                 <dt class="label text-muted">{{ stat.label }}</dt>
-                <dd class="font-display text-lg font-bold text-fg">
+                <dd class="text-center font-display text-sm font-bold text-fg sm:text-lg">
                   <span class="text-lime">{{ fmtVal(stat, 'p1') }}</span>
                   <span class="mx-1 text-muted">/</span>
                   <span class="text-danger">{{ fmtVal(stat, 'p2') }}</span>
@@ -304,4 +333,70 @@ function fmtVal(stat: ComparisonStat, side: 'p1' | 'p2'): string {
     </template>
   </section>
 </template>
+
+<style>
+/* Podział limonka/czerwień zostaje poziomym stosunkiem statystyki.
+   W ruchu jest tylko jasny klin, który obiega ramkę. */
+.hit-motd-frame {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: linear-gradient(
+    to right,
+    #9be22d var(--split, 50%),
+    #ff4d55 var(--split, 50%)
+  );
+}
+
+.hit-motd-frame::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 240%;
+  aspect-ratio: 1;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 40deg,
+    rgb(255 255 255 / 0.9) 68deg,
+    transparent 96deg,
+    transparent 200deg,
+    rgb(255 255 255 / 0.55) 228deg,
+    transparent 258deg,
+    transparent 360deg
+  );
+  animation: hit-motd-spin 4.8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hit-motd-frame > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hit-motd-frame--slow::before {
+  animation-duration: 6.4s;
+}
+
+.hit-motd-d1::before {
+  animation-delay: -1.6s;
+}
+
+.hit-motd-d2::before {
+  animation-delay: -3.2s;
+}
+
+@keyframes hit-motd-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hit-motd-frame::before {
+    animation: none;
+  }
+}
+</style>
 

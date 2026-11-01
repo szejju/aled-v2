@@ -23,6 +23,9 @@ export interface Match {
   p2Stats?: MatchPlayerStats;
   isDoubleWO?: boolean;
   isPlayoff?: boolean;
+  isBarrage?: boolean;
+  div?: string;
+  status?: string;
   round?: number;
   timestamp?: number;
 }
@@ -64,100 +67,103 @@ export interface PlayerStats {
   doublesPct: number;
 }
 
+const BARRAGE_DIV = /BARA[ZŻ]|PLAY-?OFF/i;
+
+function protocolNumber(stats: MatchPlayerStats | undefined, key: "avg" | "max" | "hf" | "sl"): number {
+  if (!stats) return 0;
+  const raw = stats[key];
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function protocolOf(match: Match, playerId: string): MatchPlayerStats | undefined {
+  if (match.p1Id === playerId) return match.p1Stats;
+  if (match.p2Id === playerId) return match.p2Stats;
+  return undefined;
+}
+
+/** Zatwierdzony mecz ligowy. Baraż i brak statusu sędziego odpadają. */
+function isApprovedLeagueMatch(match: Match): boolean {
+  if (match.isPlayoff === true || match.isBarrage === true) return false;
+  if (typeof match.div === "string" && BARRAGE_DIV.test(match.div)) return false;
+  const status = typeof match.status === "string" ? match.status.trim().toLowerCase() : "";
+  return status === "played" || status === "approved";
+}
+
+/** Protokół, z którego da się liczyć średnią albo premię. Pusty walkower odpada. */
+function hasDpiProtocol(match: Match, playerId: string): boolean {
+  const stats = protocolOf(match, playerId);
+  if (!stats) return false;
+  const avg = protocolNumber(stats, "avg");
+  const max = protocolNumber(stats, "max");
+  const hf = protocolNumber(stats, "hf");
+  const sl = protocolNumber(stats, "sl");
+  return avg > 0 || max > 0 || hf > 0 || (sl > 0 && sl <= 21);
+}
+
+function roundIndex(match: Match): number {
+  return typeof match.round === "number" && Number.isFinite(match.round) ? match.round : 0;
+}
+
 export class StatsEngine {
-  
-  // 🧠 1. DYNAMICZNY WZÓR NA DPI (Momentum + Decay)
-  public static calculateDPI(
-    trueAvg: number,
-    winPct: number,
-    max?: number,
-    hf?: number,
-    sl?: number,
-    playerId: string | null = null,
-    preFilteredMatches: Match[] | null = null,
-    allSchedule: Match[] = []
-  ): number {
-    const rawMax = max || 0;
-    const rawHf = hf || 0;
-    const rawSl = sl || 0;
 
-    // --- AWARYJNY TRYB STATYCZNY ---
-    if (!playerId && !preFilteredMatches) {
-      const staticBonus180 = rawMax * 10.0;
-      const staticBonusHF = rawHf >= 100 ? (rawHf - 99) * 0.5 : 0;
-      const staticBonusSL = rawSl > 0 && rawSl <= 21 ? (22 - rawSl) * 5.0 : 0;
-      return trueAvg + winPct * 10.0 + staticBonus180 + staticBonusHF + staticBonusSL;
-    }
+  /**
+   * DPI = prawdziwa średnia + momentum + premia 180 + premia HF + premia krótkiego legu.
+   * Koszyk: zatwierdzone mecze ligowe z protokołem. Kolejność zaniku wyznacza numer kolejki.
+   * Walkower bez statystyk nie wchodzi do średniej, nie rozcina momentum i nie starzeje premii.
+   */
+  public static calculateDPI(playerId: string, matches: readonly Match[]): number {
+    const mine = matches
+      .map((match, index) => ({ match, index }))
+      .filter((entry) => isApprovedLeagueMatch(entry.match) && hasDpiProtocol(entry.match, playerId))
+      .sort((a, b) => roundIndex(a.match) - roundIndex(b.match) || a.index - b.index)
+      .map((entry) => entry.match);
 
-    // --- TRYB DYNAMICZNY ---
-    let myMatches: Match[];
-    if (preFilteredMatches) {
-      myMatches = preFilteredMatches;
-    } else {
-      if (!allSchedule || allSchedule.length === 0) {
-        const staticBonus180 = rawMax * 10.0;
-        const staticBonusHF = rawHf >= 100 ? (rawHf - 99) * 0.5 : 0;
-        const staticBonusSL = rawSl > 0 && rawSl <= 21 ? (22 - rawSl) * 5.0 : 0;
-        return trueAvg + winPct * 10.0 + staticBonus180 + staticBonusHF + staticBonusSL;
+    const averages: number[] = [];
+    let avgSum = 0;
+    for (const match of mine) {
+      const avg = protocolNumber(protocolOf(match, playerId), "avg");
+      if (avg > 0) {
+        avgSum += avg;
+        averages.push(avg);
       }
-      myMatches = allSchedule
-        .filter(m => (m.p1Id === playerId || m.p2Id === playerId) && typeof m.score1 === 'number')
-        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
     }
+    const trueAvg = averages.length > 0 ? avgSum / averages.length : 0;
 
     let momentumBonus = 0;
+    for (let i = 1; i < averages.length; i += 1) {
+      const prevAvg = averages[i - 1];
+      const currAvg = averages[i];
+      if (prevAvg <= 0 || currAvg <= 0) continue;
+      let percentChange = ((currAvg - prevAvg) / prevAvg) * 100;
+      if (percentChange > 25) percentChange = 25;
+      if (percentChange < -25) percentChange = -25;
+      momentumBonus += percentChange;
+    }
+
     let bonus180 = 0;
     let bonusHF = 0;
     let bonusSL = 0;
-    const totalMatches = myMatches.length;
+    const total = mine.length;
+    for (let i = 0; i < total; i += 1) {
+      const stats = protocolOf(mine[i], playerId);
+      const matchesAgo = total - 1 - i;
 
-    if (totalMatches > 0) {
-      // MOMENTUM ŚREDNIEJ
-      for (let i = 1; i < totalMatches; i++) {
-        const prevStats = myMatches[i - 1].p1Id === playerId ? myMatches[i - 1].p1Stats : myMatches[i - 1].p2Stats;
-        const currStats = myMatches[i].p1Id === playerId ? myMatches[i].p1Stats : myMatches[i].p2Stats;
+      const matchMax = protocolNumber(stats, "max");
+      if (matchMax > 0) bonus180 += matchMax * Math.max(2, 10 - matchesAgo * 2);
 
-        const prevAvg = parseFloat(String(prevStats?.avg || 0)) || 0;
-        const currAvg = parseFloat(String(currStats?.avg || 0)) || 0;
+      const matchHF = protocolNumber(stats, "hf");
+      if (matchHF >= 100) bonusHF += (matchHF - 99) * (Math.max(1, 5 - matchesAgo) / 10);
 
-        if (prevAvg > 0 && currAvg > 0) {
-          let percentChange = ((currAvg - prevAvg) / prevAvg) * 100;
-          if (percentChange > 25) percentChange = 25;
-          if (percentChange < -25) percentChange = -25;
-          momentumBonus += percentChange;
-        }
-      }
-
-      // SYSTEM ZANIKANIA (Decay)
-      for (let i = totalMatches - 1; i >= 0; i--) {
-        const m = myMatches[i];
-        const stats = m.p1Id === playerId ? m.p1Stats : m.p2Stats;
-        const matchesAgo = totalMatches - 1 - i;
-
-        // MAX 180
-        const matchMax = parseInt(String(stats?.max || 0), 10) || 0;
-        if (matchMax > 0) {
-          const maxPts = Math.max(2, 10 - matchesAgo * 2);
-          bonus180 += matchMax * maxPts;
-        }
-
-        // HIGH FINISH
-        const matchHF = parseInt(String(stats?.hf || 0), 10) || 0;
-        if (matchHF >= 100) {
-          const hfPts = Math.max(0.1, 0.5 - matchesAgo * 0.1);
-          bonusHF += (matchHF - 99) * hfPts;
-        }
-
-        // SHORT LEG
-        const matchSL = parseInt(String(stats?.sl || 0), 10) || 0;
-        if (matchSL > 0 && matchSL <= 21) {
-          const slPts = Math.max(1.0, 5.0 - matchesAgo * 1.0);
-          bonusSL += (22 - matchSL) * slPts;
-        }
-      }
+      const matchSL = protocolNumber(stats, "sl");
+      if (matchSL > 0 && matchSL <= 21) bonusSL += (22 - matchSL) * Math.max(1, 5 - matchesAgo);
     }
 
-    return trueAvg + winPct * 10.0 + momentumBonus + bonus180 + bonusHF + bonusSL;
+    return trueAvg + momentumBonus + bonus180 + bonusHF + bonusSL;
   }
 
   // 🧠 2. CENTRALNY SILNIK STATYSTYK LIGOWYCH
@@ -237,20 +243,10 @@ export class StatsEngine {
       }
     });
 
-    matchesByPlayer.forEach(pMatches => {
-      if (pMatches.length > 1) {
-        pMatches.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-      }
-    });
-
     Object.values(stats).forEach(st => {
       st.realAvg = st.avgCount > 0 ? st.avgSum / st.avgCount : 0;
       st.doublesPct = st.doublesAttempts > 0 ? (st.doublesHit / st.doublesAttempts) * 100 : 0;
-
-      const totalLegs = st.lw + st.ll;
-      const winPct = totalLegs > 0 ? st.lw / totalLegs : 0;
-      const pMatches = matchesByPlayer.get(st.id) || [];
-      st.dpi = StatsEngine.calculateDPI(st.realAvg, winPct, st.max, st.hf, st.sl, st.id, pMatches);
+      st.dpi = StatsEngine.calculateDPI(st.id, matchesByPlayer.get(st.id) || []);
     });
 
     return stats;

@@ -47,7 +47,13 @@ const TROPHY_MAP: Record<string, { label: string; icon: string; tier: Tier }> = 
   playoff_winner: { label: 'Zwycięzca Baraży', icon: '🎯', tier: 'gold' },
   mvp: { label: 'MVP Sezonu', icon: '⭐', tier: 'platinum' },
   most_180s: { label: 'Król Maksów (180)', icon: '🎯', tier: 'gold' },
+  best_avg: { label: 'Król Średniej', icon: '🎯', tier: 'gold' },
+  highest_checkout: { label: 'Snajper', icon: '🎪', tier: 'gold' },
 }
+
+export type TrophySource =
+  | string
+  | { id?: string; type?: string; title?: string; icon?: string }
 
 const MILESTONE_MAP: Record<string, { label: string; icon: string; tier: Tier }> = {
   avg_60: { label: 'Średnia 60+', icon: '📈', tier: 'bronze' },
@@ -80,8 +86,19 @@ const EPIC_MOMENT_MAP: Record<string, { label: string; icon: string }> = {
 
 // ─── Dekodery ────────────────────────────────────────────────────────────────
 
-/** Dekoduje pojedynczy puchar z identyfikatora. */
-export function decodeTrophy(id: string): DecodedTrophy {
+/** Dekoduje puchar z identyfikatora albo z rekordu Ceremoniarza. */
+export function decodeTrophy(entry: TrophySource): DecodedTrophy {
+  if (typeof entry === 'object' && entry) {
+    const type = entry.type ?? ''
+    const known = TROPHY_MAP[type] ?? (entry.id ? TROPHY_MAP[entry.id] : undefined)
+    return {
+      id: entry.id || type || 'trophy',
+      label: entry.title || known?.label || humanize(type || entry.id || 'puchar'),
+      icon: entry.icon || known?.icon || '🏅',
+      tier: known?.tier ?? 'gold',
+    }
+  }
+  const id = entry
   const known = TROPHY_MAP[id]
   if (known) return { id, ...known }
   // Fallback: czytelna etykieta z surowego identyfikatora.

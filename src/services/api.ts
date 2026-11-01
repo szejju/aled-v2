@@ -105,6 +105,8 @@ export interface ScheduleMatch {
   displayDate?: string | null
   displayTime?: string | null
   status?: string
+  /** Moment zatwierdzenia protokołu przez admina. */
+  acceptedAt?: number
   proposedDate?: string
   proposedTime?: string
   proposedTimestamp?: number
@@ -153,7 +155,7 @@ export interface PlayerListItem {
     losses: number
   }
   achievements: {
-    trophies: string[]
+    trophies: Array<string | { id?: string; type?: string; title?: string; icon?: string }>
     careerStats: Record<string, unknown>
     epicMoments: Record<string, unknown>
   }
@@ -916,14 +918,15 @@ export const apiRemovePenalty = makeCallable<
 // ─── sendPlayerNotification (Powiadomienia) ─────────────────────────────────
 
 export interface SendNotificationPayload {
-  playerId: string
+  playerId?: string
+  playerIds?: string[]
   title: string
   message: string
 }
 
 export const sendPlayerNotification = makeCallable<
   SendNotificationPayload,
-  { success: boolean; message: string }
+  { success: boolean; message: string; count?: number }
 >('sendPlayerNotification')
 
 // ─── generateSummerGroups (Generator Grup Letnich) ──────────────────────────

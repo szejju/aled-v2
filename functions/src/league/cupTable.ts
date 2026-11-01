@@ -1,9 +1,10 @@
 // Regulamin tabeli pucharowej (Best of 3 sety, bez remisów):
 // punkty (2 za wygraną) → różnica setów → zdobyte sety →
-// różnica legów → zdobyte legi → bezpośredni w remisującej podgrupie → DPI.
+// różnica legów → zdobyte legi → bezpośredni w remisującej podgrupie → DPI ligowe.
+// DPI to Power Ranking z zatwierdzonych meczów ligi, liczone poza tą tabelą.
 // Przy identycznym DPI kolejność domyka nazwisko, potem id.
 
-import { StatsEngine, type Match, type MatchPlayerStats } from "../stats_engine/calculator.js";
+import type { MatchPlayerStats } from "../stats_engine/calculator.js";
 
 export interface CupGroupMatchRef {
   id: string;
@@ -160,66 +161,6 @@ function applyHeadToHead(
   row.points += WIN_POINTS;
 }
 
-function statNumber(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
-/** DPI z meczów grupowych: średnia z protokołów i udział zdobytych setów. */
-function playerDpi(id: string, matches: readonly CupPlayedMatch[]): number {
-  const mine = matches
-    .filter((match) => match.p1Id === id || match.p2Id === id)
-    .sort((a, b) => a.timestamp - b.timestamp);
-  let setsFor = 0;
-  let setsAgainst = 0;
-  let avgSum = 0;
-  let avgCount = 0;
-  let max = 0;
-  let hf = 0;
-  let shortLeg = 0;
-  let shortSeen = false;
-  const engineMatches: Match[] = [];
-
-  for (const match of mine) {
-    const home = match.p1Id === id;
-    setsFor += home ? match.sets1 : match.sets2;
-    setsAgainst += home ? match.sets2 : match.sets1;
-    const stats = home ? match.p1Stats : match.p2Stats;
-    engineMatches.push({
-      p1Id: match.p1Id,
-      p2Id: match.p2Id,
-      score1: match.sets1,
-      score2: match.sets2,
-      p1Stats: match.p1Stats,
-      p2Stats: match.p2Stats,
-      isDoubleWO: match.doubleWalkover,
-      timestamp: match.timestamp,
-    });
-    if (!stats) continue;
-    const avg = statNumber(stats.avg);
-    if (avg > 0) {
-      avgSum += avg;
-      avgCount += 1;
-    }
-    max += statNumber(stats.max);
-    hf = Math.max(hf, statNumber(stats.hf));
-    const leg = statNumber(stats.sl);
-    if (leg > 0 && (!shortSeen || leg < shortLeg)) {
-      shortLeg = leg;
-      shortSeen = true;
-    }
-  }
-
-  const realAvg = avgCount > 0 ? avgSum / avgCount : 0;
-  const totalSets = setsFor + setsAgainst;
-  const winPct = totalSets > 0 ? setsFor / totalSets : 0;
-  return StatsEngine.calculateDPI(realAvg, winPct, max, hf, shortLeg, id, engineMatches);
-}
-
 function primaryGap(a: CupTableRow, b: CupTableRow): number {
   if (b.points !== a.points) return b.points - a.points;
   if (b.setDiff !== a.setDiff) return b.setDiff - a.setDiff;
@@ -279,6 +220,7 @@ export function rankCupGroup(
   memberIds: readonly string[],
   matches: readonly CupPlayedMatch[],
   names: ReadonlyMap<string, string>,
+  leagueDpi: ReadonlyMap<string, number> = new Map(),
 ): CupTableRow[] {
   const rows = new Map<string, CupTableRow>();
   for (const id of memberIds) rows.set(id, emptyRow(id, names.get(id) || id, groupName));
@@ -289,6 +231,6 @@ export function rankCupGroup(
     if (left) applySide(left, match.sets1, match.sets2, match.legs1, match.legs2, match.doubleWalkover);
     if (right) applySide(right, match.sets2, match.sets1, match.legs2, match.legs1, match.doubleWalkover);
   }
-  for (const row of rows.values()) row.dpi = playerDpi(row.id, relevant);
+  for (const row of rows.values()) row.dpi = leagueDpi.get(row.id) ?? 0;
   return sortCupTable([...rows.values()], relevant);
 }

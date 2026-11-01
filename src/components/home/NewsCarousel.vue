@@ -1,4 +1,55 @@
 <script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { fetchLeagueNews, newsCover, type LeagueNews } from '@/services/news'
+
+const CAROUSEL_LIMIT = 3
+
+const loading = ref(true)
+const error = ref(false)
+const articles = ref<LeagueNews[]>([])
+const brokenCovers = ref<Record<string, true>>({})
+
+const slides = computed(() => articles.value.slice(0, CAROUSEL_LIMIT))
+
+const trackClass = computed(() => {
+  const pause = 'group-hover:[animation-play-state:paused] group-focus-within:[animation-play-state:paused]'
+  const count = slides.value.length
+  if (count <= 1) return 'h-full'
+  if (count === 2) return `h-[200%] animate-news-2 ${pause}`
+  return `h-[300%] animate-news ${pause}`
+})
+
+const slideClass = computed(() => {
+  const count = slides.value.length
+  if (count <= 1) return 'h-full'
+  if (count === 2) return 'h-1/2'
+  return 'h-1/3'
+})
+
+function cover(article: LeagueNews, index: number): string {
+  return newsCover(article, index, Boolean(brokenCovers.value[article.id]))
+}
+
+function onCoverError(id: string) {
+  if (brokenCovers.value[id]) return
+  brokenCovers.value = { ...brokenCovers.value, [id]: true }
+}
+
+function indexLabel(index: number, total: number): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(index + 1)} / ${pad(total)}`
+}
+
+onMounted(async () => {
+  try {
+    articles.value = await fetchLeagueNews()
+  } catch (err) {
+    console.error('[NewsCarousel] Błąd pobierania newsów:', err)
+    error.value = true
+  } finally {
+    loading.value = false
+  }
+})
 </script>
 
 <template>
@@ -8,56 +59,55 @@
     aria-roledescription="karuzela"
     class="force-dark group relative isolate h-[360px] overflow-hidden rounded-3xl border border-line bg-ink text-fg md:col-span-6 lg:col-span-8"
   >
-    <div class="absolute inset-x-0 top-0 z-20 flex items-center justify-between p-6">
-      <h2 id="news-title" class="inline-flex items-center gap-2 rounded-full bg-lime px-3 py-1 font-display text-sm font-extrabold uppercase tracking-[0.14em] text-on-lime">
+    <div class="absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 p-4 sm:p-6">
+      <h2 id="news-title" class="inline-flex shrink-0 items-center gap-2 rounded-full bg-lime px-3 py-1 font-display text-sm font-extrabold uppercase tracking-[0.14em] text-on-lime">
         <span class="size-1.5 rounded-full bg-on-lime"></span> Aktualności
       </h2>
-      <RouterLink to="/news" class="font-display text-sm font-bold uppercase tracking-[0.12em] text-fg/80 transition hover:text-accent">
+      <RouterLink to="/news" class="min-w-0 truncate font-display text-xs font-bold uppercase tracking-[0.08em] text-fg/80 transition hover:text-accent sm:text-sm sm:tracking-[0.12em]">
         Wszystkie newsy →
       </RouterLink>
     </div>
 
-    <div class="h-[300%] animate-news group-hover:[animation-play-state:paused] group-focus-within:[animation-play-state:paused]">
-      <article aria-roledescription="slajd" aria-label="1 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
-        <img src="/images/news-1.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
+    <div v-if="loading" class="flex h-full items-end p-6 sm:p-8">
+      <p class="label animate-pulse text-fg/60">Ładowanie aktualności…</p>
+    </div>
+    <div v-else-if="error" class="flex h-full items-end p-6 sm:p-8">
+      <p class="max-w-md text-sm text-fg/70">Nie udało się wczytać aktualności.</p>
+    </div>
+    <div v-else-if="slides.length === 0" class="flex h-full items-end p-6 sm:p-8">
+      <p class="max-w-md text-sm text-fg/70">Brak aktualności.</p>
+    </div>
+    <div v-else :class="trackClass">
+      <article
+        v-for="(slide, index) in slides"
+        :key="slide.id"
+        aria-roledescription="slajd"
+        :aria-label="`${index + 1} z ${slides.length}`"
+        class="relative flex flex-col justify-end p-6 sm:p-8"
+        :class="slideClass"
+      >
+        <img
+          :src="cover(slide, index)"
+          alt=""
+          referrerpolicy="no-referrer"
+          class="absolute inset-0 -z-10 size-full object-cover"
+          @error="onCoverError(slide.id)"
+        />
         <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20" />
         <div class="flex items-center gap-3">
-          <span class="label text-accent">Relacja</span>
-          <time datetime="2026-10-14" class="label text-fg/60">14.10.2026</time>
-          <span class="label ml-auto text-fg/50">01 / 03</span>
+          <span class="label text-accent">News</span>
+          <time v-if="slide.dateLabel" :datetime="slide.dateIso || undefined" class="label text-fg/60">{{ slide.dateLabel }}</time>
+          <span class="label ml-auto text-fg/50">{{ indexLabel(index, slides.length) }}</span>
         </div>
-        <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <RouterLink to="/news/1" class="hover:text-accent focus:outline-none focus-visible:underline">Trzy 180-tki w jednym legu! Rosiak bije rekord ligi</RouterLink>
+        <h3 class="mt-2 max-w-2xl font-display text-2xl font-black uppercase italic leading-[0.95] sm:text-3xl">
+          <RouterLink
+            :to="`/news/${slide.id}`"
+            class="block text-balance line-clamp-3 hover:text-accent focus:outline-none focus-visible:underline"
+          >
+            {{ slide.title }}
+          </RouterLink>
         </h3>
-        <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Lider power rankingu zakończył 8. kolejkę średnią 94.7 i pobił rekord sezonu.</p>
-      </article>
-
-      <article aria-roledescription="slajd" aria-label="2 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
-        <img src="/images/news-2.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
-        <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20" />
-        <div class="flex items-center gap-3">
-          <span class="label text-accent">Puchar Ligi</span>
-          <time datetime="2026-10-12" class="label text-fg/60">12.10.2026</time>
-          <span class="label ml-auto text-fg/50">02 / 03</span>
-        </div>
-        <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <RouterLink to="/news/2" class="hover:text-accent focus:outline-none focus-visible:underline">Losowanie fazy pucharowej – znamy pary ćwierćfinałów</RouterLink>
-        </h3>
-        <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Hitem rundy będzie starcie Chojnackiego z Przybyszewskim. Transmisja na Discordzie.</p>
-      </article>
-
-      <article aria-roledescription="slajd" aria-label="3 z 3" class="relative flex h-1/3 flex-col justify-end p-6 sm:p-8">
-        <img src="/images/news-3.png" alt="" class="absolute inset-0 -z-10 size-full object-cover" />
-        <div aria-hidden="true" class="absolute inset-0 -z-10 bg-gradient-to-t from-ink via-ink/75 to-ink/20" />
-        <div class="flex items-center gap-3">
-          <span class="label text-accent">Komunikat</span>
-          <time datetime="2026-10-09" class="label text-fg/60">09.10.2026</time>
-          <span class="label ml-auto text-fg/50">03 / 03</span>
-        </div>
-        <h3 class="mt-2 max-w-2xl text-balance font-display text-3xl font-black uppercase italic leading-[0.95] sm:text-4xl">
-          <RouterLink to="/news/3" class="hover:text-accent focus:outline-none focus-visible:underline">Nowy regulamin kamer i weryfikacji wyników</RouterLink>
-        </h3>
-        <p class="mt-2 max-w-xl text-sm leading-relaxed text-fg/70">Od 10. kolejki obowiązuje ujednolicone ustawienie kamery. Sprawdź, co się zmienia.</p>
+        <p class="mt-2 max-w-xl line-clamp-2 text-sm leading-relaxed text-fg/70">{{ slide.excerpt }}</p>
       </article>
     </div>
   </section>

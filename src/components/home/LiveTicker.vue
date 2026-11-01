@@ -136,7 +136,7 @@ const tickerText = computed(() => tickerMessages.value.join('   •   '))
 
 <style scoped>
 .animate-ticker {
-  animation: marquee 50s linear infinite;
+  animation: marquee 110s linear infinite;
 }
 
 .animate-ticker:hover {

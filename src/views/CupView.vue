@@ -8,7 +8,10 @@
  *   - knockout – drabinka pucharowa (+ zakladka „Faza Grupowa” jako historia)
  */
 import { ref, computed, onMounted } from 'vue'
+import { ref as dbRef, get } from 'firebase/database'
+import { getDatabaseClient } from '@/services/firebase'
 import { getCupData, getPlayersList, type CupDataResponse, type PlayerListItem } from '@/services/api'
+import { officialLeagueStats } from '@/utils/leagueDpi'
 import CupRegistration from '@/components/cup/CupRegistration.vue'
 import CupGroups from '@/components/cup/CupGroups.vue'
 import CupKnockout from '@/components/cup/CupKnockout.vue'
@@ -22,6 +25,7 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const rawCupData = ref<CupDataResponse | null>(null)
 const allPlayers = ref<PlayerListItem[]>([])
+const leagueSchedule = ref<unknown>({})
 const activeView = ref<ViewMode>('registration')
 const cupTabState = ref<'knockout' | 'groups_history'>('knockout')
 const selectedPlayer = ref<CupPlayer | null>(null)
@@ -31,12 +35,14 @@ onMounted(async () => {
   loading.value = true
   error.value = null
   try {
-    const [cupRes, playersRes] = await Promise.all([
+    const [cupRes, playersRes, scheduleSnap] = await Promise.all([
       getCupData({}),
       getPlayersList({}),
+      get(dbRef(getDatabaseClient(), '/schedule')),
     ])
     rawCupData.value = cupRes
     allPlayers.value = playersRes.players ?? []
+    leagueSchedule.value = scheduleSnap.val() || {}
     const status = cupRes.settings?.status
     if (status === 'knockout') activeView.value = 'knockout'
     else if (status === 'groups') activeView.value = 'groups'
@@ -106,6 +112,21 @@ const advancingPerGroup = computed(() => {
 const cupDbStatus = computed(() => settings.value.status ?? 'registration')
 const leagueStartDate = computed(() => settings.value.leagueStartDate)
 const groups = computed<Record<string, string[]>>(() => rawCupData.value?.groups ?? {})
+
+const leagueDpi = computed<Record<string, number>>(() => {
+  const stats = officialLeagueStats(
+    allPlayers.value.map((player) => ({
+      id: player.id,
+      firstName: player.firstName,
+      lastName: player.lastName,
+      div: player.div ?? '',
+    })),
+    leagueSchedule.value,
+  )
+  const dpi: Record<string, number> = {}
+  for (const [id, row] of Object.entries(stats)) dpi[id] = row.dpi
+  return dpi
+})
 
 const isRegistrationOpen = computed(() => {
   const status = cupDbStatus.value
@@ -184,7 +205,7 @@ const showMatchDetails = (match: CupMatch) => { selectedMatch.value = match }
 
         <div v-else-if="activeView === 'groups'" key="groups">
           <CupGroups :groups="groups" :schedule="groupMatches" :allPlayers="cupPlayers"
-            :advancing-per-group="advancingPerGroup"
+            :league-dpi="leagueDpi" :advancing-per-group="advancingPerGroup"
             @showMatchDetails="showMatchDetails" @showPlayerCard="showPlayerCard" />
         </div>
 <div v-else-if="activeView === 'knockout'" key="knockout">
@@ -205,7 +226,7 @@ const showMatchDetails = (match: CupMatch) => { selectedMatch.value = match }
           <CupKnockout v-if="cupTabState === 'knockout'" :schedule="knockoutMatches"
             @showMatchDetails="showMatchDetails" />
           <CupGroups v-else :groups="groups" :schedule="groupMatches" :allPlayers="cupPlayers"
-            :advancing-per-group="advancingPerGroup" :isHistorical="true"
+            :league-dpi="leagueDpi" :advancing-per-group="advancingPerGroup" :isHistorical="true"
             @showMatchDetails="showMatchDetails" @showPlayerCard="showPlayerCard" />
         </div>
       </Transition>

@@ -9,9 +9,14 @@ interface Props {
   allPlayers: CupPlayer[]
   isHistorical?: boolean
   advancingPerGroup?: number
+  leagueDpi?: Record<string, number>
 }
 
-const props = withDefaults(defineProps<Props>(), { isHistorical: false, advancingPerGroup: 0 })
+const props = withDefaults(defineProps<Props>(), {
+  isHistorical: false,
+  advancingPerGroup: 0,
+  leagueDpi: () => ({}),
+})
 
 const emit = defineEmits<{
   showMatchDetails: [match: CupMatch]
@@ -88,7 +93,8 @@ const groupTable = computed<GroupTableRow[]>(() => {
       p2Stats: match.p2Stats,
     }]
   })
-  return rankCupGroup(uiState.activeGroup, activeMemberIds.value, played, names).map((row) => ({
+  const leagueDpi = new Map<string, number>(Object.entries(props.leagueDpi))
+  return rankCupGroup(uiState.activeGroup, activeMemberIds.value, played, names, leagueDpi).map((row) => ({
     playerId: row.id,
     playerName: row.name,
     mp: row.played,

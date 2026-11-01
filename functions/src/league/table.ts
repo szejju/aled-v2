@@ -39,6 +39,15 @@ function finiteScore(value: unknown): number | null {
   return null;
 }
 
+function matchRound(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
 function statsOf(value: unknown): MatchPlayerStats | undefined {
   const raw = asRecord(value);
   if (!raw) return undefined;
@@ -96,7 +105,9 @@ export function collectOfficialLeagueMatches(schedule: unknown): Match[] {
       p2Stats: statsOf(raw.p2Stats),
       isDoubleWO: raw.isDoubleWO === true,
       isPlayoff: false,
-      round: typeof raw.round === "number" ? raw.round : undefined,
+      div: typeof raw.div === "string" ? raw.div : undefined,
+      status: typeof raw.status === "string" ? raw.status.trim().toLowerCase() : undefined,
+      round: matchRound(raw.round),
       timestamp: typeof raw.timestamp === "number" ? raw.timestamp : undefined,
     });
   }

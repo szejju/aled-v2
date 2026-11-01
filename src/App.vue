@@ -26,7 +26,7 @@ setAuthRouter(router)
 
   <AppHeader />
 
-  <main id="main" class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
+  <main id="main" class="mx-auto min-w-0 max-w-7xl px-4 py-8 sm:px-6 lg:py-12">
     <!--
       Szkielet aplikacji (layout): header + główny obszar + router-view.
       Cała treść strony przeniosła się do src/views/* (patrz src/router/index.ts).

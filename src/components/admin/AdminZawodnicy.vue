@@ -6,11 +6,13 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { addPenalty, apiDeletePlayer, apiRemovePenalty, sendPlayerNotification, verifyPlayerFeature } from '@/services/api'
+import { addPenalty, apiDeletePlayer, apiRemovePenalty, verifyPlayerFeature } from '@/services/api'
+import AdminPlayerNotify from './AdminPlayerNotify.vue'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useBusyIds } from '@/composables/useBusyIds'
 import { usePlayerDirectory, type UnverifiedPlayer } from '@/composables/usePlayerDirectory'
 import { usePlayerKick, usePlayerReplace } from '@/composables/useRosterModals'
+import { useRtdbValue } from '@/composables/useRtdbValue'
 import { errorText } from '@/utils/errorText'
 import { asRecord, optNum, optStr } from '@/utils/rtdb'
 
@@ -28,9 +30,33 @@ const plDivs = computed(() => {
   }
   return [...divisions].sort()
 })
-const fPlayers = computed(() =>
-  plFilterDiv.value ? lPlayers.value.filter((player) => player.div === plFilterDiv.value) : lPlayers.value,
-)
+
+/** Zapis do pucharu żyje w `cup/participants/{playerId}`, nie na profilu gracza. */
+function cupMemberIds(value: unknown): Set<string> {
+  const record = asRecord(value)
+  if (!record) return new Set()
+  const ids = new Set<string>()
+  for (const [key, row] of Object.entries(record)) {
+    if (row == null) continue
+    ids.add(key)
+    const nested = optStr(asRecord(row)?.id)
+    if (nested) ids.add(nested)
+  }
+  return ids
+}
+
+const cupRoster = useRtdbValue('cup/participants', (snapshot) => cupMemberIds(snapshot.val()), new Set<string>())
+const cupIds = cupRoster.data
+const cupRosterError = cupRoster.error
+const cupRosterReady = cupRoster.ready
+
+const fPlayers = computed(() => {
+  const enrolled = cupIds.value
+  const rows = plFilterDiv.value
+    ? lPlayers.value.filter((player) => player.div === plFilterDiv.value)
+    : lPlayers.value
+  return rows.map((player) => ({ ...player, cup: enrolled.has(player.id) }))
+})
 
 const {
   show: showKick,
@@ -184,44 +210,6 @@ async function confirmDelete() {
     console.error(err)
   } finally {
     delLoad.value = false
-  }
-}
-
-const notifPlayer = ref('')
-const notifTitle = ref('')
-const notifMsg = ref('')
-const notifLoad = ref(false)
-const notifRes = ref('')
-const notifOk = ref(true)
-
-async function sendNotif() {
-  if (!notifPlayer.value || !notifTitle.value || !notifMsg.value.trim()) {
-    notifRes.value = 'Uzupelnij: gracz, tytul, tresc.'
-    notifOk.value = false
-    return
-  }
-  notifLoad.value = true
-  notifRes.value = ''
-  try {
-    const result = await sendPlayerNotification({
-      playerId: notifPlayer.value,
-      title: notifTitle.value,
-      message: notifMsg.value,
-    })
-    notifOk.value = result.success
-    notifRes.value = result.message
-    if (!result.success) {
-      console.error(result.message)
-      return
-    }
-    notifMsg.value = ''
-    notifTitle.value = ''
-  } catch (err: unknown) {
-    notifOk.value = false
-    notifRes.value = errorText(err)
-    console.error(err)
-  } finally {
-    notifLoad.value = false
   }
 }
 
@@ -431,6 +419,7 @@ onUnmounted(() => {
 
 onMounted(() => {
   directory.start()
+  cupRoster.start()
   fetchPen()
 })
 </script>
@@ -474,20 +463,15 @@ onMounted(() => {
       <select v-model="plFilterDiv" class="rounded-xl border border-line bg-surface-2 px-3 py-1.5 text-xs text-fg"><option value="">Wszystkie dywizje</option><option v-for="d in plDivs" :key="d" :value="d">{{ d }}</option></select>
     </template>
     <p v-if="kickNotice" class="text-xs font-bold text-lime mb-3">{{ kickNotice }}</p>
+    <p v-if="cupRosterError" class="text-xs font-bold text-red-400 mb-3">{{ cupRosterError }}</p>
     <div class="overflow-x-auto max-h-[600px] overflow-y-auto">
       <table class="w-full text-xs"><thead class="sticky top-0 bg-surface z-10"><tr class="border-b border-line text-muted uppercase tracking-widest text-[10px]"><th class="text-left py-2 px-2">Imie</th><th class="text-left py-2 px-2">Nazwisko</th><th class="text-left py-2 px-2">UID</th><th class="text-left py-2 px-2">Mail</th><th class="text-center py-2 px-2">Puchar</th><th class="text-center py-2 px-2">Lato</th><th class="text-right py-2 px-2">Akcje</th></tr></thead>
-        <tbody><tr v-for="p in fPlayers" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }}</td><td class="py-2 px-2 font-bold text-fg">{{ p.lastName }}</td><td class="py-2 px-2 text-muted font-mono text-[10px]">{{ p.id }}</td><td class="py-2 px-2 text-muted">{{ p.email||'--' }}</td><td class="py-2 px-2 text-center"><span :class="p.cup?'text-lime':'text-muted'">{{ p.cup?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-center"><span :class="p.summer?'text-lime':'text-muted'">{{ p.summer?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-right"><div class="flex gap-1 justify-end"><button @click="beginRepl(p)" :disabled="replLoading && replTarget?.id === p.id" class="rounded-lg bg-blue-600/10 text-blue-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-blue-600/20 disabled:opacity-50">{{ replLoading && replTarget?.id === p.id ? 'Podmiana...' : 'Podmien' }}</button><button @click="beginKick(p)" :disabled="kickLoading && kickTarget?.id === p.id" class="rounded-lg bg-red-600/10 text-red-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-red-600/20 disabled:opacity-50">{{ kickLoading && kickTarget?.id === p.id ? 'Wyrzucanie...' : 'Usun' }}</button></div></td></tr></tbody></table>
+        <tbody><tr v-for="p in fPlayers" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }}</td><td class="py-2 px-2 font-bold text-fg">{{ p.lastName }}</td><td class="py-2 px-2 text-muted font-mono text-[10px]">{{ p.id }}</td><td class="py-2 px-2 text-muted">{{ p.email||'--' }}</td><td class="py-2 px-2 text-center"><span v-if="!cupRosterReady" class="text-muted">...</span><span v-else :class="p.cup?'text-lime':'text-muted'">{{ p.cup?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-center"><span :class="p.summer?'text-lime':'text-muted'">{{ p.summer?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-right"><div class="flex gap-1 justify-end"><button @click="beginRepl(p)" :disabled="replLoading && replTarget?.id === p.id" class="rounded-lg bg-blue-600/10 text-blue-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-blue-600/20 disabled:opacity-50">{{ replLoading && replTarget?.id === p.id ? 'Podmiana...' : 'Podmien' }}</button><button @click="beginKick(p)" :disabled="kickLoading && kickTarget?.id === p.id" class="rounded-lg bg-red-600/10 text-red-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-red-600/20 disabled:opacity-50">{{ kickLoading && kickTarget?.id === p.id ? 'Wyrzucanie...' : 'Usun' }}</button></div></td></tr></tbody></table>
     </div>
   </AdminSectionCard>
   <!-- POWIADOMIENIA -->
   <AdminSectionCard title="Powiadomienia" dot-color="bg-amber-500">
-    <div class="space-y-3">
-      <div><label class="label block text-muted mb-1">Gracz</label><select v-model="notifPlayer" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"><option value="">-- Wybierz --</option><option v-for="p in lPlayers" :key="p.id" :value="p.id">{{ p.firstName }} {{ p.lastName }}</option></select></div>
-      <div><label class="label block text-muted mb-1">Tytul</label><input v-model="notifTitle" type="text" placeholder="Tytul powiadomienia" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-      <textarea v-model="notifMsg" placeholder="Tresc powiadomienia..." rows="3" class="w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-xs text-fg placeholder:text-muted/50 focus:border-lime/60 focus:outline-none resize-none"></textarea>
-      <button @click="sendNotif" :disabled="notifLoad" class="w-full rounded-xl bg-lime text-on-lime px-4 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ notifLoad?'Wysylanie...':'Wyslij Powiadomienie' }}</button>
-    </div>
-    <p v-if="notifRes" :class="['text-xs mt-2 font-bold', notifOk ? 'text-lime' : 'text-red-400']">{{ notifRes }}</p>
+    <AdminPlayerNotify :players="lPlayers" />
   </AdminSectionCard>
 
   <!-- KARY -->

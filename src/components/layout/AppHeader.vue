@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Sun, Moon } from 'lucide-vue-next'
+import { Sun, Moon, LogIn, UserPlus } from 'lucide-vue-next'
 import { navLinks } from '@/data/league'
 import LiveTicker from '@/components/home/LiveTicker.vue'
 import { useAuth } from '@/composables/useAuth'
@@ -50,16 +50,16 @@ async function handleLogout() {
 
 <template>
   <header class="sticky top-0 z-40 border-b border-line/70 bg-ink/80 backdrop-blur-xl">
-    <div class="mx-auto flex h-20 max-w-7xl items-center gap-6 px-4 sm:px-6 lg:h-24">
+    <div class="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:h-20 sm:gap-3 sm:px-6 lg:h-24 lg:gap-6">
       <!-- Logo -->
-      <RouterLink to="/" class="flex shrink-0 items-center gap-3" aria-label="Amatorska Liga e-Darta – strona główna">
+      <RouterLink to="/" class="flex min-w-0 shrink items-center gap-3" aria-label="Amatorska Liga e-Darta – strona główna">
         <img
           src="/images/logo_2.png"
           alt="ALED Logo"
-          class="h-20 w-auto object-contain transition-transform hover:scale-105 cursor-pointer lg:h-24"
+          class="h-11 w-auto shrink-0 object-contain transition-transform hover:scale-105 cursor-pointer sm:h-16 lg:h-24"
         />
-        <span class="hidden flex-col leading-none sm:flex">
-          <span class="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-muted">Amatorska liga</span>
+        <span class="hidden min-w-0 flex-col leading-none sm:flex">
+          <span class="truncate font-display text-[11px] font-bold uppercase tracking-[0.16em] text-muted lg:tracking-[0.3em]">Amatorska liga</span>
           <span class="font-display text-2xl font-black uppercase italic tracking-tight lg:text-3xl">
             e-Dart<span class="text-accent">a</span>
           </span>
@@ -87,33 +87,37 @@ async function handleLogout() {
       </nav>
 
       <!-- Akcje po prawej -->
-      <div class="ml-auto flex items-center gap-2 xl:ml-0">
+      <div class="ml-auto flex shrink-0 items-center gap-1 sm:gap-2 xl:ml-0">
         <button
           type="button"
           id="theme-toggle"
           aria-label="Przełącz motyw jasny / ciemny"
           @click="toggleTheme"
-          class="grid size-11 place-items-center rounded-full border border-line text-fg transition hover:border-lime/60 hover:text-accent"
+          class="grid size-10 place-items-center rounded-full border border-line text-fg transition hover:border-lime/60 hover:text-accent sm:size-11"
         >
           <Moon v-if="!isLightMode" class="size-5" aria-hidden="true" />
           <Sun v-else class="size-5" aria-hidden="true" />
         </button>
 
         <!-- Dynamiczne przyciski auth (zależne od roli) -->
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1 sm:gap-2">
           <!-- NIEZALOGOWANY (GOŚĆ) -->
           <template v-if="!isLoggedIn">
             <RouterLink
               to="/login"
-              class="inline-flex items-center gap-2 rounded-full border border-fg/15 bg-fg/5 px-5 py-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-fg transition hover:border-lime/60 hover:bg-fg/10"
+              aria-label="Zaloguj"
+              class="inline-flex items-center gap-2 rounded-full border border-fg/15 bg-fg/5 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-fg transition hover:border-lime/60 hover:bg-fg/10 md:px-5 md:py-2.5"
             >
-              Zaloguj
+              <LogIn class="size-4 md:hidden" aria-hidden="true" />
+              <span class="hidden md:inline">Zaloguj</span>
             </RouterLink>
             <RouterLink
               to="/register"
-              class="inline-flex items-center gap-2 rounded-full bg-lime px-5 py-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-on-lime shadow-[0_0_25px_rgb(155_226_45/0.25)] transition hover:bg-lime-soft"
+              aria-label="Dołącz"
+              class="inline-flex items-center gap-2 rounded-full bg-lime p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-on-lime shadow-[0_0_25px_rgb(155_226_45/0.25)] transition hover:bg-lime-soft md:px-5 md:py-2.5"
             >
-              Dołącz
+              <UserPlus class="size-4 md:hidden" aria-hidden="true" />
+              <span class="hidden md:inline">Dołącz</span>
             </RouterLink>
           </template>
 
@@ -123,24 +127,26 @@ async function handleLogout() {
             <RouterLink
               v-if="isPlayer"
               to="/player"
-              class="inline-flex items-center gap-2 rounded-full border border-lime/30 bg-lime/10 px-5 py-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-lime transition hover:bg-lime hover:text-slate-950"
+              aria-label="Profil"
+              class="inline-flex items-center gap-2 rounded-full border border-lime/30 bg-lime/10 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-lime transition hover:bg-lime hover:text-slate-950 md:px-5 md:py-2.5"
             >
               <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              Profil
+              <span class="hidden md:inline">Profil</span>
             </RouterLink>
 
             <!-- Przycisk ADMIN (dla Admina) -->
             <RouterLink
               v-if="isAdmin"
               to="/admin"
-              class="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 px-5 py-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-purple-400 transition hover:bg-purple-500 hover:text-white"
+              aria-label="Admin"
+              class="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-purple-400 transition hover:bg-purple-500 hover:text-white md:px-5 md:py-2.5"
             >
               <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
-              Admin
+              <span class="hidden md:inline">Admin</span>
             </RouterLink>
 
             <!-- Przycisk WYLOGUJ -->
@@ -158,7 +164,7 @@ async function handleLogout() {
 
         <!-- Menu mobilne -->
         <details class="group relative xl:hidden">
-          <summary class="grid size-11 cursor-pointer list-none place-items-center rounded-full border border-line [&::-webkit-details-marker]:hidden">
+          <summary class="grid size-10 cursor-pointer list-none place-items-center rounded-full border border-line sm:size-11 [&::-webkit-details-marker]:hidden">
             <span class="sr-only">Menu</span>
             <svg viewBox="0 0 24 24" class="size-5 group-open:hidden" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
             <svg viewBox="0 0 24 24" class="hidden size-5 group-open:block" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>

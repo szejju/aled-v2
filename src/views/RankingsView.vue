@@ -3,13 +3,14 @@ import { computed, ref, onMounted } from 'vue'
 import { ref as dbRef, get } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
+import { officialLeagueStats } from '@/utils/leagueDpi'
 
 /**
  * Podstrona „Rankingi” – Top 10 w 7 kategoriach.
  *
  * Dane pobierane z RTDB (players, schedule, cup/schedule).
- * Statystyki liczone bezpośrednio z surowych danych meczowych,
- * zgodnie z logiką starego `window.initRankingi()`.
+ * Kategorie poza DPI liczone są z protokołów na ekranie.
+ * Power Ranking bierze wyłącznie zatwierdzone mecze ligowe z silnika DPI.
  */
 
 /* ------------------------------------------------------------------ *
@@ -191,6 +192,16 @@ const parseNum = (v: unknown): number => {
  *  Obliczanie statystyk z meczów
  * ------------------------------------------------------------------ */
 
+const leagueEngine = computed(() => officialLeagueStats(
+  allPlayers.value.map((player) => ({
+    id: player.id,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    div: player.div,
+  })),
+  scheduleData.value,
+))
+
 const statsMap = computed<Record<string, PlayerStats>>(() => {
   const acc: Record<string, AggregatedStats> = {}
 
@@ -270,7 +281,6 @@ const statsMap = computed<Record<string, PlayerStats>>(() => {
     const doublesPct = s.doublesAttempts > 0
       ? (s.doublesHit / s.doublesAttempts) * 100
       : 0
-    const dpi = realAvg > 0 ? realAvg * 3 * (1 + doublesPct / 100) : 0
 
     result[id] = {
       realAvg: Math.round(realAvg * 100) / 100,
@@ -279,7 +289,7 @@ const statsMap = computed<Record<string, PlayerStats>>(() => {
       max: s.totalMax,
       hf: s.bestFinish,
       sl: s.bestShort < 999 ? s.bestShort : 0,
-      dpi: Math.round(dpi * 100) / 100,
+      dpi: leagueEngine.value[id]?.dpi ?? 0,
       doublesPct: Math.round(doublesPct * 10) / 10,
     }
   }
