@@ -7,6 +7,17 @@
 
 import * as functions from "firebase-functions";
 import admin from "firebase-admin";
+import { isBarrageMatch } from "../league/table.js";
+import {
+  countsForCupGroup,
+  rankCupGroup,
+  readCupPlayedMatch,
+  sortCupTable,
+  type CupPlayedMatch,
+  type CupTableRow,
+} from "../league/cupTable.js";
+
+export { isBarrageMatch };
 
 const getDb = () => {
   if (!admin.apps.length) admin.initializeApp();
@@ -44,11 +55,28 @@ export const addPenalty = functions.https.onCall(async (request) => {
     createdAt: admin.database.ServerValue.TIMESTAMP,
   });
 
-  const playerSnap = await db.ref(`players/${playerId}`).once("value");
-  const currentPenalty = (playerSnap.val()?.penaltyPoints as number) || 0;
-  await db.ref(`players/${playerId}/penaltyPoints`).set(currentPenalty + points);
+  return { success: true, message: `Przyznano kare ${points} pkt.` };
+});
 
-  return { success: true, message: `Przyznano kare ${points} pkt. Lacznie: ${currentPenalty + points} pkt.` };
+// ---- removePenalty -------------------------------------------------------
+
+export const removePenalty = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new functions.https.HttpsError("unauthenticated", "Brak autoryzacji.");
+  if (!(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnien admina.");
+
+  const penaltyId = typeof request.data?.penaltyId === "string" ? request.data.penaltyId.trim() : "";
+  if (!penaltyId || /[.#$\[\]\/]/.test(penaltyId))
+    throw new functions.https.HttpsError("invalid-argument", "Brak identyfikatora kary.");
+
+  const penaltyRef = getDb().ref(`penalties/${penaltyId}`);
+  const snap = await penaltyRef.once("value");
+  if (!snap.exists())
+    throw new functions.https.HttpsError("not-found", "Kara nie istnieje.");
+
+  await penaltyRef.remove();
+  return { success: true, message: "Kara cofnieta." };
 });
 
 // ---- sendPlayerNotification ----------------------------------------------
@@ -309,14 +337,14 @@ export interface LeagueMatchRecord {
   score1: "";
   score2: "";
   season: number;
-  group?: string;
 }
 
 interface ScheduleBucket {
   div: string;
-  group: string;
   players: FixturePlayer[];
 }
+
+const CLOSED_MATCH_STATUSES = new Set(["played", "approved"]);
 
 function plainRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -328,11 +356,6 @@ function divisionLabel(div: unknown): string {
   const normalized = div.trim().toUpperCase().replace(/\s+/g, " ");
   if (!normalized || normalized === "POCZEKALNIA") return "";
   return normalized;
-}
-
-function groupLabel(group: unknown): string {
-  if (typeof group !== "string") return "";
-  return group.trim().toUpperCase().replace(/\s+/g, " ");
 }
 
 function playerLabel(raw: Record<string, unknown>, id: string): string {
@@ -395,20 +418,15 @@ export function buildLeagueSchedule(
 
     const div = divisionLabel(raw.div);
     if (!div) continue;
-    const group = groupLabel(raw.group);
-    const key = group ? `${div}|${group}` : div;
-    let bucket = buckets.get(key);
+    let bucket = buckets.get(div);
     if (!bucket) {
-      bucket = { div, group, players: [] };
-      buckets.set(key, bucket);
+      bucket = { div, players: [] };
+      buckets.set(div, bucket);
     }
     bucket.players.push({ id, name: playerLabel(raw, id) });
   }
 
-  const ordered = [...buckets.values()].sort((a, b) => {
-    const byDiv = a.div.localeCompare(b.div, "pl");
-    return byDiv !== 0 ? byDiv : a.group.localeCompare(b.group, "pl");
-  });
+  const ordered = [...buckets.values()].sort((a, b) => a.div.localeCompare(b.div, "pl"));
 
   const schedule: Record<string, LeagueMatchRecord> = {};
   let divisions = 0;
@@ -427,9 +445,7 @@ export function buildLeagueSchedule(
         ]
       : firstLeg;
 
-    const divSlug = slugPart(bucket.div) || `D${bucketIndex + 1}`;
-    const groupSlug = bucket.group ? slugPart(bucket.group) : "";
-    const identity = groupSlug ? `${divSlug}_${groupSlug}` : divSlug;
+    const identity = slugPart(bucket.div) || `D${bucketIndex + 1}`;
     let counter = 1;
     let wrote = false;
 
@@ -438,7 +454,7 @@ export function buildLeagueSchedule(
       for (const [p1, p2] of pairs) {
         const id = `S${season}-${identity}-R${round}-M${counter}`;
         counter += 1;
-        const match: LeagueMatchRecord = {
+        schedule[id] = {
           id,
           p1Id: p1.id,
           p2Id: p2.id,
@@ -451,8 +467,6 @@ export function buildLeagueSchedule(
           score2: "",
           season,
         };
-        if (bucket.group) match.group = bucket.group;
-        schedule[id] = match;
         wrote = true;
       }
     });
@@ -463,29 +477,70 @@ export function buildLeagueSchedule(
   return { schedule, divisions };
 }
 
-const BARRAGE_DIV = /BARA[ZŻ]|PLAY-?OFF/i;
-
-/** Mecz barażowy zostaje w schedule. Liga jest liczona od nowa. */
-export function isBarrageMatch(match: unknown): boolean {
+function matchStatus(match: unknown): string {
   const raw = plainRecord(match);
-  if (!raw) return false;
-  if (raw.isPlayoff === true || raw.isBarrage === true) return true;
-  return typeof raw.div === "string" && BARRAGE_DIV.test(raw.div);
+  if (!raw || typeof raw.status !== "string") return "";
+  return raw.status.trim().toLowerCase();
 }
 
 /**
- * Kasuje dotychczasowe mecze ligowe i dokleja nowy terminarz.
- * Klucze barażowe nie wchodzą do aktualizacji, więc ich wyniki zostają.
+ * Dywizje z tego przebiegu, w których tabela ma już mecz zamknięty.
+ * Baraż nie liczy się jako mecz ligowy tej dywizji.
+ */
+export function divisionsWithPlayedMatches(
+  existingRaw: unknown,
+  targetDivs: Iterable<string>,
+): string[] {
+  const targets = new Set<string>();
+  for (const div of targetDivs) {
+    const label = divisionLabel(div);
+    if (label) targets.add(label);
+  }
+
+  const locked = new Set<string>();
+  const existing = plainRecord(existingRaw) ?? {};
+  for (const value of Object.values(existing)) {
+    if (isBarrageMatch(value)) continue;
+    const div = divisionLabel(plainRecord(value)?.div);
+    if (!div || !targets.has(div)) continue;
+    if (CLOSED_MATCH_STATUSES.has(matchStatus(value))) locked.add(div);
+  }
+
+  return [...locked].sort((a, b) => a.localeCompare(b, "pl"));
+}
+
+function playedResetMessage(divisions: string[]): string {
+  const titles = divisions.map((div) => {
+    const rest = div.replace(/^DYWIZJA\s+/, "");
+    return rest ? `Dywizja ${rest}` : div;
+  });
+  if (titles.length === 1) {
+    return `${titles[0]} ma już rozegrane mecze. Reset zabroniony.`;
+  }
+  return `${titles.join(", ")} mają już rozegrane mecze. Reset zabroniony.`;
+}
+
+/**
+ * Wymienia mecze tylko w dywizjach, które właśnie przeliczamy.
+ * Baraże i pozostałe dywizje nie wchodzą do zapisu.
  */
 export function buildScheduleUpdate(
   existingRaw: unknown,
   generated: Record<string, LeagueMatchRecord>,
 ): Record<string, LeagueMatchRecord | null> {
   const existing = plainRecord(existingRaw) ?? {};
+  const targetDivs = new Set<string>();
+  for (const match of Object.values(generated)) {
+    const div = divisionLabel(match.div);
+    if (div) targetDivs.add(div);
+  }
+
   const updates: Record<string, LeagueMatchRecord | null> = {};
 
   for (const [id, value] of Object.entries(existing)) {
     if (isBarrageMatch(value)) continue;
+    const div = divisionLabel(plainRecord(value)?.div);
+    if (!div || !targetDivs.has(div)) continue;
     updates[id] = null;
   }
 
@@ -527,6 +582,14 @@ export const generateLeagueSchedule = functions.https.onCall(async (request) => 
   }
 
   const existing = plainRecord(scheduleSnap.val()) ?? {};
+  const locked = divisionsWithPlayedMatches(
+    existing,
+    Object.values(schedule).map((match) => match.div),
+  );
+  if (locked.length > 0) {
+    throw new functions.https.HttpsError("failed-precondition", playedResetMessage(locked));
+  }
+
   let preserved = 0;
   for (const value of Object.values(existing)) {
     if (isBarrageMatch(value)) preserved += 1;
@@ -539,7 +602,7 @@ export const generateLeagueSchedule = functions.https.onCall(async (request) => 
   const barrageNote = preserved > 0 ? ` Zachowano ${preserved} meczy barazowych.` : "";
   return {
     success: true,
-    message: `Terminarz wygenerowany${rematchNote}: ${divisions} grup, ${matches} meczow.${barrageNote}`,
+    message: `Terminarz wygenerowany${rematchNote}: ${divisions} dywizji, ${matches} meczow.${barrageNote}`,
     matches,
     divisions,
   };
@@ -604,14 +667,14 @@ export function buildCupGroupStage(
   now: number,
 ): CupGroupStagePlan {
   const needed = numberOfGroups * playersPerGroup;
-  if (participantIds.length < needed) {
+  if (participantIds.length !== needed) {
     throw new functions.https.HttpsError(
       "failed-precondition",
-      `Za malo zapisanych (${participantIds.length}). Potrzeba ${needed} (${numberOfGroups} grup po ${playersPerGroup}).`,
+      `Zapisanych jest ${participantIds.length}, a losowanie wymaga dokladnie ${needed} (${numberOfGroups} grup po ${playersPerGroup}). Nadwyzka nie jest ucinana.`,
     );
   }
 
-  const shuffled = fisherYatesShuffle([...participantIds]).slice(0, needed);
+  const shuffled = fisherYatesShuffle([...participantIds]);
   const groups: Record<string, string[]> = {};
   for (let g = 0; g < numberOfGroups; g++) {
     const letter = String.fromCharCode(65 + g);
@@ -684,10 +747,36 @@ export const generateCupGroupStage = functions.https.onCall(async (request) => {
       "Awansujacych z grupy nie moze byc wiecej niz graczy w grupie.",
     );
   }
-  if (luckyLosers > numberOfGroups * outsideZone) {
+  if (luckyLosers > 0 && outsideZone < 1) {
     throw new functions.https.HttpsError(
       "failed-precondition",
-      "Lucky losers wymagaja miejsca poza strefa awansu.",
+      "Lucky losers wymagaja miejsca pod strefa awansu. Zmniejsz awans albo wyzeruj lucky losers.",
+    );
+  }
+  if (luckyLosers > numberOfGroups) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      `Lucky losers (${luckyLosers}) przekracza liczbe grup (${numberOfGroups}). Do puli wchodzi tylko jedno miejsce pod awansem z kazdej grupy.`,
+    );
+  }
+  const needed = numberOfGroups * playersPerGroup;
+  if (needed % 2 !== 0) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      `Liczba miejsc w grupach (${needed}) musi byc parzysta. Popraw liczbe grup albo graczy w grupie.`,
+    );
+  }
+  if (participantIds.length !== needed) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      `Zapisanych jest ${participantIds.length}, a losowanie wymaga dokladnie ${needed} (${numberOfGroups} grup po ${playersPerGroup}). Nadwyzka nie jest ucinana — popraw sklad albo liczby.`,
+    );
+  }
+  const exitSize = numberOfGroups * advancingPerGroup + luckyLosers;
+  if (!isPowerOfTwo(exitSize)) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      `Wyjscie z grup ma ${exitSize} miejsc (${numberOfGroups} x ${advancingPerGroup} awansu + ${luckyLosers} lucky losers). Drabinka wymaga potegi dwojki, np. 4, 8, 16 lub 32.`,
     );
   }
 
@@ -730,18 +819,6 @@ export const generateCupGroupStage = functions.https.onCall(async (request) => {
 });
 
 // ---- generateCupKnockoutStage (tabele grup -> drabinka R1) ----------------
-
-export interface CupStandingRow {
-  id: string;
-  name: string;
-  group: string;
-  played: number;
-  wins: number;
-  points: number;
-  legsFor: number;
-  legsAgainst: number;
-  legDiff: number;
-}
 
 export interface CupKnockoutQualifier {
   id: string;
@@ -826,90 +903,28 @@ function groupMemberIds(value: unknown): string[] {
   return ids;
 }
 
-function compareGroupTable(a: CupStandingRow, b: CupStandingRow): number {
-  if (b.points !== a.points) return b.points - a.points;
-  if (b.wins !== a.wins) return b.wins - a.wins;
-  if (b.legDiff !== a.legDiff) return b.legDiff - a.legDiff;
-  if (b.legsFor !== a.legsFor) return b.legsFor - a.legsFor;
-  const byName = a.name.localeCompare(b.name, "pl");
-  if (byName !== 0) return byName;
-  return a.id.localeCompare(b.id);
-}
-
-function compareLuckyLosers(a: CupStandingRow, b: CupStandingRow): number {
-  if (b.wins !== a.wins) return b.wins - a.wins;
-  if (b.legDiff !== a.legDiff) return b.legDiff - a.legDiff;
-  if (b.legsFor !== a.legsFor) return b.legsFor - a.legsFor;
-  const byName = a.name.localeCompare(b.name, "pl");
-  if (byName !== 0) return byName;
-  return a.id.localeCompare(b.id);
-}
-
 function matchBelongsToGroup(raw: Record<string, unknown>, groupName: string, members: Set<string>): boolean {
-  if (raw.isKnockout === true) return false;
-  const id = typeof raw.id === "string" ? raw.id : "";
-  if (id.startsWith("CUP-KO-")) return false;
-  if (typeof raw.group === "string" && raw.group.trim() === groupName) return true;
-  const p1 = typeof raw.p1Id === "string" ? raw.p1Id : "";
-  const p2 = typeof raw.p2Id === "string" ? raw.p2Id : "";
-  return members.has(p1) && members.has(p2);
-}
-
-function legScore(raw: Record<string, unknown>, sets1: number, sets2: number): [number, number] {
-  const legs1 = finiteNumber(raw.legs1);
-  const legs2 = finiteNumber(raw.legs2);
-  if (legs1 !== null && legs2 !== null) return [legs1, legs2];
-  return [sets1, sets2];
-}
-
-function applyStanding(
-  row: CupStandingRow,
-  mySets: number,
-  oppSets: number,
-  myLegs: number,
-  oppLegs: number,
-  doubleWalkover: boolean,
-): void {
-  row.played += 1;
-  row.legsFor += myLegs;
-  row.legsAgainst += oppLegs;
-  row.legDiff = row.legsFor - row.legsAgainst;
-  if (doubleWalkover) return;
-  if (mySets > oppSets) {
-    row.wins += 1;
-    row.points += 3;
-  } else if (mySets === oppSets) {
-    row.points += 1;
-  }
+  return countsForCupGroup(groupName, members, {
+    id: typeof raw.id === "string" ? raw.id : "",
+    group: typeof raw.group === "string" ? raw.group : "",
+    isKnockout: raw.isKnockout === true,
+    p1Id: typeof raw.p1Id === "string" ? raw.p1Id : "",
+    p2Id: typeof raw.p2Id === "string" ? raw.p2Id : "",
+  });
 }
 
 /**
- * Tabela grupy z zakonczonych meczow.
- * Duze punkty: 3 za zwyciestwo, 1 za remis. Male punkty: roznica legow
- * (gdy legow nie zapisano, w ich miejsce wchodza sety).
+ * Tabela grupy z zakończonych meczów, regulaminem pucharowym.
+ * Niedokończony mecz blokuje drabinkę.
  */
-function standingsForGroup(
+function assessGroup(
   groupName: string,
   memberIds: string[],
   schedule: Record<string, unknown>,
   names: Map<string, string>,
-): CupStandingRow[] {
+): { rows: CupTableRow[]; played: CupPlayedMatch[] } {
   const members = new Set(memberIds);
-  const rows = new Map<string, CupStandingRow>();
-  for (const id of memberIds) {
-    rows.set(id, {
-      id,
-      name: names.get(id) || id,
-      group: groupName,
-      played: 0,
-      wins: 0,
-      points: 0,
-      legsFor: 0,
-      legsAgainst: 0,
-      legDiff: 0,
-    });
-  }
-
+  const played: CupPlayedMatch[] = [];
   let pending = 0;
   for (const value of Object.values(schedule)) {
     const raw = plainRecord(value);
@@ -920,15 +935,8 @@ function standingsForGroup(
       pending += 1;
       continue;
     }
-    const p1 = typeof raw.p1Id === "string" ? raw.p1Id : "";
-    const p2 = typeof raw.p2Id === "string" ? raw.p2Id : "";
-    if (!p1 || !p2 || p1 === p2) continue;
-    const [legs1, legs2] = legScore(raw, sets1, sets2);
-    const doubleWalkover = raw.isDoubleWO === true;
-    const left = rows.get(p1);
-    const right = rows.get(p2);
-    if (left) applyStanding(left, sets1, sets2, legs1, legs2, doubleWalkover);
-    if (right) applyStanding(right, sets2, sets1, legs2, legs1, doubleWalkover);
+    const parsed = readCupPlayedMatch(raw);
+    if (parsed) played.push(parsed);
   }
 
   if (pending > 0) {
@@ -937,14 +945,14 @@ function standingsForGroup(
       `Grupa ${groupName} ma niedokonczone mecze (${pending}). Drabinka liczy tylko komplet wynikow.`,
     );
   }
-  if (memberIds.length >= 2 && [...rows.values()].every((row) => row.played === 0)) {
+  const rows = rankCupGroup(groupName, memberIds, played, names);
+  if (memberIds.length >= 2 && rows.every((row) => row.played === 0)) {
     throw new functions.https.HttpsError(
       "failed-precondition",
       `Grupa ${groupName} nie ma rozegranych meczow.`,
     );
   }
-
-  return [...rows.values()].sort(compareGroupTable);
+  return { rows, played };
 }
 
 interface SeedPair {
@@ -952,69 +960,7 @@ interface SeedPair {
   away: CupKnockoutQualifier;
 }
 
-function sameSourceGroup(a: CupKnockoutQualifier, b: CupKnockoutQualifier): boolean {
-  return a.group !== "" && a.group === b.group;
-}
-
-function countSameGroupPairs(pairs: SeedPair[]): number {
-  let count = 0;
-  for (const pair of pairs) {
-    if (sameSourceGroup(pair.home, pair.away)) count += 1;
-  }
-  return count;
-}
-
-function swapPairSide(pairs: SeedPair[], i: number, j: number, mode: "away" | "cross"): boolean {
-  const before = countSameGroupPairs(pairs);
-  const saved = pairs.map((pair) => ({ home: pair.home, away: pair.away }));
-  if (mode === "away") {
-    const away = pairs[i].away;
-    pairs[i].away = pairs[j].away;
-    pairs[j].away = away;
-  } else {
-    const away = pairs[i].away;
-    pairs[i].away = pairs[j].home;
-    pairs[j].home = away;
-  }
-  if (countSameGroupPairs(pairs) < before) return true;
-  for (let k = 0; k < pairs.length; k++) {
-    pairs[k].home = saved[k].home;
-    pairs[k].away = saved[k].away;
-  }
-  return false;
-}
-
-/** Przesuwa rywali tak, by pierwsza runda nie laczyla graczy z jednej grupy. */
-function separateSameGroupPairs(pairs: SeedPair[]): void {
-  const limit = pairs.length * pairs.length + 1;
-  for (let pass = 0; pass < limit; pass++) {
-    if (countSameGroupPairs(pairs) === 0) break;
-    let improved = false;
-    for (let i = 0; i < pairs.length && !improved; i++) {
-      if (!sameSourceGroup(pairs[i].home, pairs[i].away)) continue;
-      for (let j = 0; j < pairs.length && !improved; j++) {
-        if (i === j) continue;
-        improved = swapPairSide(pairs, i, j, "away") || swapPairSide(pairs, i, j, "cross");
-      }
-    }
-    if (!improved) break;
-  }
-  if (countSameGroupPairs(pairs) > 0) {
-    throw new functions.https.HttpsError(
-      "failed-precondition",
-      "Nie da sie ulozyc pierwszej rundy bez pary z tej samej grupy.",
-    );
-  }
-  for (const pair of pairs) {
-    if (pair.away.seed < pair.home.seed) {
-      const home = pair.home;
-      pair.home = pair.away;
-      pair.away = home;
-    }
-  }
-}
-
-function toQualifier(row: CupStandingRow, via: "group" | "lucky", groupRank: number): CupKnockoutQualifier {
+function toQualifier(row: CupTableRow, via: "group" | "lucky", groupRank: number): CupKnockoutQualifier {
   return {
     id: row.id,
     name: row.name,
@@ -1056,9 +1002,9 @@ function knockoutMatch(
 }
 
 /**
- * Awans: TOP advancingPerGroup z kazdej grupy (punkty, wygrane, roznica legow).
- * Lucky losers: wspolna tabela odrzuconych, sortowana wygrane -> roznica legow.
- * Pula musi byc potega dwojki. Rozstawienie 1 vs N, bez pary z jednej grupy w R1.
+ * Awans bezpośredni: jeden worek miejsc z grup, sortowany regulaminem pucharowym.
+ * Lucky losers: tylko lokata tuż pod awansem z każdej grupy, ten sam regulamin, dopisani na końcu.
+ * Pary 1 z N. Ta sama grupa może trafić na siebie w pierwszej rundzie.
  */
 export function buildCupKnockoutStage(
   groupsRaw: unknown,
@@ -1091,7 +1037,8 @@ export function buildCupKnockoutStage(
   const participants = plainRecord(participantsRaw) ?? {};
   const schedule = plainRecord(scheduleRaw) ?? {};
   const names = new Map<string, string>();
-  const tables: CupStandingRow[][] = [];
+  const tables: CupTableRow[][] = [];
+  const played: CupPlayedMatch[] = [];
 
   for (const groupName of groupNames) {
     const memberIds = groupMemberIds(groupRecord[groupName]);
@@ -1104,42 +1051,49 @@ export function buildCupKnockoutStage(
     for (const id of memberIds) {
       if (!names.has(id)) names.set(id, cupParticipantName(id, players, participants));
     }
-    tables.push(standingsForGroup(groupName, memberIds, schedule, names));
+    const assessed = assessGroup(groupName, memberIds, schedule, names);
+    tables.push(assessed.rows);
+    played.push(...assessed.played);
+  }
+
+  const placeInGroup = (id: string): number => {
+    for (const table of tables) {
+      const index = table.findIndex((row) => row.id === id);
+      if (index >= 0) return index + 1;
+    }
+    return 0;
+  };
+
+  const directIds = new Set<string>();
+  const direct: CupTableRow[] = [];
+  for (const table of tables) {
+    for (let rank = 0; rank < advancingPerGroup; rank += 1) {
+      const row = table[rank];
+      if (!row || directIds.has(row.id)) continue;
+      directIds.add(row.id);
+      direct.push(row);
+    }
+  }
+  const directOrdered = sortCupTable(direct, played);
+
+  const luckyPool: CupTableRow[] = [];
+  for (const table of tables) {
+    const row = table[advancingPerGroup];
+    if (!row || directIds.has(row.id)) continue;
+    luckyPool.push(row);
+  }
+  const luckyOrdered = sortCupTable(luckyPool, played);
+  if (luckyLosers > luckyOrdered.length) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      `Lucky losers (${luckyLosers}) przekracza liczbe miejsc tuz pod awansem (${luckyOrdered.length}).`,
+    );
   }
 
   const qualified: CupKnockoutQualifier[] = [];
-  const qualifiedIds = new Set<string>();
-  for (let rank = 0; rank < advancingPerGroup; rank++) {
-    const block: CupStandingRow[] = [];
-    for (const table of tables) {
-      const row = table[rank];
-      if (row && !qualifiedIds.has(row.id)) block.push(row);
-    }
-    block.sort(compareGroupTable);
-    for (const row of block) {
-      qualifiedIds.add(row.id);
-      qualified.push(toQualifier(row, "group", rank + 1));
-    }
-  }
-
-  const pool: CupStandingRow[] = [];
-  for (const table of tables) {
-    for (const row of table) {
-      if (!qualifiedIds.has(row.id)) pool.push(row);
-    }
-  }
-  pool.sort(compareLuckyLosers);
-  if (luckyLosers > pool.length) {
-    throw new functions.https.HttpsError(
-      "failed-precondition",
-      `Lucky losers (${luckyLosers}) przekracza liczbe graczy poza awansem (${pool.length}).`,
-    );
-  }
-  for (const row of pool.slice(0, luckyLosers)) {
-    qualifiedIds.add(row.id);
-    const groupRank = tables.find((table) => table.some((entry) => entry.id === row.id))
-      ?.findIndex((entry) => entry.id === row.id) ?? 0;
-    qualified.push(toQualifier(row, "lucky", groupRank + 1));
+  for (const row of directOrdered) qualified.push(toQualifier(row, "group", placeInGroup(row.id)));
+  for (const row of luckyOrdered.slice(0, luckyLosers)) {
+    qualified.push(toQualifier(row, "lucky", placeInGroup(row.id)));
   }
 
   if (!isPowerOfTwo(qualified.length)) {
@@ -1161,7 +1115,6 @@ export function buildCupKnockoutStage(
     if (left.seed <= right.seed) pairs.push({ home: left, away: right });
     else pairs.push({ home: right, away: left });
   }
-  separateSameGroupPairs(pairs);
 
   const totalRounds = Math.log2(qualified.length);
   const matches: Record<string, CupKnockoutMatch> = {};

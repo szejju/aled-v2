@@ -89,6 +89,9 @@ const allSchedule = computed<CupMatch[]>(() => {
     proposedDate: m.proposedDate,
     proposedTime: m.proposedTime,
     proposedTimestamp: m.proposedTimestamp,
+    timestamp: m.timestamp,
+    p1Stats: m.p1Stats,
+    p2Stats: m.p2Stats,
   }))
 })
 
@@ -96,6 +99,10 @@ const groupMatches = computed(() => allSchedule.value.filter(m => !m.isKnockout)
 const knockoutMatches = computed(() => allSchedule.value.filter(m => m.isKnockout) as KnockoutMatch[])
 
 const settings = computed(() => rawCupData.value?.settings ?? {})
+const advancingPerGroup = computed(() => {
+  const value = settings.value.advancingPerGroup
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 0
+})
 const cupDbStatus = computed(() => settings.value.status ?? 'registration')
 const leagueStartDate = computed(() => settings.value.leagueStartDate)
 const groups = computed<Record<string, string[]>>(() => rawCupData.value?.groups ?? {})
@@ -177,6 +184,7 @@ const showMatchDetails = (match: CupMatch) => { selectedMatch.value = match }
 
         <div v-else-if="activeView === 'groups'" key="groups">
           <CupGroups :groups="groups" :schedule="groupMatches" :allPlayers="cupPlayers"
+            :advancing-per-group="advancingPerGroup"
             @showMatchDetails="showMatchDetails" @showPlayerCard="showPlayerCard" />
         </div>
 <div v-else-if="activeView === 'knockout'" key="knockout">
@@ -197,7 +205,8 @@ const showMatchDetails = (match: CupMatch) => { selectedMatch.value = match }
           <CupKnockout v-if="cupTabState === 'knockout'" :schedule="knockoutMatches"
             @showMatchDetails="showMatchDetails" />
           <CupGroups v-else :groups="groups" :schedule="groupMatches" :allPlayers="cupPlayers"
-            :isHistorical="true" @showMatchDetails="showMatchDetails" @showPlayerCard="showPlayerCard" />
+            :advancing-per-group="advancingPerGroup" :isHistorical="true"
+            @showMatchDetails="showMatchDetails" @showPlayerCard="showPlayerCard" />
         </div>
       </Transition>
     </template>

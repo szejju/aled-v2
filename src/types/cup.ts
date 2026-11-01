@@ -53,6 +53,7 @@ export interface CupMatch {
   isKnockout?: boolean
   roundNum?: number
   isDoubleWO?: boolean
+  timestamp?: number
   // Opcjonalne statystyki dla modali
   p1Stats?: {
     avg?: number | string

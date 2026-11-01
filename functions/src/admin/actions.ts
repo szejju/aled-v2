@@ -6,29 +6,15 @@
 
 import * as functions from "firebase-functions";
 import admin from "firebase-admin";
+import { archiveDatabase } from "../database/connection.js";
+import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
+import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.js";
 
 // ---- Lazy init -----------------------------------------------------------
 
 const getDb = () => {
   if (!admin.apps.length) admin.initializeApp();
   return admin.database();
-};
-
-/** Inicjalizuje (lub zwraca już istniejącą) drugą aplikację Firebase
- *  wskazującą na zewnętrzną bazę archiwum (ARCHIVE_DB_URL).
- *  Gdy zmienna nie jest ustawiona, fallbackuje do głównej bazy. */
-const getArchiveDb = () => {
-  const archiveDbUrl = process.env.ARCHIVE_DB_URL;
-  if (!archiveDbUrl) {
-    console.warn("Brak ARCHIVE_DB_URL, używam głównej bazy jako fallback.");
-    return getDb();
-  }
-  const appName = 'archiveApp';
-  let archiveApp = admin.apps.find((app) => app?.name === appName);
-  if (!archiveApp) {
-    archiveApp = admin.initializeApp({ databaseURL: archiveDbUrl }, appName);
-  }
-  return archiveApp.database();
 };
 
 // ---- Helper: weryfikacja uprawnień admina --------------------------------
@@ -285,13 +271,64 @@ export const assignPlayerToDivision = functions.https.onCall(async (request) => 
 
 // ---- kickPlayer -------------------------------------------------------------
 
+/** Mecz jeszcze przed wynikiem. `pending_result` i `pending_approval` mają już zgłoszony protokół. */
+const UNPLAYED_MATCH_STATUSES = new Set([
+  "scheduled",
+  "accepted",
+  "upcoming",
+  "proposed",
+  "unscheduled",
+  "pending_exception",
+  "exception_rejected",
+]);
+
+function isUnplayedMatch(match: { status?: unknown; score1?: unknown }): boolean {
+  const status = typeof match.status === "string" ? match.status.trim().toLowerCase() : "";
+  if (UNPLAYED_MATCH_STATUSES.has(status)) return true;
+  // Stary generator terminarza nie stawiał statusu. Bez wyniku to nadal mecz do rozegrania.
+  return status === "" && typeof match.score1 !== "number";
+}
+
+/** Nierozegrany mecz zamienia się w zatwierdzony walkower rywala. */
+function awardScheduledWalkovers(
+  updates: Record<string, unknown>,
+  basePath: "schedule" | "cup/schedule",
+  schedule: Record<string, any>,
+  playerId: string,
+  legs: number,
+): number {
+  let count = 0;
+  for (const [matchId, match] of Object.entries(schedule)) {
+    if (!match || (match.p1Id !== playerId && match.p2Id !== playerId)) continue;
+    if (!isUnplayedMatch(match)) continue;
+
+    const kickedIsHome = match.p1Id === playerId;
+    const prefix = `${basePath}/${matchId}`;
+    updates[`${prefix}/score1`] = kickedIsHome ? 0 : legs;
+    updates[`${prefix}/score2`] = kickedIsHome ? legs : 0;
+    updates[`${prefix}/status`] = "played";
+    updates[`${prefix}/isPlayed`] = true;
+    updates[`${prefix}/isWalkover`] = true;
+    updates[`${prefix}/isDoubleWO`] = false;
+    updates[`${prefix}/walkoverPlayerId`] = kickedIsHome ? match.p2Id : match.p1Id;
+    count += 1;
+  }
+  return count;
+}
+
 export const kickPlayer = functions.https.onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Brak autoryzacji.');
   if (!(await verifyAdmin(uid))) throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
 
   const { playerId, walkoverScore, isCup } = request.data;
-  if (!playerId || walkoverScore === undefined) throw new functions.https.HttpsError('invalid-argument', 'Brakujące dane.');
+  const walkoverLegs = typeof walkoverScore === "number" ? walkoverScore : Number(walkoverScore);
+  if (!playerId || !Number.isInteger(walkoverLegs) || walkoverLegs <= 0) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Podaj gracza i dodatni wynik walkowera w legach.",
+    );
+  }
 
   const db = getDb();
   const updates: any = {};
@@ -302,34 +339,12 @@ export const kickPlayer = functions.https.onCall(async (request) => {
       updates[`cup/participants/${playerId}`] = null;
       const snap = await db.ref('cup/schedule').once('value');
       const schedule = snap.val() || {};
-      
-      Object.keys(schedule).forEach(matchId => {
-        const m = schedule[matchId];
-        if ((m.p1Id === playerId || m.p2Id === playerId) && typeof m.score1 !== 'number') {
-          const isP1 = m.p1Id === playerId;
-          updates[`cup/schedule/${matchId}/score1`] = isP1 ? 0 : walkoverScore;
-          updates[`cup/schedule/${matchId}/score2`] = isP1 ? walkoverScore : 0;
-          updates[`cup/schedule/${matchId}/status`] = 'accepted';
-          updates[`cup/schedule/${matchId}/isDoubleWO`] = false;
-          walkoverCount++;
-        }
-      });
+      walkoverCount = awardScheduledWalkovers(updates, "cup/schedule", schedule, playerId, walkoverLegs);
     } else {
       updates[`players/${playerId}/isDisqualified`] = true;
       const snap = await db.ref('schedule').once('value');
       const schedule = snap.val() || {};
-
-      Object.keys(schedule).forEach(matchId => {
-        const m = schedule[matchId];
-        if ((m.p1Id === playerId || m.p2Id === playerId) && typeof m.score1 !== 'number') {
-          const isP1 = m.p1Id === playerId;
-          updates[`schedule/${matchId}/score1`] = isP1 ? 0 : walkoverScore;
-          updates[`schedule/${matchId}/score2`] = isP1 ? walkoverScore : 0;
-          updates[`schedule/${matchId}/status`] = 'accepted';
-          updates[`schedule/${matchId}/isDoubleWO`] = false;
-          walkoverCount++;
-        }
-      });
+      walkoverCount = awardScheduledWalkovers(updates, "schedule", schedule, playerId, walkoverLegs);
     }
 
     await db.ref().update(updates);
@@ -396,6 +411,7 @@ export const replacePlayer = functions.https.onCall(async (request) => {
       updates[`players/${oldPlayerId}`] = null;
       updates[`players/${newPlayerId}/div`] = oldPlayerDiv;
 
+      // Zmiennik przejmuje id w meczu, więc zatwierdzone wyniki zostają przy nim w tabeli.
       const schedSnap = await db.ref('schedule').once('value');
       const schedule = schedSnap.val() || {};
       Object.keys(schedule).forEach(matchId => {
@@ -821,61 +837,236 @@ export const forceMatchDateAdmin = functions.https.onCall(async (request) => {
 
 // ---- archiveCurrentSeason (Atomowy Reset) -------------------------------
 
+function asRecord(value: unknown): Record<string, any> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, any>;
+  }
+  return {};
+}
+
+/** RTDB odrzuca `undefined` i NaN. JSON zostawia tylko dane serializowalne. */
+function toRtdb<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function toPlayers(raw: Record<string, any>): Player[] {
+  return Object.keys(raw).map((id) => {
+    const row = raw[id] || {};
+    return {
+      id,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      nick: row.nick,
+      div: row.div,
+      max: row.max,
+      checkout: row.checkout,
+      short: row.short,
+    };
+  });
+}
+
+function toMatches(raw: Record<string, any>): Match[] {
+  return Object.values(raw).filter((row) => row && typeof row === "object") as Match[];
+}
+
+function divisionKey(div: unknown): string {
+  return String(div || "").trim().toUpperCase();
+}
+
+/**
+ * Zamrożona tabela ligowa: te same mecze i ta sama kolejność co getDivisionTable.
+ * Punkty liczą się dopiero po zatwierdzeniu. Baraż nie wchodzi do bilansu ani H2H.
+ */
+function buildSeasonSnapshot(
+  playersRaw: Record<string, any>,
+  scheduleRaw: Record<string, any>,
+  penaltiesRaw: Record<string, any>,
+  cupRaw: Record<string, any>
+) {
+  const players = toPlayers(playersRaw);
+  const officialMatches = collectOfficialLeagueMatches(scheduleRaw);
+  const stats = StatsEngine.calculateAllStats(players, toMatches(scheduleRaw));
+  const tableStats = StatsEngine.calculateAllStats(players, officialMatches);
+  const cupStats = StatsEngine.calculateCupStats(players, toMatches(asRecord(cupRaw.schedule)));
+
+  const penaltiesByPlayer = new Map<string, number>();
+  Object.values(penaltiesRaw).forEach((pen) => {
+    if (!pen || typeof pen !== "object") return;
+    const playerId = (pen as { playerId?: string }).playerId;
+    const points = Number((pen as { points?: unknown }).points) || 0;
+    if (playerId) penaltiesByPlayer.set(playerId, (penaltiesByPlayer.get(playerId) || 0) + points);
+  });
+
+  const tables: Record<string, any[]> = {};
+  const grouped = new Map<string, string[]>();
+  Object.keys(playersRaw).forEach((playerId) => {
+    const div = divisionKey(playersRaw[playerId]?.div);
+    if (!div || div.includes("POCZEKALNIA")) return;
+    const bucket = grouped.get(div) || [];
+    bucket.push(playerId);
+    grouped.set(div, bucket);
+  });
+
+  grouped.forEach((ids, div) => {
+    const rows = ids.map((playerId) => {
+      const raw = playersRaw[playerId] || {};
+      const base = tableStats[playerId];
+      const minusPts = penaltiesByPlayer.get(playerId) || penaltiesByPlayer.get(raw.uid) || 0;
+      return {
+        id: playerId,
+        firstName: raw.firstName || "",
+        lastName: raw.lastName || "",
+        nick: raw.nick || "",
+        div: raw.div || div,
+        isDisqualified: raw.isDisqualified === true,
+        minusPts,
+        st: base
+          ? { ...base, pts: base.pts - minusPts }
+          : { pts: -minusPts, lw: 0, ll: 0, realAvg: 0 },
+      };
+    });
+
+    tables[div] = sortLeagueTable(rows, officialMatches);
+  });
+
+  return { stats, cupStats, tables };
+}
+
 export const archiveCurrentSeason = functions.https.onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid || !(await verifyAdmin(uid)))
-    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
-  
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+
+  let archiveDb: admin.database.Database;
+  try {
+    archiveDb = archiveDatabase();
+  } catch (err) {
+    console.error(
+      "[archiveCurrentSeason] Osobna baza archiwum jest niedostępna. Baza operacyjna nietknięta.",
+      err
+    );
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      err instanceof Error ? err.message : "Brak konfiguracji ARCHIVE_DB_URL."
+    );
+  }
+
   const db = getDb();
-  const snapSettings = await db.ref('settings/currentSeason').once('value');
-  const currentSeason = snapSettings.val() || 1;
-  const nextSeason = currentSeason + 1;
-  
-  const [snapPlayers, snapSchedule, snapCup] = await Promise.all([
-    db.ref('players').once('value'),
-    db.ref('schedule').once('value'),
-    db.ref('cup').once('value')
-  ]);
-  
-  const playersData = snapPlayers.val() || {};
-  const activePlayersArchive: any = {};
-  const updates: any = {};
+  let currentSeason = 1;
+  let nextSeason = 2;
+  let updates: Record<string, unknown> = {};
+  let payload: Record<string, unknown> = {};
 
-  Object.keys(playersData).forEach(playerId => {
-    const p = playersData[playerId];
-    if (p.div && !p.div.toUpperCase().includes('POCZEKALNIA')) {
-      activePlayersArchive[playerId] = p;
-    }
-    updates[`players/${playerId}/avg`] = 0;
-    updates[`players/${playerId}/max`] = 0;
-    updates[`players/${playerId}/checkout`] = 0;
-    updates[`players/${playerId}/short`] = 0;
-    updates[`players/${playerId}/div`] = 'POCZEKALNIA';
-  });
+  try {
+    const snapSettings = await db.ref("settings/currentSeason").once("value");
+    const parsedSeason = Number(snapSettings.val());
+    currentSeason = Number.isFinite(parsedSeason) && parsedSeason > 0 ? parsedSeason : 1;
+    nextSeason = currentSeason + 1;
 
-  updates['schedule'] = null;
-  updates['cup'] = null;
-  updates['settings/currentSeason'] = nextSeason;
+    const [
+      snapPlayers,
+      snapSchedule,
+      snapCup,
+      snapPenalties,
+      snapStructure,
+      snapDivisionSettings,
+    ] = await Promise.all([
+      db.ref("players").once("value"),
+      db.ref("schedule").once("value"),
+      db.ref("cup").once("value"),
+      db.ref("penalties").once("value"),
+      db.ref("settings/leagueStructure").once("value"),
+      db.ref("divisionsSettings").once("value"),
+    ]);
 
-  // Główne updates (czyszczenie, zerowanie, poczekalnia) do głównej bazy
-  await db.ref().update(updates);
+    const playersData = asRecord(snapPlayers.val());
+    const scheduleData = asRecord(snapSchedule.val());
+    const cupData = asRecord(snapCup.val());
+    const penaltiesData = asRecord(snapPenalties.val());
+    const activePlayersArchive: Record<string, unknown> = {};
+    updates = {};
 
-  // Zrzut archiwum do zewnętrznej / osobnej bazy
-  const archiveDb = getArchiveDb();
-  await archiveDb.ref(`archive/season_${currentSeason}`).set({
-    players: activePlayersArchive,
-    schedule: snapSchedule.val() || {},
-    cup: snapCup.val() || {},
-    timestamp: admin.database.ServerValue.TIMESTAMP,
-  });
+    Object.keys(playersData).forEach((playerId) => {
+      const p = playersData[playerId];
+      if (p?.div && !String(p.div).toUpperCase().includes("POCZEKALNIA")) {
+        const archived = { ...p };
+        delete archived.penalties;
+        delete archived.penaltyPoints;
+        activePlayersArchive[playerId] = archived;
+      }
+      updates[`players/${playerId}/avg`] = 0;
+      updates[`players/${playerId}/max`] = 0;
+      updates[`players/${playerId}/checkout`] = 0;
+      updates[`players/${playerId}/short`] = 0;
+      updates[`players/${playerId}/div`] = "POCZEKALNIA";
+      updates[`players/${playerId}/penalties`] = null;
+      updates[`players/${playerId}/penaltyPoints`] = null;
+    });
 
-  return { success: true, message: `Sezon ${currentSeason} zarchiwizowany! Zaczynamy sezon ${nextSeason}.` };
+    updates["schedule"] = null;
+    updates["cup"] = null;
+    updates["penalties"] = null;
+    updates["settings/currentSeason"] = nextSeason;
+
+    const snapshot = buildSeasonSnapshot(playersData, scheduleData, penaltiesData, cupData);
+    payload = {
+      season: currentSeason,
+      timestamp: admin.database.ServerValue.TIMESTAMP,
+      players: toRtdb(activePlayersArchive),
+      schedule: toRtdb(scheduleData),
+      cup: toRtdb(cupData),
+      leagueStructure: toRtdb(asRecord(snapStructure.val())),
+      divisionsSettings: toRtdb(asRecord(snapDivisionSettings.val())),
+      stats: toRtdb(snapshot.stats),
+      cupStats: toRtdb(snapshot.cupStats),
+      tables: toRtdb(snapshot.tables),
+    };
+  } catch (err) {
+    console.error(
+      "[archiveCurrentSeason] Odczyt sezonu nie powiódł się. Baza operacyjna nietknięta.",
+      err
+    );
+    throw new functions.https.HttpsError(
+      "internal",
+      "Nie udało się odczytać tabel, meczów i statystyk. Nic nie zostało zmienione."
+    );
+  }
+
+  try {
+    await archiveDb.ref(`archive/season_${currentSeason}`).set(payload);
+  } catch (err) {
+    console.error(
+      "[archiveCurrentSeason] Zapis do bazy archiwum nie powiódł się. Baza operacyjna nietknięta.",
+      err
+    );
+    throw new functions.https.HttpsError(
+      "internal",
+      "Nie udało się zapisać archiwum na osobnej instancji. Baza operacyjna pozostała bez zmian."
+    );
+  }
+
+  try {
+    await db.ref().update(updates);
+  } catch (err) {
+    console.error(
+      `[archiveCurrentSeason] Sezon ${currentSeason} jest w archiwum, ale reset bazy operacyjnej nie powiódł się.`,
+      err
+    );
+    throw new functions.https.HttpsError(
+      "internal",
+      `Sezon ${currentSeason} jest w archiwum, ale reset bazy operacyjnej nie doszedł do skutku. Ponów operację.`
+    );
+  }
+
+  return {
+    success: true,
+    message: `Sezon ${currentSeason} zarchiwizowany! Zaczynamy sezon ${nextSeason}.`,
+  };
 });
 
 // =============================================================================
-// Obustronny Walkower oraz Globalny Generator Terminarza
-// - Ostatnie mechanizmy przeniesione z archaicznego admin.js (OWASP: weryfikacja
-//   admina przed zapisem, atomowe multi-path update).
+// Obustronny Walkower
+// Weryfikacja admina przed zapisem.
 // =============================================================================
 
 // ---- setDoubleWalkoverAdmin (Obustronny Walkower 0:0) -----------------------
@@ -901,104 +1092,6 @@ export const setDoubleWalkoverAdmin = functions.https.onCall(async (request) => 
   });
 
   return { success: true, message: 'Obustronny walkower zapisany.' };
-});
-
-// ---- generateAllSchedulesAdmin (Globalny Terminarz) -------------------------
-
-export const generateAllSchedulesAdmin = functions.https.onCall(async (request) => {
-  const uid = request.auth?.uid;
-  if (!uid || !(await verifyAdmin(uid)))
-    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
-
-  const db = getDb();
-  const [structureSnap, playersSnap, scheduleSnap] = await Promise.all([
-    db.ref('settings/leagueStructure').once('value'),
-    db.ref('players').once('value'),
-    db.ref('schedule').once('value'),
-  ]);
-
-  const structure = structureSnap.val() || {};
-  const playersData = playersSnap.val() || {};
-  const oldSchedule = scheduleSnap.val() || {};
-
-  const levels = Object.keys(structure).sort((a, b) => Number(a) - Number(b));
-  if (levels.length === 0)
-    throw new functions.https.HttpsError(
-      'failed-precondition',
-      'Brak skonfigurowanej struktury ligi.'
-    );
-
-  const updates: any = {};
-
-  // 1. Usuwamy cały dotychczasowy terminarz ligowy.
-  Object.keys(oldSchedule).forEach((matchId) => {
-    updates[`schedule/${matchId}`] = null;
-  });
-
-  let totalMatches = 0;
-  let totalDivisions = 0;
-
-  // 2. Dla każdej dywizji generujemy Round-Robin wśród aktywnych graczy.
-  for (const level of levels) {
-    const divName = `DYWIZJA ${level}`.toUpperCase();
-    const divPlayers: any[] = [];
-
-    Object.keys(playersData).forEach((pId) => {
-      const p = playersData[pId];
-      if ((p.div || '').toUpperCase() === divName && !p.isDisqualified) {
-        updates[`players/${pId}/max`] = 0;
-        updates[`players/${pId}/checkout`] = 0;
-        updates[`players/${pId}/short`] = 0;
-        divPlayers.push({ id: pId, ...p });
-      }
-    });
-
-    if (divPlayers.length < 2) continue;
-
-    // Tasowanie Fisher-Yates.
-    for (let i = divPlayers.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [divPlayers[i], divPlayers[j]] = [divPlayers[j], divPlayers[i]];
-    }
-
-    // Algorytm kołowy (Round-Robin) z pauzą dla nieparzystej liczby graczy.
-    const rrPlayers = [...divPlayers];
-    if (rrPlayers.length % 2 !== 0)
-      rrPlayers.push({ id: 'PAUZA', lastName: 'PAUZA', firstName: '' });
-
-    const numPlayers = rrPlayers.length;
-    const rounds = numPlayers - 1;
-    const half = numPlayers / 2;
-
-    for (let round = 1; round <= rounds; round++) {
-      for (let i = 0; i < half; i++) {
-        const p1 = rrPlayers[i];
-        const p2 = rrPlayers[numPlayers - 1 - i];
-        if (p1.id !== 'PAUZA' && p2.id !== 'PAUZA') {
-          const matchId = `M-${level}-${round}-${Date.now()}-${i}`;
-          updates[`schedule/${matchId}`] = {
-            div: divName,
-            round,
-            p1Id: p1.id,
-            p1Name: `${p1.lastName} ${p1.firstName}`.trim(),
-            p2Id: p2.id,
-            p2Name: `${p2.lastName} ${p2.firstName}`.trim(),
-            score1: '',
-            score2: '',
-          };
-          totalMatches++;
-        }
-      }
-      rrPlayers.splice(1, 0, rrPlayers.pop());
-    }
-    totalDivisions++;
-  }
-
-  await db.ref().update(updates);
-  return {
-    success: true,
-    message: `Terminarz wygenerowany dla ${totalDivisions} dywizji (${totalMatches} meczów).`,
-  };
 });
 
 // ---- manageAdminEmails (Zarządzanie Uprawnieniami) ---------------------------

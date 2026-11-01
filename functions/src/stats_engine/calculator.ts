@@ -202,6 +202,8 @@ export class StatsEngine {
             st.lw += myScore;
             st.ll += oppScore;
 
+            // Obustronny walkover: obie strony dostają 0 punktów i porażkę.
+            // Zwykły walkover nie ma tu osobnej gałęzi — liczy się jak wynik meczu.
             if (isDoubleWO) {
               st.l++; st.form.push('L');
             } else {

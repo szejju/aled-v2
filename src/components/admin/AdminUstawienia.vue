@@ -6,14 +6,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { archiveCurrentSeason, manageAdminEmails, updateRules, updateScheduleDates } from '@/services/api'
+import { apiArchiveCurrentSeason, manageAdminEmails, updateRules, updateScheduleDates } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
-import { useSafeTimeout } from '@/composables/useSafeTimeout'
+import ArchiveSeasonModal from './shared/ArchiveSeasonModal.vue'
 import { errorText } from '@/utils/errorText'
 import { asRecord, optStr } from '@/utils/rtdb'
 import { simpleMarkdown } from '@/utils/simpleMarkdown'
-
-const { later } = useSafeTimeout()
 
 const schedSignupStart = ref('')
 const schedSignupEnd = ref('')
@@ -145,33 +143,38 @@ async function saveRules() {
   }
 }
 
-const archiveLoad = ref(false)
+const isLoading = ref(false)
+const archiveOpen = ref(false)
 const archiveMsg = ref('')
-const archiveConfirm1 = ref(false)
+const archiveFailed = ref(false)
 
-async function doArchive() {
-  if (!archiveConfirm1.value) {
-    if (confirm('UWAGA: Zakonczyc sezon? Archiwizuje dane i przeniesie graczy do Poczekalni.')) {
-      archiveConfirm1.value = true
-      later(() => { archiveConfirm1.value = false }, 10000)
-    }
-    return
-  }
-  if (!confirm('OSTATECZNE POTWIERDZENIE: Na pewno zakonczyc sezon? Tej operacji nie mozna cofnac!')) {
-    archiveConfirm1.value = false
-    return
-  }
-  archiveLoad.value = true
+function openArchive() {
+  if (isLoading.value) return
+  archiveFailed.value = false
+  archiveMsg.value = ''
+  archiveOpen.value = true
+}
+
+async function confirmArchive() {
+  if (isLoading.value) return
+  isLoading.value = true
+  archiveFailed.value = false
   archiveMsg.value = ''
   try {
-    const result = await archiveCurrentSeason({})
+    const result = await apiArchiveCurrentSeason({})
     archiveMsg.value = result.message
-    archiveConfirm1.value = false
   } catch (err: unknown) {
+    console.error(
+      '%c[archiveCurrentSeason] Archiwizacja sezonu nie powiodła się',
+      'color:#f87171;font-weight:bold',
+      err,
+    )
+    archiveFailed.value = true
     archiveMsg.value = errorText(err)
   } finally {
-    archiveLoad.value = false
+    isLoading.value = false
   }
+  if (!archiveFailed.value) archiveOpen.value = false
 }
 
 onMounted(() => {
@@ -218,12 +221,26 @@ onMounted(() => {
     <p v-if="rulesMsg" :class="['text-sm font-bold mt-3',rulesMsg.includes('Blad')?'text-red-400':'text-lime']">{{ rulesMsg }}</p>
   </AdminSectionCard>
   
-<!-- ZAKONCZ SEZON -->
-  <AdminSectionCard title="Zakoncz Sezon" dot-color="bg-red-600" class="xl:col-span-2">
-    <p class="text-xs text-muted mb-4">Archiwizuje dane biezacego sezonu i przenosi graczy do Poczekalni na nastepny sezon. Operacja NIEODWRACALNA.</p>
-    <button @click="doArchive" :disabled="archiveLoad" :class="['w-full rounded-xl px-6 py-4 font-display font-extrabold uppercase text-sm tracking-widest shadow-lg transition-all disabled:opacity-60', archiveConfirm1?'bg-red-700 text-white hover:bg-red-600 animate-pulse':'bg-red-600 text-white hover:bg-red-500']">{{ archiveLoad?'Archiwizuje...':(archiveConfirm1?'KLIKNIJ PONOWNIE ABY POTWIERDZIC':'Zakoncz Sezon') }}</button>
-    <p v-if="archiveMsg" :class="['text-sm font-bold mt-3',archiveMsg.includes('Blad')?'text-red-400':'text-lime']">{{ archiveMsg }}</p>
+<!-- ZAMKNIJ SEZON -->
+  <AdminSectionCard title="Zamknij sezon" dot-color="bg-red-600" class="xl:col-span-2">
+    <p class="text-xs text-muted mb-4">Przenosi tabele, mecze i statystyki na osobną instancję archiwum, potem resetuje bazę operacyjną. Operacja nieodwracalna.</p>
+    <button
+      type="button"
+      @click="openArchive"
+      :disabled="isLoading"
+      class="w-full rounded-xl px-6 py-4 font-display font-extrabold uppercase text-sm tracking-widest shadow-lg transition-all bg-red-600 text-white hover:bg-red-500 disabled:opacity-60 disabled:cursor-not-allowed"
+    >
+      {{ isLoading ? 'Archiwizuję...' : 'Zamknij sezon' }}
+    </button>
+    <p v-if="archiveMsg && !archiveOpen" :class="['text-sm font-bold mt-3', archiveFailed ? 'text-red-400' : 'text-lime']">{{ archiveMsg }}</p>
   </AdminSectionCard>
+
+  <ArchiveSeasonModal
+    v-model="archiveOpen"
+    :loading="isLoading"
+    :error-message="archiveFailed ? archiveMsg : ''"
+    @confirm="confirmArchive"
+  />
 
 
 

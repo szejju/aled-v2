@@ -3,9 +3,10 @@
  * Podstrona „Tabela ligowa” – dane pobierane z Cloud Function `getDivisionTable`.
  *
  * Backend (functions/src/views/tables.ts) zwraca gotową, posortowaną tabelę:
+ *  - liczone są tylko mecze zatwierdzone przez sędziego; baraże nie wchodzą
  *  - kary punktowe już odjęte od `st.pts` (osobno zwrócone w `minusPts`)
  *  - dyskwalifikacja zawsze na dnie tabeli
- *  - tie-breaki: punkty -> bilans legów -> wygrane legi -> H2H
+ *  - tie-breaki: punkty -> bilans legów -> zdobyte legi -> H2H remisujących -> średnia
  *  - config stref awansu / baraży / spadku
  */
 import { computed, ref, watch, onMounted } from 'vue'

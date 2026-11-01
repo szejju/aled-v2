@@ -354,7 +354,7 @@ onMounted(() => {
   </AdminSectionCard>
 
   <AdminSectionCard title="Generator Terminarza">
-    <p class="text-xs text-muted mb-4">Round-Robin dla kazdej dywizji i grupy. Zapis wymienia mecze ligowe. Mecze barazowe zostaja.</p>
+    <p class="text-xs text-muted mb-4">Round-robin osobno dla kazdego wpisu w polu dywizji, np. DYWIZJA 1 GRUPA A. Zapis wymienia tylko te dywizje. Mecze barazowe zostaja. Dywizja z meczem rozegranym albo zatwierdzonym blokuje cala operacje.</p>
     <label class="mb-4 flex cursor-pointer select-none items-center gap-3">
       <input v-model="withRematches" :disabled="schedLoad" type="checkbox" class="rounded border-line" />
       <span class="text-sm font-bold text-fg">Graj z rewanżami</span>
@@ -398,7 +398,7 @@ onMounted(() => {
     <div class="absolute inset-0 bg-ink/70" @click="closeScheduleConfirm" />
     <div class="relative w-full max-w-md rounded-2xl border border-line bg-ink p-6 shadow-2xl" @click.stop>
       <h3 id="schedule-confirm-title" class="font-display text-lg font-extrabold uppercase text-fg">{{ confirmStep === 1 ? 'Czy na pewno?' : 'Ostateczne potwierdzenie' }}</h3>
-        <p class="mt-3 text-sm text-muted">{{ confirmStep === 1 ? 'Stary terminarz ligowy zostanie nadpisany. Mecze barazowe zostana zachowane.' : 'Tej operacji nie mozna cofnac. Wygenerowac terminarz ligowy od nowa?' }}</p>
+        <p class="mt-3 text-sm text-muted">{{ confirmStep === 1 ? 'Nowy terminarz zastapi mecze tylko w dywizjach, ktore jeszcze nie graja. Mecze barazowe zostana zachowane.' : 'Jesli ktoras dywizja ma mecz rozegrany albo zatwierdzony, nic nie zostanie skasowane. Wygenerowac terminarz?' }}</p>
       <p class="mt-2 text-xs font-bold" :class="withRematches ? 'text-lime' : 'text-muted'">{{ withRematches ? 'Rewanze: wlaczone.' : 'Rewanze: wylaczone.' }}</p>
       <p v-if="schedMsg && !schedOk" class="mt-3 text-sm font-bold text-red-400">{{ schedMsg }}</p>
       <div class="mt-6 flex justify-end gap-3">

@@ -1,6 +1,6 @@
 // ============================================================================
 // admin/players.ts
-// Zarządzanie graczami – weryfikacja, łączenie kont, kary, rejestracja
+// Zarządzanie graczami – weryfikacja, łączenie kont, rejestracja
 // ============================================================================
 
 import { onCall } from "firebase-functions/v2/https";
@@ -73,39 +73,6 @@ export const mergeAccounts = onCall(
     return { ok: true, sourcePlayerId, targetPlayerId };
   }
 );
-
-/**
- * Nakłada karę punktową na gracza w danej dywizji/sezonie.
- * Struktura: players/{playerId}/penalties/{seasonDivisionKey} = points
- */
-export const applyPenalty = onCall(
-  { cors: true },
-  async (request) => {
-    const { playerId, season, division, penaltyPoints, reason } = request.data as {
-      playerId: string;
-      season: number;
-      division: string;
-      penaltyPoints: number;
-      reason?: string;
-    };
-
-    if (!playerId || season === undefined || !division || penaltyPoints === undefined) {
-      throw new Error(
-        "Missing required parameters: playerId, season, division, penaltyPoints"
-      );
-    }
-
-    const key = `S${season}-${division}`;
-    const dbRef = db();
-
-    await dbRef.ref(`players/${playerId}/penalties/${key}`).set(penaltyPoints);
-    await dbRef.ref(`players/${playerId}/penalties/${key}_reason`).set(
-      reason ?? ""
-    );
-
-    return { ok: true, playerId, season, division, penaltyPoints };
-  }
-); // <-- TUTAJ BYŁ BRAKUJĄCY NAWIAS ZAMYKAJĄCY
 
 /**
  * Funkcja wywoływana przez front po założeniu konta w Auth.

@@ -12,13 +12,6 @@ export {
   // players.ts
   verifyPlayer,
   mergeAccounts,
-  applyPenalty,
-  // league.ts
-  massAssignPlayers,
-  generateSchedule,
-  // cup.ts
-  initializeCup,
-  generateBracket,
   // settings.ts
   updateDivisionSettings,
   updateLeagueSettings,
@@ -37,6 +30,7 @@ export {
   kickPlayer,
   replacePlayer,
   handleExceptionRequest,
+  massAssignPlayers,
   // actions.ts – migracja z admin.js
   saveLeagueLevel,
   deleteLeagueLevel,
@@ -49,11 +43,8 @@ export {
   forceMatchDateAdmin,
   archiveCurrentSeason,
   setDoubleWalkoverAdmin,
-  generateAllSchedulesAdmin,
   // cupActions.ts
   setCupStatusAdmin,
-  generateCupGroupsAdmin,
-  generateCupKnockoutAdmin,
   // rewardsActions.ts
   runArcheologAdmin,
   distributeSeasonTrophiesAdmin,
@@ -63,6 +54,7 @@ export {
   generatePlayoffsAdmin,
   // adminFunctions.ts
   addPenalty,
+  removePenalty,
   sendPlayerNotification,
   generateSummerGroups,
   replacePlayerWithHistory,

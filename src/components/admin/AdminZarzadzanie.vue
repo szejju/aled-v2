@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { adminSaveMatchResult, approveMatchResult, forceMatchDateAdmin, handleExceptionRequest, rejectMatchResult, setDoubleWalkoverAdmin } from '@/services/api'
+import { apiAdminSaveMatch, apiApproveMatch, apiAwardWalkover, apiRejectMatch, forceMatchDateAdmin, handleExceptionRequest, setDoubleWalkoverAdmin } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useBusyIds } from '@/composables/useBusyIds'
 import { readPlayerIndex } from '@/composables/usePlayerDirectory'
@@ -21,6 +21,20 @@ const feedError = feed.error
 const { ids: appr, run: runAppr } = useBusyIds()
 const { ids: rej, run: runRej } = useBusyIds()
 const { ids: excAct, run: runEx } = useBusyIds()
+const rowErr = ref<Record<string, string>>({})
+
+type ConfirmKind = 'reject' | 'walkover' | 'double-walkover'
+
+const confirmOpen = ref(false)
+const confirmStep = ref<1 | 2>(1)
+const confirmKind = ref<ConfirmKind | null>(null)
+const confirmMatch = ref<ScheduleRow | null>(null)
+const confirmPlayerId = ref('')
+const confirmPlayerName = ref('')
+const confirmError = ref('')
+const confirmBusy = ref(false)
+const pMsg = ref('')
+const pOk = ref(true)
 
 function hideRadar(id: string) {
   const next = new Set(hiddenRadar.value)
@@ -32,11 +46,88 @@ function scoreOf(protocol: Record<string, unknown> | undefined, key: string): nu
   return optNum(protocol?.[key])
 }
 
+function pendingScore(match: ScheduleRow): string | null {
+  const left = scoreOf(match.pendingProtocol, 'score1')
+  const right = scoreOf(match.pendingProtocol, 'score2')
+  if (left === undefined || right === undefined) return null
+  return `${left}:${right}`
+}
+
+function setRowErr(id: string, message: string) {
+  rowErr.value = { ...rowErr.value, [id]: message }
+}
+
+function clearRowErr(id: string) {
+  if (!rowErr.value[id]) return
+  const next = { ...rowErr.value }
+  delete next[id]
+  rowErr.value = next
+}
+
+function dismissConfirm() {
+  if (confirmBusy.value) return
+  confirmOpen.value = false
+  confirmKind.value = null
+  confirmMatch.value = null
+  confirmPlayerId.value = ''
+  confirmPlayerName.value = ''
+  confirmError.value = ''
+  confirmStep.value = 1
+}
+
+function openConfirm(kind: ConfirmKind, match: ScheduleRow, playerId = '', playerName = '') {
+  if (confirmBusy.value || confirmOpen.value) return
+  confirmKind.value = kind
+  confirmMatch.value = match
+  confirmPlayerId.value = playerId
+  confirmPlayerName.value = playerName
+  confirmError.value = ''
+  confirmStep.value = 1
+  confirmOpen.value = true
+}
+
+const confirmTitle = computed(() => {
+  if (confirmStep.value === 2) return 'Ostateczne potwierdzenie'
+  if (confirmKind.value === 'reject') return 'Odrzucic wynik?'
+  if (confirmKind.value === 'walkover') return 'Przyznac walkover?'
+  return 'Obustronny walkover 0:0?'
+})
+
+const confirmBody = computed(() => {
+  const match = confirmMatch.value
+  const names = match ? `${match.p1Name ?? 'Gracz 1'} vs ${match.p2Name ?? 'Gracz 2'}` : 'ten mecz'
+  const score = match ? pendingScore(match) : null
+  if (confirmKind.value === 'reject') {
+    const scored = score ? ` (${score})` : ''
+    return confirmStep.value === 1
+      ? `Odrzucic zgloszony wynik ${names}${scored}? Protokol wroci do graczy do poprawy.`
+      : 'Tej operacji nie cofniesz z tego okna. Wynik zostanie odeslany do poprawy.'
+  }
+  if (confirmKind.value === 'walkover') {
+    return confirmStep.value === 1
+      ? `Przyznac walkover graczowi ${confirmPlayerName.value || 'wybranemu'} w meczu ${names}? Backend oznaczy mecz ligowy jako walkover i nie wpisze wyniku setow.`
+      : 'Ostateczne potwierdzenie. Mecz zostanie oznaczony jako walkover tego gracza.'
+  }
+  return confirmStep.value === 1
+    ? `Zapisac obustronny walkover 0:0 w meczu ${names}? Dotychczasowy wynik zostanie nadpisany.`
+    : 'Tej operacji nie cofniesz z tego okna. Mecz dostanie wynik 0:0 i status rozegrany.'
+})
+
+const confirmLabel = computed(() => {
+  if (confirmBusy.value) return confirmKind.value === 'reject' ? 'Odrzucanie...' : 'Zapisuje...'
+  if (confirmStep.value === 1) return 'Tak, kontynuuj'
+  if (confirmKind.value === 'reject') return 'Odrzuc wynik'
+  if (confirmKind.value === 'walkover') return 'Przyznaj walkover'
+  return 'Zapisz 0:0'
+})
+
 async function doAppr(match: ScheduleRow) {
+  if (confirmOpen.value) return
+  clearRowErr(match.id)
   await runAppr(match.id, async () => {
     try {
       const protocol = match.pendingProtocol
-      const result = await approveMatchResult({
+      const result = await apiApproveMatch({
         matchId: match.id,
         sourcePath: match.sourcePath,
         finalScore1: scoreOf(protocol, 'score1') ?? 0,
@@ -46,28 +137,75 @@ async function doAppr(match: ScheduleRow) {
         p1Stats: asRecord(protocol?.p1Stats) ?? {},
         p2Stats: asRecord(protocol?.p2Stats) ?? {},
       })
-      if (result.success) hideRadar(match.id)
-      else alert(result.message || 'Blad')
+      if (!result.success) {
+        setRowErr(match.id, result.message || 'Blad zatwierdzenia.')
+        return
+      }
+      hideRadar(match.id)
     } catch (err: unknown) {
-      alert(errorText(err))
+      setRowErr(match.id, errorText(err, 'Blad zatwierdzenia.'))
     }
   })
 }
 
-async function doRej(match: ScheduleRow) {
-  await runRej(match.id, async () => {
-    try {
-      const result = await rejectMatchResult({
-        matchId: match.id,
-        sourcePath: match.sourcePath,
-        pendingData: match.pendingProtocol ?? {},
+async function executeConfirm() {
+  const match = confirmMatch.value
+  const kind = confirmKind.value
+  if (!match || !kind || confirmBusy.value) return
+  confirmBusy.value = true
+  confirmError.value = ''
+  try {
+    if (kind === 'reject') {
+      await runRej(match.id, async () => {
+        const result = await apiRejectMatch({
+          matchId: match.id,
+          sourcePath: match.sourcePath,
+          pendingData: match.pendingProtocol ?? {},
+        })
+        if (!result.success) throw new Error(result.message || 'Blad odrzucenia.')
+        clearRowErr(match.id)
+        hideRadar(match.id)
       })
-      if (result.success) hideRadar(match.id)
-      else alert(result.message || 'Blad')
-    } catch (err: unknown) {
-      alert(errorText(err))
+    } else if (kind === 'walkover') {
+      if (match.sourcePath !== 'schedule') {
+        throw new Error('Walkover jednego gracza dotyczy tylko meczu ligowego.')
+      }
+      if (!confirmPlayerId.value) throw new Error('Brak identyfikatora gracza.')
+      const result = await apiAwardWalkover({
+        matchKey: match.id,
+        walkoverPlayerId: confirmPlayerId.value,
+      })
+      if (!result.ok) throw new Error('Nie udalo sie przyznac walkowera.')
+      pOk.value = true
+      pMsg.value = `Walkover przyznany graczowi ${confirmPlayerName.value}.`
+    } else {
+      const result = await setDoubleWalkoverAdmin({ matchId: match.id })
+      if (!result.success) throw new Error(result.message || 'Blad zapisu walkowera.')
+      pOk.value = true
+      pMsg.value = result.message
     }
-  })
+    confirmBusy.value = false
+    dismissConfirm()
+  } catch (err: unknown) {
+    const message = errorText(err, 'Blad operacji.')
+    confirmError.value = message
+    if (kind === 'reject') setRowErr(match.id, message)
+    else {
+      pOk.value = false
+      pMsg.value = message
+    }
+  } finally {
+    confirmBusy.value = false
+  }
+}
+
+function advanceConfirm() {
+  if (confirmBusy.value) return
+  if (confirmStep.value === 1) {
+    confirmStep.value = 2
+    return
+  }
+  void executeConfirm()
 }
 
 const pDiv = ref('')
@@ -88,7 +226,6 @@ const p2H = ref('')
 const p2S = ref('')
 const p2D = ref('')
 const pSav = ref(false)
-const pMsg = ref('')
 const isCup = ref(false)
 
 const pDivs = computed(() => {
@@ -162,7 +299,7 @@ async function fSave() {
   pMsg.value = ''
   const cupMatch = isCup.value || !!match.isKnockout
   try {
-    const result = await adminSaveMatchResult({
+    const result = await apiAdminSaveMatch({
       matchId: match.id,
       isCupMatch: cupMatch,
       s1: pS1.value,
@@ -184,27 +321,24 @@ async function fSave() {
         da: p2D.value || undefined,
       },
     })
-    pMsg.value = result.message
+    pOk.value = result.success
+    pMsg.value = result.message || (result.success ? 'Protokol zapisany.' : 'Blad zapisu.')
   } catch (err: unknown) {
+    pOk.value = false
     pMsg.value = errorText(err, 'Blad zapisu.')
   } finally {
     pSav.value = false
   }
 }
 
-async function fDblWO() {
-  const match = pCur.value
-  if (!match) {
-    alert('Wybierz mecz.')
-    return
-  }
-  if (!confirm('Obustronny walkover 0:0?')) return
-  try {
-    const result = await setDoubleWalkoverAdmin({ matchId: match.id })
-    pMsg.value = result.message
-  } catch (err: unknown) {
-    pMsg.value = errorText(err)
-  }
+function askWalkover(match: ScheduleRow, playerId: string | undefined, playerName: string | undefined) {
+  if (!playerId || match.sourcePath !== 'schedule' || confirmOpen.value || confirmBusy.value) return
+  openConfirm('walkover', match, playerId, playerName || playerId)
+}
+
+function askDoubleWalkover(match: ScheduleRow) {
+  if (confirmOpen.value || confirmBusy.value || pSav.value) return
+  openConfirm('double-walkover', match)
 }
 
 async function doExAppr(match: ScheduleRow) {
@@ -412,13 +546,14 @@ onMounted(() => {
     <div v-else class="space-y-3 max-h-[500px] overflow-y-auto pr-1">
       <div v-for="m in radar" :key="m.id" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
         <div class="min-w-0">
-          <p class="text-sm font-bold text-fg">{{ m.p1Name }} vs {{ m.p2Name }}</p>
+          <p class="text-sm font-bold text-fg">{{ m.p1Name }} vs {{ m.p2Name }}<span v-if="pendingScore(m)" class="ml-2 text-amber-400">{{ pendingScore(m) }}</span></p>
           <p class="text-[10px] text-muted font-bold uppercase tracking-widest">{{ m.sourcePath==='cup/schedule'?'Puchar':'Liga' }}<template v-if="m.div"> &middot; {{ m.div }}</template><template v-if="m.round!==undefined"> &middot; Runda {{ m.round }}</template></p>
         </div>
         <div class="flex items-center gap-2 shrink-0">
-          <button @click="doAppr(m)" :disabled="appr.has(m.id)||rej.has(m.id)" class="rounded-xl bg-lime px-4 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest text-on-lime hover:bg-lime/90 disabled:opacity-50 transition-colors">Zatwierdz</button>
-          <button @click="doRej(m)" :disabled="appr.has(m.id)||rej.has(m.id)" class="rounded-xl bg-red-500/10 text-red-400 border border-red-500/30 px-4 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-red-500/20 disabled:opacity-50 transition-colors">Odrzuc</button>
+          <button type="button" @click="doAppr(m)" :disabled="appr.has(m.id)||rej.has(m.id)||confirmOpen" :aria-busy="appr.has(m.id)" class="rounded-xl bg-lime px-4 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest text-on-lime hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ appr.has(m.id) ? 'Zatwierdzanie...' : 'Zatwierdz' }}</button>
+          <button type="button" @click="openConfirm('reject', m)" :disabled="appr.has(m.id)||rej.has(m.id)||confirmOpen" :aria-busy="rej.has(m.id)" class="rounded-xl bg-red-500/10 text-red-400 border border-red-500/30 px-4 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-red-500/20 disabled:opacity-50 transition-colors">{{ rej.has(m.id) ? 'Odrzucanie...' : 'Odrzuc' }}</button>
         </div>
+        <p v-if="rowErr[m.id]" class="basis-full text-xs font-bold text-red-400">{{ rowErr[m.id] }}</p>
       </div>
     </div>
   </AdminSectionCard>
@@ -452,10 +587,12 @@ onMounted(() => {
         </div>
       </div>
       <div class="flex flex-wrap gap-3">
-        <button @click="fSave" :disabled="pSav" class="flex-1 min-w-[140px] rounded-xl bg-blue-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-blue-500 disabled:opacity-50 transition-colors shadow-sm">{{ pSav?'Zapisuje...':'Zapisz Protokol' }}</button>
-        <button @click="fDblWO" :disabled="!pCur" class="rounded-xl bg-red-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-red-500 disabled:opacity-50 transition-colors shadow-sm">Obustronny Walkower 0:0</button>
+        <button type="button" @click="fSave" :disabled="pSav || confirmBusy || confirmOpen" :aria-busy="pSav" class="flex-1 min-w-[140px] rounded-xl bg-blue-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-blue-500 disabled:opacity-50 transition-colors shadow-sm">{{ pSav?'Zapisuje...':'Zapisz Protokol' }}</button>
+        <button v-if="pCur.sourcePath==='schedule' && pCur.p1Id" type="button" @click="askWalkover(pCur, pCur.p1Id, pCur.p1Name)" :disabled="confirmOpen || confirmBusy || pSav" :aria-busy="confirmBusy && confirmKind==='walkover' && confirmPlayerId===pCur.p1Id" class="rounded-xl bg-amber-600 text-white px-4 py-3 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-amber-500 disabled:opacity-50 transition-colors shadow-sm">{{ confirmBusy && confirmKind==='walkover' && confirmPlayerId===pCur.p1Id ? 'Zapisuje...' : 'Walkover: ' + pCur.p1Name }}</button>
+        <button v-if="pCur.sourcePath==='schedule' && pCur.p2Id" type="button" @click="askWalkover(pCur, pCur.p2Id, pCur.p2Name)" :disabled="confirmOpen || confirmBusy || pSav" :aria-busy="confirmBusy && confirmKind==='walkover' && confirmPlayerId===pCur.p2Id" class="rounded-xl bg-amber-600 text-white px-4 py-3 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-amber-500 disabled:opacity-50 transition-colors shadow-sm">{{ confirmBusy && confirmKind==='walkover' && confirmPlayerId===pCur.p2Id ? 'Zapisuje...' : 'Walkover: ' + pCur.p2Name }}</button>
+        <button type="button" @click="askDoubleWalkover(pCur)" :disabled="!pCur || confirmOpen || confirmBusy || pSav" :aria-busy="confirmBusy && confirmKind==='double-walkover'" class="rounded-xl bg-red-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-red-500 disabled:opacity-50 transition-colors shadow-sm">{{ confirmBusy && confirmKind==='double-walkover' ? 'Zapisuje...' : 'Obustronny Walkover 0:0' }}</button>
       </div>
-      <p v-if="pMsg" :class="['text-sm font-bold',pMsg.includes('Blad')?'text-red-400':'text-lime']">{{ pMsg }}</p>
+      <p v-if="pMsg" :class="['text-sm font-bold', pOk ? 'text-lime' : 'text-red-400']">{{ pMsg }}</p>
     </div>
     <p v-else class="text-xs text-muted italic py-4">Wybierz mecz aby wypelnic protokol.</p>
   </AdminSectionCard>
@@ -539,4 +676,19 @@ onMounted(() => {
   </div>
 
 </div>
+
+  <Teleport to="body">
+    <div v-if="confirmOpen" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-labelledby="protocol-confirm-title" @click.self="dismissConfirm">
+      <div class="bg-surface border border-line rounded-3xl p-8 w-full max-w-md shadow-2xl space-y-5">
+        <h3 id="protocol-confirm-title" class="font-display font-extrabold text-xl uppercase text-fg">{{ confirmTitle }}</h3>
+        <p class="text-sm text-muted">{{ confirmBody }}</p>
+        <p v-if="confirmMatch" class="text-sm text-fg font-bold">{{ confirmMatch.p1Name }} vs {{ confirmMatch.p2Name }}</p>
+        <p v-if="confirmError" class="text-sm font-bold text-red-400">{{ confirmError }}</p>
+        <div class="flex gap-3">
+          <button type="button" @click="dismissConfirm" :disabled="confirmBusy" class="flex-1 rounded-xl bg-fg/5 border border-line px-4 py-3 font-extrabold uppercase text-[10px] text-fg/70 hover:bg-fg/10 disabled:opacity-50">Anuluj</button>
+          <button type="button" @click="advanceConfirm" :disabled="confirmBusy" :aria-busy="confirmBusy" class="flex-1 rounded-xl bg-red-600 text-white px-4 py-3 font-extrabold uppercase text-[10px] hover:bg-red-500 disabled:opacity-50">{{ confirmLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

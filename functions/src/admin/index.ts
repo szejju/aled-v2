@@ -1,10 +1,8 @@
 export { confirmMatchResult, awardWalkover } from "./panel.js";
-export { verifyPlayer, mergeAccounts, applyPenalty } from "./players.js";
-export { generateSchedule } from "./league.js";
-export { initializeCup, generateBracket } from "./cup.js";
+export { verifyPlayer, mergeAccounts } from "./players.js";
 export { updateDivisionSettings, updateLeagueSettings, updateRules, manageReferees } from "./settings.js";
 export { createNews, toggleNewsVisibility, createPoll } from "./social.js";
-export { approveMatchResult, rejectMatchResult, verifyPlayerFeature, deletePlayerDefinitively, assignPlayerToDivision, kickPlayer, replacePlayer, handleExceptionRequest, saveLeagueLevel, deleteLeagueLevel, massAssignPlayers, adminSaveMatchResult, addSinglePlayer, deletePlayerAdmin, saveNewsAdmin, deleteNewsAdmin, updateGlobalSettings, forceMatchDateAdmin, archiveCurrentSeason, setDoubleWalkoverAdmin, generateAllSchedulesAdmin, manageAdminEmails, linkAdminProfile, generatePlayoffsAdmin } from "./actions.js";
-export { setCupStatusAdmin, generateCupGroupsAdmin, generateCupKnockoutAdmin } from "./cupActions.js";
+export { approveMatchResult, rejectMatchResult, verifyPlayerFeature, deletePlayerDefinitively, assignPlayerToDivision, kickPlayer, replacePlayer, handleExceptionRequest, saveLeagueLevel, deleteLeagueLevel, massAssignPlayers, adminSaveMatchResult, addSinglePlayer, deletePlayerAdmin, saveNewsAdmin, deleteNewsAdmin, updateGlobalSettings, forceMatchDateAdmin, archiveCurrentSeason, setDoubleWalkoverAdmin, manageAdminEmails, linkAdminProfile, generatePlayoffsAdmin } from "./actions.js";
+export { setCupStatusAdmin } from "./cupActions.js";
 export { runArcheologAdmin, distributeSeasonTrophiesAdmin } from "./rewardsActions.js";
-export { addPenalty, sendPlayerNotification, generateSummerGroups, replacePlayerWithHistory, updateSummerLeagueStatus, updateSocialStats, updateScheduleDates, generateLeagueSchedule, generateCupGroupStage, generateCupKnockoutStage } from "./adminFunctions.js";
+export { addPenalty, removePenalty, sendPlayerNotification, generateSummerGroups, replacePlayerWithHistory, updateSummerLeagueStatus, updateSocialStats, updateScheduleDates, generateLeagueSchedule, generateCupGroupStage, generateCupKnockoutStage } from "./adminFunctions.js";

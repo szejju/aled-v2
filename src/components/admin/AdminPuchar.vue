@@ -50,6 +50,11 @@ const groupDrawSize = computed(() => {
   if (!wholeNumber(numberOfGroups.value, 1, 26) || !wholeNumber(playersPerGroup.value, 2, 64)) return null
   return numberOfGroups.value * playersPerGroup.value
 })
+const groupExitSize = computed(() => {
+  if (groupDrawSize.value == null) return null
+  if (!wholeNumber(advancingPerGroup.value, 1, 512) || !wholeNumber(luckyLosers.value, 0, 512)) return null
+  return numberOfGroups.value * advancingPerGroup.value + luckyLosers.value
+})
 const isLoading = ref(false)
 const groupStageMsg = ref('')
 const groupStageOk = ref(false)
@@ -164,19 +169,32 @@ async function doDrawCupGroups() {
     console.warn('generateCupGroupStage', groupStageMsg.value)
     return
   }
-  const luckyCap = numberOfGroups.value * (playersPerGroup.value - advancingPerGroup.value)
+  const luckyCap = playersPerGroup.value > advancingPerGroup.value ? numberOfGroups.value : 0
   if (!wholeNumber(luckyLosers.value, 0, Math.max(luckyCap, 0))) {
     groupStageOk.value = false
     groupStageMsg.value = luckyCap > 0
-      ? `Lucky losers: maksymalnie ${luckyCap} (tyle miejsc zostaje poza awansem).`
-      : 'Lucky losers wymagają miejsca poza strefą awansu.'
+      ? `Lucky losers: maksymalnie ${luckyCap} (jedno miejsce pod awansem z każdej grupy).`
+      : 'Lucky losers wymagają miejsca pod strefą awansu.'
     console.warn('generateCupGroupStage', groupStageMsg.value)
     return
   }
   const needed = numberOfGroups.value * playersPerGroup.value
-  if (cupRosterReady.value && cupPlayers.value.length < needed) {
+  if (needed % 2 !== 0) {
     groupStageOk.value = false
-    groupStageMsg.value = `Za mało zapisanych (${cupPlayers.value.length}). Potrzeba ${needed} (${numberOfGroups.value} grup po ${playersPerGroup.value}).`
+    groupStageMsg.value = `Liczba miejsc (${needed}) musi być parzysta.`
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  const exitSize = numberOfGroups.value * advancingPerGroup.value + luckyLosers.value
+  if (exitSize < 2 || (exitSize & (exitSize - 1)) !== 0) {
+    groupStageOk.value = false
+    groupStageMsg.value = `Wyjście z grup ma ${exitSize} miejsc. Drabinka wymaga potęgi dwójki, np. 4, 8, 16 lub 32.`
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  if (cupRosterReady.value && cupPlayers.value.length !== needed) {
+    groupStageOk.value = false
+    groupStageMsg.value = `Zapisanych jest ${cupPlayers.value.length}, a losowanie wymaga dokładnie ${needed}. Nadwyżka nie jest ucinana — popraw skład albo liczby.`
     console.warn('generateCupGroupStage', groupStageMsg.value)
     return
   }
@@ -282,7 +300,8 @@ onMounted(() => {
         </label>
       </div>
       <p v-if="groupDrawSize != null" class="mt-4 text-xs text-muted">
-        Losowanie weźmie {{ groupDrawSize }} graczy, po {{ playersPerGroup }} w każdej z {{ numberOfGroups }} grup<span v-if="cupRosterReady"> (zapisanych: {{ cupPlayers.length }})</span>.
+        Losowanie wymaga dokładnie {{ groupDrawSize }} zapisanych, po {{ playersPerGroup }} w każdej z {{ numberOfGroups }} grup<span v-if="cupRosterReady"> (zapisanych: {{ cupPlayers.length }})</span>.
+        <template v-if="groupExitSize != null"> Wyjście do drabinki: {{ groupExitSize }} — musi być potęgą dwójki.</template>
       </p>
       <p class="mt-4 text-xs text-amber-400/90">Losowanie kasuje obecne grupy, terminarz pucharowy i drabinkę.</p>
       <button

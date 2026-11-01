@@ -11,38 +11,52 @@ export interface RosterPerson {
   div?: string
 }
 
-export function usePlayerKick(isCup: boolean) {
+export function usePlayerKick(isCup: boolean, feedback: 'alert' | 'inline' = 'alert') {
   const show = ref(false)
   const target = ref<RosterPerson | null>(null)
   const walkoverScore = ref(5)
   const loading = ref(false)
+  const message = ref('')
 
   function open(player: RosterPerson) {
     target.value = player
     walkoverScore.value = 5
+    message.value = ''
     show.value = true
   }
 
-  async function confirm() {
+  async function confirm(): Promise<boolean> {
     const player = target.value
-    if (!player || loading.value) return
+    if (!player || loading.value) return false
     loading.value = true
+    message.value = ''
     try {
       const result = await kickPlayer({
         playerId: player.id,
         walkoverScore: walkoverScore.value,
         isCup,
       })
-      alert(result.message)
+      if (!result.success) {
+        message.value = result.message || 'Blad wyrzucenia gracza.'
+        console.error(message.value)
+        if (feedback === 'alert') alert(message.value)
+        return false
+      }
+      message.value = result.message
+      if (feedback === 'alert') alert(result.message)
       show.value = false
+      return true
     } catch (err: unknown) {
-      alert(errorText(err))
+      message.value = errorText(err)
+      console.error(err)
+      if (feedback === 'alert') alert(message.value)
+      return false
     } finally {
       loading.value = false
     }
   }
 
-  return { show, target, walkoverScore, loading, open, confirm }
+  return { show, target, walkoverScore, loading, message, open, confirm }
 }
 
 export function usePlayerReplace<T extends RosterPerson>(
@@ -56,6 +70,7 @@ export function usePlayerReplace<T extends RosterPerson>(
   const search = ref('')
   const loading = ref(false)
   const message = ref('')
+  const ok = ref(true)
   const { later } = useSafeTimeout()
 
   const candidates = computed(() =>
@@ -69,6 +84,7 @@ export function usePlayerReplace<T extends RosterPerson>(
     newId.value = ''
     search.value = ''
     message.value = ''
+    ok.value = true
     loading.value = false
     show.value = true
   }
@@ -77,6 +93,7 @@ export function usePlayerReplace<T extends RosterPerson>(
     const player = target.value
     if (!player || !newId.value) {
       message.value = 'Wybierz nowego gracza.'
+      ok.value = false
       return
     }
     if (loading.value) return
@@ -90,13 +107,20 @@ export function usePlayerReplace<T extends RosterPerson>(
         ...(passDivision ? { oldPlayerDiv: player.div } : {}),
       })
       message.value = result.message
-      if (result.success) later(() => { show.value = false }, 1500)
+      ok.value = result.success
+      if (!result.success) {
+        console.error(result.message)
+        return
+      }
+      later(() => { show.value = false }, 1500)
     } catch (err: unknown) {
       message.value = errorText(err)
+      ok.value = false
+      console.error(err)
     } finally {
       loading.value = false
     }
   }
 
-  return { show, target, newId, search, loading, message, candidates, open, confirm }
+  return { show, target, newId, search, loading, message, ok, candidates, open, confirm }
 }

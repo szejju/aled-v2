@@ -43,25 +43,43 @@ export function db(): admin.database.Database {
   return defaultDb;
 }
 
+const OPERATIONAL_DB_URL =
+  "https://ale-dart-dev-default-rtdb.europe-west1.firebasedatabase.app";
+
+function normalizeDbUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+
 /**
- * Zwraca instancję bazy danych archiwum (osobna instancja / baza).
- * Wykorzystywana przez moduł archive.ts do odciążenia głównej bazy.
+ * Osobna instancja Realtime Database na archiwum sezonów.
  *
- * Osobne połączenie zapobiega blokowaniu głównej instancji
- * przy dużych zapytaniach do danych historycznych.
+ * Adres NIE jest zaszyty w repozytorium. Cloud Functions muszą dostać
+ * `process.env.ARCHIVE_DB_URL` (osobny URL, inny niż baza operacyjna).
+ * Brak zmiennej albo URL bazy głównej kończy się błędem — nigdy cichym
+ * zapisem do instancji operacyjnej.
+ *
+ * `admin.app().database(url)` otwiera drugą bazę na domyślnej aplikacji,
+ * bez dokładania drugiej aplikacji wskazującej na bazę ligi.
  */
 export function archiveDatabase(): admin.database.Database {
-  if (!archiveDb) {
-    const archiveApp = admin.initializeApp(
-      {
-        // Archiwum używa tej samej bazy fizycznie, ale osobnej instancji aplikacji,
-        // co izoluje połączenia. W przyszłości można podmienić URL na osobną bazę.
-        databaseURL: "https://ale-dart-dev-default-rtdb.europe-west1.firebasedatabase.app",
-      },
-      "archive-app"
+  if (archiveDb) return archiveDb;
+
+  const archiveDbUrl = process.env.ARCHIVE_DB_URL?.trim().replace(/\/+$/, "");
+  if (!archiveDbUrl) {
+    throw new Error(
+      "Brak ARCHIVE_DB_URL. Archiwum wymaga osobnej instancji Realtime Database (process.env.ARCHIVE_DB_URL)."
     );
-    archiveDb = getDatabase(archiveApp);
   }
+
+  const normalized = normalizeDbUrl(archiveDbUrl);
+  if (normalized === normalizeDbUrl(OPERATIONAL_DB_URL)) {
+    throw new Error(
+      "ARCHIVE_DB_URL wskazuje na operacyjną bazę główną. Ustaw adres osobnej instancji."
+    );
+  }
+
+  const app = initMainApp();
+  archiveDb = app.database(archiveDbUrl);
   return archiveDb;
 }
 

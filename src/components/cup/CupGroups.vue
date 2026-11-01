@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
 import type { CupMatch, CupPlayer } from '@/types/cup'
+import { countsForCupGroup, rankCupGroup } from '../../../functions/src/league/cupTable.ts'
 
 interface Props {
   groups: Record<string, string[]>
   schedule: CupMatch[]
   allPlayers: CupPlayer[]
   isHistorical?: boolean
+  advancingPerGroup?: number
 }
 
-const props = withDefaults(defineProps<Props>(), { isHistorical: false })
+const props = withDefaults(defineProps<Props>(), { isHistorical: false, advancingPerGroup: 0 })
 
 const emit = defineEmits<{
   showMatchDetails: [match: CupMatch]
@@ -27,8 +29,17 @@ const changeCupGroup = (gName: string) => { uiState.activeGroup = gName }
 const changeCupRound = (rNum: string) => { uiState.roundFilters[uiState.activeGroup] = rNum }
 const currentRound = computed(() => uiState.roundFilters[uiState.activeGroup] || 'ALL')
 
+const activeMemberIds = computed(() => props.groups[uiState.activeGroup] || [])
+const activeMembers = computed(() => new Set(activeMemberIds.value))
+
 const activeGroupMatches = computed(() =>
-  props.schedule.filter(m => m.group === uiState.activeGroup),
+  props.schedule.filter((match) => countsForCupGroup(uiState.activeGroup, activeMembers.value, {
+    id: match.id,
+    group: match.group ?? '',
+    isKnockout: match.isKnockout === true,
+    p1Id: match.p1Id,
+    p2Id: match.p2Id,
+  })),
 )
 
 const availableRounds = computed(() => {
@@ -52,56 +63,55 @@ interface GroupTableRow {
   legsFor: number; legsAgainst: number; legDiff: number
 }
 
+const advancingCut = computed(() =>
+  Number.isInteger(props.advancingPerGroup) && props.advancingPerGroup > 0 ? props.advancingPerGroup : 0,
+)
+
 const groupTable = computed<GroupTableRow[]>(() => {
-  const playerIdsInGroup = props.groups[uiState.activeGroup] || []
-  const stats = new Map<string, GroupTableRow>()
-
-  playerIdsInGroup.forEach(pid => {
-    const p = findPlayer(pid)
-    stats.set(pid, {
-      playerId: pid,
-      playerName: p ? `${p.lastName} ${p.firstName}` : pid,
-      mp: 0, w: 0, l: 0, pts: 0,
-      setsFor: 0, setsAgainst: 0, setDiff: 0,
-      legsFor: 0, legsAgainst: 0, legDiff: 0,
-    })
+  const names = new Map<string, string>()
+  for (const pid of activeMemberIds.value) {
+    const player = findPlayer(pid)
+    names.set(pid, player ? `${player.lastName} ${player.firstName}`.trim() || pid : pid)
+  }
+  const played = activeGroupMatches.value.flatMap((match) => {
+    if (typeof match.score1 !== 'number' || typeof match.score2 !== 'number') return []
+    return [{
+      p1Id: match.p1Id,
+      p2Id: match.p2Id,
+      sets1: match.score1,
+      sets2: match.score2,
+      legs1: typeof match.legs1 === 'number' ? match.legs1 : 0,
+      legs2: typeof match.legs2 === 'number' ? match.legs2 : 0,
+      doubleWalkover: match.isDoubleWO === true,
+      timestamp: match.timestamp ?? 0,
+      p1Stats: match.p1Stats,
+      p2Stats: match.p2Stats,
+    }]
   })
-
-  activeGroupMatches.value.forEach(m => {
-    const s1 = m.score1; const s2 = m.score2
-    if (typeof s1 !== 'number' || typeof s2 !== 'number') return
-    const p1 = stats.get(m.p1Id); const p2 = stats.get(m.p2Id)
-    if (!p1 && !p2) return
-    const p1Won = s1 > s2
-    if (p1) {
-      p1.mp++; p1.setsFor += s1; p1.setsAgainst += s2
-      p1.legsFor += m.legs1 ?? 0; p1.legsAgainst += m.legs2 ?? 0
-      if (p1Won) { p1.w++; p1.pts += 2 } else if (s1 < s2) { p1.l++ }
-    }
-    if (p2) {
-      p2.mp++; p2.setsFor += s2; p2.setsAgainst += s1
-      p2.legsFor += m.legs2 ?? 0; p2.legsAgainst += m.legs1 ?? 0
-      if (!p1Won && s2 > s1) { p2.w++; p2.pts += 2 } else if (s2 < s1) { p2.l++ }
-    }
-  })
-
-  const rows = Array.from(stats.values())
-  rows.forEach(r => { r.setDiff = r.setsFor - r.setsAgainst; r.legDiff = r.legsFor - r.legsAgainst })
-  rows.sort((a, b) => {
-    if (b.pts !== a.pts) return b.pts - a.pts
-    if (b.setDiff !== a.setDiff) return b.setDiff - a.setDiff
-    if (b.setsFor !== a.setsFor) return b.setsFor - a.setsFor
-    if (b.legDiff !== a.legDiff) return b.legDiff - a.legDiff
-    return b.legsFor - a.legsFor
-  })
-  return rows
+  return rankCupGroup(uiState.activeGroup, activeMemberIds.value, played, names).map((row) => ({
+    playerId: row.id,
+    playerName: row.name,
+    mp: row.played,
+    w: row.wins,
+    l: row.losses,
+    pts: row.points,
+    setsFor: row.setsFor,
+    setsAgainst: row.setsAgainst,
+    setDiff: row.setDiff,
+    legsFor: row.legsFor,
+    legsAgainst: row.legsAgainst,
+    legDiff: row.legDiff,
+  }))
 })
 
 const isGroupFinished = computed(() =>
-  activeGroupMatches.value.every(m =>
+  activeGroupMatches.value.length > 0 && activeGroupMatches.value.every(m =>
     typeof m.score1 === 'number' && typeof m.score2 === 'number',
   ),
 )
+
+const inAdvanceZone = (index: number): boolean =>
+  isGroupFinished.value && advancingCut.value > 0 && index < advancingCut.value
 
 const matchStatusLabel = (match: CupMatch): string => {
   if (match.isDoubleWO) return 'Walkower 0:0'
@@ -149,6 +159,7 @@ const isMatchClickable = (match: CupMatch): boolean =>
         <h3 class="label flex items-center gap-2 mb-4">
           <span class="size-2 rounded-full bg-line" aria-hidden="true"></span>
           Tabela {{ uiState.activeGroup }}
+          <span v-if="advancingCut > 0" class="text-lime text-[10px] ml-1">awans {{ advancingCut }}</span>
           <span v-if="isGroupFinished" class="text-lime text-[10px] ml-1">zakonczona</span>
         </h3>
         <div class="bg-surface border border-line rounded-2xl overflow-hidden">
@@ -168,12 +179,11 @@ const isMatchClickable = (match: CupMatch): boolean =>
             <tbody>
               <tr v-for="(row, idx) in groupTable" :key="row.playerId"
                 class="border-b border-line/30 transition-colors hover:bg-surface-2/50 cursor-pointer"
-                :class="{ 'bg-lime/5': idx < 3 && isGroupFinished }"
+                :class="{ 'bg-lime/5': inAdvanceZone(idx) }"
                 @click="emit('showPlayerCard', row.playerId)">
                 <td class="py-2.5 pl-4 pr-1 font-bold">
-                  <span v-if="idx < 3 && isGroupFinished"
-                    class="inline-flex items-center justify-center size-5 rounded-full text-[10px] font-black"
-                    :class="[idx===0?'bg-yellow-500/20 text-yellow-400':'',idx===1?'bg-gray-400/20 text-gray-300':'',idx===2?'bg-amber-700/20 text-amber-600':'']"
+                  <span v-if="inAdvanceZone(idx)"
+                    class="inline-flex items-center justify-center size-5 rounded-full bg-lime/15 text-[10px] font-black text-lime"
                   >{{ idx + 1 }}</span>
                   <span v-else class="text-muted">{{ idx + 1 }}</span>
                 </td>

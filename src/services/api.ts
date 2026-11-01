@@ -293,10 +293,16 @@ export interface CupDataResponse {
     proposedDate?: string; proposedTime?: string; proposedTimestamp?: number
     proposerId?: string; proposedBy?: string
     timestamp?: number
+    p1Stats?: { avg?: number | string; max?: number | string; hf?: number | string; sl?: number | string; da?: number | string }
+    p2Stats?: { avg?: number | string; max?: number | string; hf?: number | string; sl?: number | string; da?: number | string }
   }>
   settings: {
     status?: string
     leagueStartDate?: string
+    advancingPerGroup?: number
+    luckyLosers?: number
+    groupCount?: number
+    playersPerGroup?: number
   }
 }
 
@@ -421,6 +427,12 @@ export const rejectMatchResult = makeCallable<
   { success: boolean; message: string }
 >('rejectMatchResult')
 
+/** Zatwierdzenie zgłoszonego protokołu (`approveMatchResult`). */
+export const apiApproveMatch = approveMatchResult
+
+/** Odrzucenie zgłoszonego protokołu (`rejectMatchResult`). */
+export const apiRejectMatch = rejectMatchResult
+
 // ─── admin (Weryfikacja Graczy) ────────────────────────────────────────────────
 
 export interface VerifyPlayerFeaturePayload {
@@ -443,6 +455,29 @@ export const deletePlayerDefinitively = makeCallable<
   DeletePlayerPayload,
   { success: boolean; message: string }
 >('deletePlayerDefinitively')
+
+/** Twardo usuwa gracza i jego osiągnięcia (`deletePlayerDefinitively`). */
+export const apiDeletePlayer = deletePlayerDefinitively
+
+// ─── verifyPlayer (flaga weryfikacji konta) ─────────────────────────────────
+
+export interface VerifyPlayerPayload {
+  playerId: string
+  verified?: boolean
+}
+
+export interface VerifyPlayerResponse {
+  ok: boolean
+  playerId: string
+}
+
+/** Ustawia flagę `verified` na profilu gracza (`verifyPlayer`). */
+export const verifyPlayer = makeCallable<
+  VerifyPlayerPayload,
+  VerifyPlayerResponse
+>('verifyPlayer')
+
+export const apiVerifyPlayer = verifyPlayer
 
 // ─── admin (Zarządzanie Aktywnymi Graczami) ──────────────────────────────────
 
@@ -578,6 +613,9 @@ export const adminSaveMatchResult = makeCallable<
   { success: boolean; message: string }
 >('adminSaveMatchResult')
 
+/** Ręczny zapis protokołu przez admina (`adminSaveMatchResult`). */
+export const apiAdminSaveMatch = adminSaveMatchResult
+
 // ─── addSinglePlayer (Dodawanie nowego gracza przez Admina) ──────────────────
 
 export interface AddSinglePlayerPayload {
@@ -673,9 +711,12 @@ export const forceMatchDateAdmin = makeCallable<
 // ─── archiveCurrentSeason (Archiwizacja Sezonu) ─
 
 export const archiveCurrentSeason = makeCallable<
-  {},
+  Record<string, never>,
   { success: boolean; message: string }
 >('archiveCurrentSeason')
+
+/** Zamyka sezon: zapis na osobną instancję archiwum i reset bazy operacyjnej. */
+export const apiArchiveCurrentSeason = archiveCurrentSeason
 
 // ─── setCupStatusAdmin (Status Pucharu Ligi) ────────────────────────────────
 
@@ -688,19 +729,6 @@ export const setCupStatusAdmin = makeCallable<
   SetCupStatusPayload,
   { success: boolean; message: string }
 >('setCupStatusAdmin')
-
-// ─── generateCupGroupsAdmin (Faza Grupowa Pucharu) ──────────────────────────
-
-export interface GenerateCupGroupsPayload {
-  groupsCount: number
-  playersPerGroup: number
-}
-
-/** Admin generuje fazę grupową (Fisher-Yates + Round-Robin). */
-export const generateCupGroupsAdmin = makeCallable<
-  GenerateCupGroupsPayload,
-  { success: boolean; message: string }
->('generateCupGroupsAdmin')
 
 // ─── generateCupGroupStage (równe grupy o zadanej liczebności) ──────────────
 
@@ -732,19 +760,6 @@ export function apiGenerateCupGroups(
 ) {
   return callGenerateCupGroupStage({ numberOfGroups, playersPerGroup, advancingPerGroup, luckyLosers })
 }
-
-// ─── generateCupKnockoutAdmin (Drabinka Pucharu) ────────────────────────────
-
-export interface GenerateCupKnockoutPayload {
-  advancingInput: number
-  luckyLoserInput: number
-}
-
-/** Admin generuje drabinkę pucharową (getBracketSeeding + sortowanie tabel). */
-export const generateCupKnockoutAdmin = makeCallable<
-  GenerateCupKnockoutPayload,
-  { success: boolean; message: string }
->('generateCupKnockoutAdmin')
 
 // ─── generateCupKnockoutStage (drabinka z cup/settings) ─────────────────────
 
@@ -779,13 +794,30 @@ export const setDoubleWalkoverAdmin = makeCallable<
   { success: boolean; message: string }
 >('setDoubleWalkoverAdmin')
 
-// ─── generateAllSchedulesAdmin (Globalny Terminarz) ─────────────────────────
+// ─── awardWalkover (walkower jednego gracza, terminarz ligowy) ──────────────
 
-/** Admin generuje terminarz Round-Robin dla wszystkich dywizji naraz. */
-export const generateAllSchedulesAdmin = makeCallable<
-  {},
-  { success: boolean; message: string }
->('generateAllSchedulesAdmin')
+export interface AwardWalkoverPayload {
+  matchKey: string
+  walkoverPlayerId: string
+}
+
+export interface AwardWalkoverResponse {
+  ok: boolean
+  matchKey: string
+  walkoverPlayerId: string
+}
+
+/**
+ * Przyznaje walkover wskazanemu graczowi (`awardWalkover`).
+ * Backend zapisuje wyłącznie `schedule/{matchKey}` i nie ustawia wyniku setów.
+ */
+export const awardWalkover = makeCallable<
+  AwardWalkoverPayload,
+  AwardWalkoverResponse
+>('awardWalkover')
+
+/** Przyznanie walkowera jednemu graczowi w meczu ligowym (`awardWalkover`). */
+export const apiAwardWalkover = awardWalkover
 
 // ─── runArcheologAdmin (Archeolog – Osiągnięcia) ─────────────────────────────
 
@@ -873,6 +905,13 @@ export const addPenalty = makeCallable<
   AddPenaltyPayload,
   { success: boolean; message: string }
 >('addPenalty')
+
+// ─── removePenalty (cofnięcie wpisu z dziennika kar) ────────────────────────
+
+export const apiRemovePenalty = makeCallable<
+  { penaltyId: string },
+  { success: boolean; message: string }
+>('removePenalty')
 
 // ─── sendPlayerNotification (Powiadomienia) ─────────────────────────────────
 

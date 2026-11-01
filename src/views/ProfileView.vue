@@ -110,24 +110,15 @@ async function fetchTable(div: string) {
   try {
     const res = await getDivisionTable({ division: div })
     const players: DivisionTablePlayer[] = res.players ?? []
-    tableEntries.value = players.map((p) => ({
-      pos: 0,
+    tableEntries.value = players.map((p, index) => ({
+      pos: index + 1,
       name: `${p.firstName ?? ''} ${p.lastName ?? ''}`.trim(),
       m: p.st?.m ?? 0, w: p.st?.w ?? 0, d: p.st?.d ?? 0,
       l: p.st?.l ?? 0, lw: p.st?.lw ?? 0, ll: p.st?.ll ?? 0,
-      pts: (p.st?.pts ?? 0) - (p.minusPts ?? 0),
+      pts: p.st?.pts ?? 0,
       id: p.id,
       isDisqualified: p.isDisqualified ?? false,
     }))
-    // Sortowanie: DSQ na sam dół, potem po pts, diff, lw
-    tableEntries.value.sort((a, b) => {
-      if (a.isDisqualified && !b.isDisqualified) return 1
-      if (!a.isDisqualified && b.isDisqualified) return -1
-      if (b.pts !== a.pts) return b.pts - a.pts
-      if (b.lw - b.ll !== a.lw - a.ll) return (b.lw - b.ll) - (a.lw - a.ll)
-      return b.lw - a.lw
-    })
-    tableEntries.value.forEach((e, i) => { e.pos = i + 1 })
   } catch (e) {
     console.error('[ProfileView] fetchTable:', e)
   } finally {
