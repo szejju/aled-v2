@@ -4,9 +4,9 @@
  * Harmonogram/Daty, Administratorzy, Regulamin (Markdown), Zakoncz Sezon.
  */
 import { computed, onMounted, ref } from 'vue'
-import { get, ref as dbRef, set } from 'firebase/database'
+import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { archiveCurrentSeason, manageAdminEmails, updateRules } from '@/services/api'
+import { archiveCurrentSeason, manageAdminEmails, updateRules, updateScheduleDates } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useSafeTimeout } from '@/composables/useSafeTimeout'
 import { errorText } from '@/utils/errorText'
@@ -25,8 +25,10 @@ const schedLoad = ref(false)
 async function loadSched() {
   try {
     const db = getDatabaseClient()
-    const snap = await get(dbRef(db, 'settings/schedule'))
-    const data = asRecord(snap.val())
+    const snap = await get(dbRef(db, 'settings/scheduleDates'))
+    const current = asRecord(snap.val())
+    const legacy = current ? null : await get(dbRef(db, 'settings/schedule'))
+    const data = current ?? asRecord(legacy?.val())
     if (!data) return
     schedSignupStart.value = optStr(data.signupStart) ?? ''
     schedSignupEnd.value = optStr(data.signupEnd) ?? ''
@@ -38,18 +40,19 @@ async function loadSched() {
 }
 
 async function saveSched() {
+  if (schedLoad.value) return
   schedLoad.value = true
   schedMsg.value = ''
   try {
-    const db = getDatabaseClient()
-    await set(dbRef(db, 'settings/schedule'), {
+    const result = await updateScheduleDates({
       signupStart: schedSignupStart.value,
       signupEnd: schedSignupEnd.value,
       leagueStart: schedLeagueStart.value,
       summerStart: schedSummerStart.value,
     })
-    schedMsg.value = 'Zapisano harmonogram!'
+    schedMsg.value = result.message
   } catch (err: unknown) {
+    console.error('updateScheduleDates', err)
     schedMsg.value = errorText(err)
   } finally {
     schedLoad.value = false

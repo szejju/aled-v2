@@ -4,9 +4,9 @@
  * Generator Grup, Tabela Zawodnikow Lata.
  */
 import { onMounted, ref } from 'vue'
-import { get, ref as dbRef, set } from 'firebase/database'
+import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { generateSummerGroups } from '@/services/api'
+import { generateSummerGroups, updateSummerLeagueStatus } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useRtdbValue } from '@/composables/useRtdbValue'
 import { useVerifiedPlayers } from '@/composables/usePlayerDirectory'
@@ -82,14 +82,15 @@ async function fSumStatus() {
 }
 
 async function doSetSumStatus(status: string) {
-  const db = getDatabaseClient()
+  if (sumStatusLoad.value) return
   sumStatusLoad.value = true
   sumStatusMsg.value = ''
   try {
-    await set(dbRef(db, 'settings/summerLeagueStatus'), status)
-    sumStatusMsg.value = 'Status zmieniony: ' + status
-    sumStatus.value = status
+    const result = await updateSummerLeagueStatus({ status })
+    sumStatusMsg.value = result.message
+    if (result.success) sumStatus.value = status
   } catch (err: unknown) {
+    console.error('updateSummerLeagueStatus', err)
     sumStatusMsg.value = errorText(err)
   } finally {
     sumStatusLoad.value = false

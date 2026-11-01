@@ -3,7 +3,7 @@
  * AdminZawodnicy – Tab 2: Zarzadzanie graczami.
  * Sekcje: Weryfikacja, Powiadomienia, Kary, Glowna Tabela Zawodnikow.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { addPenalty, deletePlayerDefinitively, sendPlayerNotification, verifyPlayerFeature } from '@/services/api'
@@ -181,6 +181,47 @@ async function addPen() {
   }
 }
 
+interface ShotPreview {
+  title: string
+  url: string
+}
+
+const shot = ref<ShotPreview | null>(null)
+const shotLoading = ref(false)
+const shotFailed = ref(false)
+
+function shotUrl(value: string | undefined): string | null {
+  if (!value || !/^https?:\/\//i.test(value)) return null
+  return value
+}
+
+function openShot(player: UnverifiedPlayer, label: string, url: string) {
+  const imageUrl = shotUrl(url)
+  if (!imageUrl) return
+  const name = `${player.firstName ?? ''} ${player.lastName ?? ''}`.trim() || 'Gracz'
+  shotLoading.value = true
+  shotFailed.value = false
+  shot.value = { title: `${name} — ${label}`, url: imageUrl }
+  document.body.style.overflow = 'hidden'
+}
+
+function closeShot() {
+  shot.value = null
+  shotLoading.value = false
+  shotFailed.value = false
+  document.body.style.overflow = ''
+}
+
+function onShotKey(event: KeyboardEvent) {
+  if (event.key === 'Escape' && shot.value) closeShot()
+}
+
+document.addEventListener('keydown', onShotKey)
+onUnmounted(() => {
+  document.removeEventListener('keydown', onShotKey)
+  document.body.style.overflow = ''
+})
+
 onMounted(() => {
   directory.start()
   fetchPen()
@@ -199,11 +240,11 @@ onMounted(() => {
           <div>
             <p class="text-sm font-bold text-fg">{{ p.firstName }} {{ p.lastName }} <span v-if="p.nick" class="text-muted">({{ p.nick }})</span></p>
             <p class="text-xs text-muted">{{ p.email }}</p>
-            <div v-if="p.verifyAvg||p.verifyCam" class="flex gap-2 mt-1">
-              <a v-if="p.verifyAvg" :href="p.verifyAvg" target="_blank" class="text-[10px] text-lime underline">AVG</a>
-              <a v-if="p.verifyCam" :href="p.verifyCam" target="_blank" class="text-[10px] text-lime underline">CAM</a>
-              <a v-if="p.verifyAvgScreen" :href="p.verifyAvgScreen" target="_blank" class="text-[10px] text-lime underline">AVG2</a>
-              <a v-if="p.verifyCamScreen" :href="p.verifyCamScreen" target="_blank" class="text-[10px] text-lime underline">CAM2</a>
+            <div v-if="shotUrl(p.verifyAvg)||shotUrl(p.verifyCam)||shotUrl(p.verifyAvgScreen)||shotUrl(p.verifyCamScreen)" class="flex gap-2 mt-1">
+              <button v-if="shotUrl(p.verifyAvg)" type="button" class="text-[10px] text-lime underline" @click="openShot(p,'AVG',p.verifyAvg!)">AVG</button>
+              <button v-if="shotUrl(p.verifyCam)" type="button" class="text-[10px] text-lime underline" @click="openShot(p,'CAM',p.verifyCam!)">CAM</button>
+              <button v-if="shotUrl(p.verifyAvgScreen)" type="button" class="text-[10px] text-lime underline" @click="openShot(p,'AVG2',p.verifyAvgScreen!)">AVG2</button>
+              <button v-if="shotUrl(p.verifyCamScreen)" type="button" class="text-[10px] text-lime underline" @click="openShot(p,'CAM2',p.verifyCamScreen!)">CAM2</button>
             </div>
           </div>
           <div class="flex gap-1 shrink-0 flex-wrap">
@@ -250,6 +291,30 @@ onMounted(() => {
     </div>
     <div v-if="penList.length>0" class="mt-4"><h4 class="text-[10px] font-black uppercase text-muted mb-2">Przyznane kary:</h4><div class="space-y-1 max-h-[200px] overflow-y-auto"><div v-for="k in penList" :key="k.key" class="flex justify-between text-xs rounded-lg bg-surface-2 px-3 py-2"><span class="text-fg font-bold">{{ k.playerName }}</span><span class="text-muted">{{ k.reason }} (-{{ k.points }} pkt)</span></div></div></div>
   </AdminSectionCard>
+  <Teleport to="body">
+    <div v-if="shot" class="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" role="dialog" aria-modal="true" :aria-label="shot.title" @click.self="closeShot">
+      <div class="bg-surface border border-line rounded-3xl w-full max-w-4xl shadow-2xl overflow-hidden">
+        <div class="flex items-center justify-between gap-3 px-5 py-4 border-b border-line">
+          <h3 class="font-display font-extrabold text-sm uppercase text-fg">{{ shot.title }}</h3>
+          <button type="button" class="rounded-lg px-3 py-1.5 text-[10px] font-extrabold uppercase text-muted hover:bg-surface-2 hover:text-fg" @click="closeShot">Zamknij</button>
+        </div>
+        <div class="relative flex min-h-[240px] items-center justify-center bg-ink p-4">
+          <p v-if="shotLoading && !shotFailed" class="absolute text-xs text-muted">Ladowanie screena...</p>
+          <p v-if="shotFailed" class="text-sm font-bold text-red-400">Nie udalo sie wczytac screena.</p>
+          <img
+            v-show="!shotFailed"
+            :key="shot.url"
+            :src="shot.url"
+            :alt="shot.title"
+            class="max-h-[75vh] w-full object-contain"
+            @load="shotLoading=false"
+            @error="shotLoading=false; shotFailed=true"
+          />
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- MODAL: Wyzuc Gracza -->
   <Teleport to="body">
     <div v-if="showKick" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showKick=false">

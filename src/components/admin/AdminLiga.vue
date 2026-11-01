@@ -3,10 +3,10 @@
  * AdminLiga – Tab 3: Zarzadzanie Sezonem Ligi.
  * Sekcje: Struktura Ligi, Przydzial Graczy, Licznik zapisanych, Generator Terminarza, Generator Barazy.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { deleteLeagueLevel, generateAllSchedulesAdmin, generatePlayoffsAdmin, massAssignPlayers, saveLeagueLevel } from '@/services/api'
+import { apiGenerateLeagueSchedule, deleteLeagueLevel, generatePlayoffsAdmin, massAssignPlayers, saveLeagueLevel } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useBusyIds } from '@/composables/useBusyIds'
 import { useRtdbValue } from '@/composables/useRtdbValue'
@@ -175,22 +175,53 @@ async function fEnroll() {
   }
 }
 
+const withRematches = ref(false)
 const schedLoad = ref(false)
 const schedMsg = ref('')
+const schedOk = ref(false)
+const confirmOpen = ref(false)
+const confirmStep = ref<1 | 2>(1)
+let scheduleMounted = true
 
-async function doGenSched() {
-  if (!confirm('Wygenerowac terminarz dla wszystkich dywizji? Usunie obecny terminarz i zresetuje statystyki graczy!')) return
+onUnmounted(() => {
+  scheduleMounted = false
+})
+
+function openScheduleConfirm() {
+  if (schedLoad.value) return
+  confirmStep.value = 1
+  confirmOpen.value = true
+}
+
+function closeScheduleConfirm() {
+  if (schedLoad.value) return
+  confirmOpen.value = false
+  confirmStep.value = 1
+}
+
+async function confirmSchedule() {
+  if (schedLoad.value) return
+  if (confirmStep.value === 1) {
+    confirmStep.value = 2
+    return
+  }
+
   schedLoad.value = true
   schedMsg.value = ''
+  schedOk.value = false
   try {
-    const result = await generateAllSchedulesAdmin({})
+    const result = await apiGenerateLeagueSchedule(withRematches.value)
+    if (!scheduleMounted) return
+    schedOk.value = result.success
     schedMsg.value = result.message
-    alert(result.message)
+    confirmOpen.value = false
+    confirmStep.value = 1
   } catch (err: unknown) {
+    if (!scheduleMounted) return
+    schedOk.value = false
     schedMsg.value = errorText(err)
-    alert(schedMsg.value)
   } finally {
-    schedLoad.value = false
+    if (scheduleMounted) schedLoad.value = false
   }
 }
 
@@ -323,9 +354,13 @@ onMounted(() => {
   </AdminSectionCard>
 
   <AdminSectionCard title="Generator Terminarza">
-    <p class="text-xs text-muted mb-4">Generuje terminarz Round-Robin dla wszystkich dywizji. Usuwa obecny terminarz ligowy i resetuje statystyki (max, checkout, short).</p>
-    <button @click="doGenSched" :disabled="schedLoad" class="w-full rounded-xl bg-red-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-red-500 disabled:opacity-50 shadow-sm">{{ schedLoad?'Generuje...':'Generuj Terminarz Ligi' }}</button>
-    <p v-if="schedMsg" :class="['text-sm font-bold mt-3',schedMsg.includes('Blad')?'text-red-400':'text-lime']">{{ schedMsg }}</p>
+    <p class="text-xs text-muted mb-4">Round-Robin dla kazdej dywizji i grupy. Zapis wymienia mecze ligowe. Mecze barazowe zostaja.</p>
+    <label class="mb-4 flex cursor-pointer select-none items-center gap-3">
+      <input v-model="withRematches" :disabled="schedLoad" type="checkbox" class="rounded border-line" />
+      <span class="text-sm font-bold text-fg">Graj z rewanżami</span>
+    </label>
+    <button type="button" @click="openScheduleConfirm" :disabled="schedLoad" class="w-full rounded-xl bg-red-600 px-6 py-4 font-display text-sm font-extrabold uppercase tracking-widest text-white shadow-sm hover:bg-red-500 disabled:opacity-50">{{ schedLoad?'Generuje...':'Generuj Terminarz' }}</button>
+    <p v-if="schedMsg" :class="['mt-3 text-sm font-bold', schedOk ? 'text-lime' : 'text-red-400']">{{ schedMsg }}</p>
   </AdminSectionCard>
 
   <!-- GENERATOR BARAZY -->
@@ -357,4 +392,20 @@ onMounted(() => {
   </AdminSectionCard>
 
 </div>
+
+<Teleport to="body">
+  <div v-if="confirmOpen" class="fixed inset-0 z-[99999] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="schedule-confirm-title">
+    <div class="absolute inset-0 bg-ink/70" @click="closeScheduleConfirm" />
+    <div class="relative w-full max-w-md rounded-2xl border border-line bg-ink p-6 shadow-2xl" @click.stop>
+      <h3 id="schedule-confirm-title" class="font-display text-lg font-extrabold uppercase text-fg">{{ confirmStep === 1 ? 'Czy na pewno?' : 'Ostateczne potwierdzenie' }}</h3>
+        <p class="mt-3 text-sm text-muted">{{ confirmStep === 1 ? 'Stary terminarz ligowy zostanie nadpisany. Mecze barazowe zostana zachowane.' : 'Tej operacji nie mozna cofnac. Wygenerowac terminarz ligowy od nowa?' }}</p>
+      <p class="mt-2 text-xs font-bold" :class="withRematches ? 'text-lime' : 'text-muted'">{{ withRematches ? 'Rewanze: wlaczone.' : 'Rewanze: wylaczone.' }}</p>
+      <p v-if="schedMsg && !schedOk" class="mt-3 text-sm font-bold text-red-400">{{ schedMsg }}</p>
+      <div class="mt-6 flex justify-end gap-3">
+        <button type="button" @click="closeScheduleConfirm" :disabled="schedLoad" class="rounded-xl border border-line px-4 py-2.5 text-xs font-bold uppercase tracking-widest text-muted hover:text-fg disabled:opacity-50">Anuluj</button>
+        <button type="button" @click="confirmSchedule" :disabled="schedLoad" class="rounded-xl bg-red-600 px-5 py-2.5 font-display text-xs font-extrabold uppercase tracking-widest text-white hover:bg-red-500 disabled:opacity-50">{{ schedLoad ? 'Generuje...' : (confirmStep === 1 ? 'Tak, kontynuuj' : 'Generuj Terminarz') }}</button>
+      </div>
+    </div>
+  </div>
+</Teleport>
 </template>

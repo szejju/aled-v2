@@ -603,16 +603,24 @@ export const deletePlayerAdmin = makeCallable<
   { success: boolean; message: string }
 >('deletePlayerAdmin')
 
-// ─── generateLeagueSchedule (Generowanie terminarza ligowego) ───────────────
+// ─── generateLeagueSchedule (Round-Robin calej ligi) ────────────────────────
 
-export interface GenerateLeagueSchedulePayload {
-  division: string
+export interface GenerateLeagueScheduleResult {
+  success: boolean
+  message: string
+  matches: number
+  divisions: number
 }
 
-export const generateLeagueSchedule = makeCallable<
-  GenerateLeagueSchedulePayload,
-  { success: boolean; message: string }
+const callGenerateLeagueSchedule = makeCallable<
+  { withRematches: boolean },
+  GenerateLeagueScheduleResult
 >('generateLeagueSchedule')
+
+/** Generuje terminarz Round-Robin. `withRematches` dokleja kolejki rewanżowe. */
+export function apiGenerateLeagueSchedule(withRematches: boolean) {
+  return callGenerateLeagueSchedule({ withRematches })
+}
 
 // ─── saveNewsAdmin (Zarządzanie Newsami) ─────
 
@@ -694,6 +702,37 @@ export const generateCupGroupsAdmin = makeCallable<
   { success: boolean; message: string }
 >('generateCupGroupsAdmin')
 
+// ─── generateCupGroupStage (równe grupy o zadanej liczebności) ──────────────
+
+export interface GenerateCupGroupStagePayload {
+  numberOfGroups: number
+  playersPerGroup: number
+  advancingPerGroup: number
+  luckyLosers: number
+}
+
+export interface GenerateCupGroupStageResult {
+  success: boolean
+  message: string
+  matches: number
+  groups: string
+}
+
+const callGenerateCupGroupStage = makeCallable<
+  GenerateCupGroupStagePayload,
+  GenerateCupGroupStageResult
+>('generateCupGroupStage')
+
+/** Losuje równe grupy o zadanej liczebności i zapisuje konfigurację awansu. */
+export function apiGenerateCupGroups(
+  numberOfGroups: number,
+  playersPerGroup: number,
+  advancingPerGroup: number,
+  luckyLosers: number,
+) {
+  return callGenerateCupGroupStage({ numberOfGroups, playersPerGroup, advancingPerGroup, luckyLosers })
+}
+
 // ─── generateCupKnockoutAdmin (Drabinka Pucharu) ────────────────────────────
 
 export interface GenerateCupKnockoutPayload {
@@ -706,6 +745,27 @@ export const generateCupKnockoutAdmin = makeCallable<
   GenerateCupKnockoutPayload,
   { success: boolean; message: string }
 >('generateCupKnockoutAdmin')
+
+// ─── generateCupKnockoutStage (drabinka z cup/settings) ─────────────────────
+
+export interface GenerateCupKnockoutStageResult {
+  success: boolean
+  message: string
+  qualified: number
+  matches: number
+  totalRounds: number
+}
+
+/** Drabinka KO z tabel grup i lucky losers zapisanych w cup/settings. */
+export const generateCupKnockoutStage = makeCallable<
+  Record<string, never>,
+  GenerateCupKnockoutStageResult
+>('generateCupKnockoutStage')
+
+/** Drabinka KO. Backend sam czyta grupy, terminarz i cup/settings. */
+export function apiGenerateCupKnockout() {
+  return generateCupKnockoutStage({})
+}
 
 // ─── setDoubleWalkoverAdmin (Obustronny Walkower 0:0) ───────────────────────
 
@@ -837,6 +897,40 @@ export const generateSummerGroups = makeCallable<
   GenerateSummerGroupsPayload,
   { success: boolean; message: string; groups?: Record<string, string[]> }
 >('generateSummerGroups')
+
+// ─── updateSummerLeagueStatus / updateSocialStats / updateScheduleDates ────
+
+export interface UpdateSummerLeagueStatusPayload {
+  status: string
+}
+
+export const updateSummerLeagueStatus = makeCallable<
+  UpdateSummerLeagueStatusPayload,
+  { success: boolean; message: string }
+>('updateSummerLeagueStatus')
+
+export interface UpdateSocialStatsPayload {
+  facebook?: string | number
+  tiktok?: string | number
+  discord?: string | number
+}
+
+export const updateSocialStats = makeCallable<
+  UpdateSocialStatsPayload,
+  { success: boolean; message: string }
+>('updateSocialStats')
+
+export interface UpdateScheduleDatesPayload {
+  signupStart?: string
+  signupEnd?: string
+  leagueStart?: string
+  summerStart?: string
+}
+
+export const updateScheduleDates = makeCallable<
+  UpdateScheduleDatesPayload,
+  { success: boolean; message: string }
+>('updateScheduleDates')
 
 // ─── replacePlayerWithHistory (Podmiana z historia rund) ───────────────────
 

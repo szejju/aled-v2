@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
  * AdminPuchar – Tab 4: Zarzadzanie Pucharem Ligi.
- * Generator Grup, Generator Fazy Pucharowej, Tabela Zawodnikow Pucharu.
+ * Generator Fazy Grupowej, Generator Fazy Pucharowej, Tabela Zawodnikow Pucharu.
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { generateCupGroupsAdmin, generateCupKnockoutAdmin, setCupStatusAdmin } from '@/services/api'
+import { apiGenerateCupGroups, apiGenerateCupKnockout, setCupStatusAdmin } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { useRtdbValue } from '@/composables/useRtdbValue'
 import { useVerifiedPlayers } from '@/composables/usePlayerDirectory'
@@ -22,17 +22,40 @@ interface CupPlayer {
   div?: string
 }
 
-const cupGroupsCount = ref(4)
-const cupPlayersPerGroup = ref(4)
-const cupGroupsLoad = ref(false)
-const cupGroupsMsg = ref('')
-const cupAdvancing = ref(2)
-const cupLuckyLosers = ref(0)
-const cupKnockoutLoad = ref(false)
+const cupGroupCount = ref<number | null>(null)
+const cupAdvancingSetting = ref<number | null>(null)
+const cupLuckySetting = ref<number | null>(null)
 const cupKnockoutMsg = ref('')
+const cupKnockoutOk = ref(false)
+const loadingJob = ref<'groups' | 'knockout' | null>(null)
+
+const knockoutFieldSize = computed(() => {
+  if (cupGroupCount.value == null || cupAdvancingSetting.value == null || cupLuckySetting.value == null) return null
+  return cupGroupCount.value * cupAdvancingSetting.value + cupLuckySetting.value
+})
+const knockoutFieldReady = computed(() => {
+  const size = knockoutFieldSize.value
+  return size != null && size >= 2 && (size & (size - 1)) === 0
+})
 const cupStatus = ref('')
 const cupStatusLoad = ref(false)
 const cupStatusMsg = ref('')
+
+const numberOfGroups = ref(4)
+const playersPerGroup = ref(4)
+const advancingPerGroup = ref(2)
+const luckyLosers = ref(0)
+
+const groupDrawSize = computed(() => {
+  if (!wholeNumber(numberOfGroups.value, 1, 26) || !wholeNumber(playersPerGroup.value, 2, 64)) return null
+  return numberOfGroups.value * playersPerGroup.value
+})
+const isLoading = ref(false)
+const groupStageMsg = ref('')
+const groupStageOk = ref(false)
+
+const GROUP_STAGE_WARNING = 'Uwaga! Obecne grupy i mecze pucharowe zostaną bezpowrotnie usunięte i wylosowane na nowo. Kontynuować?'
+const KNOCKOUT_WARNING = 'Uwaga! Obecna drabinka zostanie nadpisana na podstawie aktualnych wyników grupowych. Faza pucharowa zostanie otwarta. Kontynuować?'
 
 const cupSource = useRtdbValue(
   'cup/participants',
@@ -46,6 +69,7 @@ const cupSource = useRtdbValue(
   [] as CupPlayer[],
 )
 const cupPlayers = cupSource.data
+const cupRosterReady = cupSource.ready
 const cupError = cupSource.error
 
 const verified = useVerifiedPlayers()
@@ -77,8 +101,13 @@ async function fCupStatus() {
   cupStatusLoad.value = true
   try {
     const db = getDatabaseClient()
-    const snap = await get(dbRef(db, 'cup/settings/status'))
-    cupStatus.value = typeof snap.val() === 'string' ? snap.val() : ''
+    const snap = await get(dbRef(db, 'cup/settings'))
+    const settings = snap.val()
+    const record = settings && typeof settings === 'object' ? settings as Record<string, unknown> : null
+    cupStatus.value = typeof record?.status === 'string' ? record.status : ''
+    cupGroupCount.value = integerOrNull(record?.groupCount)
+    cupAdvancingSetting.value = integerOrNull(record?.advancingPerGroup)
+    cupLuckySetting.value = integerOrNull(record?.luckyLosers)
   } catch (err: unknown) {
     cupStatusMsg.value = errorText(err)
   } finally {
@@ -100,45 +129,107 @@ async function doSetCupStatus(status: string) {
   }
 }
 
-async function doGenCupGroups() {
-  if (!confirm('Wygenerowac faze grupowa? Usunie dotychczasowy terminarz pucharu.')) return
-  cupGroupsLoad.value = true
-  cupGroupsMsg.value = ''
+function wholeNumber(value: number, min: number, max: number): boolean {
+  return Number.isInteger(value) && value >= min && value <= max
+}
+
+function integerOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) ? value : null
+}
+
+async function doDrawCupGroups() {
+  if (isLoading.value) return
+  groupStageMsg.value = ''
+  if (!wholeNumber(numberOfGroups.value, 1, 26)) {
+    groupStageOk.value = false
+    groupStageMsg.value = 'Podaj liczbę grup od 1 do 26.'
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  if (!wholeNumber(playersPerGroup.value, 2, 64)) {
+    groupStageOk.value = false
+    groupStageMsg.value = 'Podaj liczbę graczy w grupie (od 2 do 64).'
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  if (!wholeNumber(advancingPerGroup.value, 1, 512)) {
+    groupStageOk.value = false
+    groupStageMsg.value = 'Podaj, ilu zawodników awansuje z grupy (min. 1).'
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  if (advancingPerGroup.value > playersPerGroup.value) {
+    groupStageOk.value = false
+    groupStageMsg.value = 'Awans z grupy nie może być większy niż liczba graczy w grupie.'
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  const luckyCap = numberOfGroups.value * (playersPerGroup.value - advancingPerGroup.value)
+  if (!wholeNumber(luckyLosers.value, 0, Math.max(luckyCap, 0))) {
+    groupStageOk.value = false
+    groupStageMsg.value = luckyCap > 0
+      ? `Lucky losers: maksymalnie ${luckyCap} (tyle miejsc zostaje poza awansem).`
+      : 'Lucky losers wymagają miejsca poza strefą awansu.'
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  const needed = numberOfGroups.value * playersPerGroup.value
+  if (cupRosterReady.value && cupPlayers.value.length < needed) {
+    groupStageOk.value = false
+    groupStageMsg.value = `Za mało zapisanych (${cupPlayers.value.length}). Potrzeba ${needed} (${numberOfGroups.value} grup po ${playersPerGroup.value}).`
+    console.warn('generateCupGroupStage', groupStageMsg.value)
+    return
+  }
+  if (!confirm(GROUP_STAGE_WARNING) || !confirm('OSTATECZNE POTWIERDZENIE: ' + GROUP_STAGE_WARNING)) return
+
+  isLoading.value = true
+  loadingJob.value = 'groups'
   try {
-    const result = await generateCupGroupsAdmin({
-      groupsCount: cupGroupsCount.value,
-      playersPerGroup: cupPlayersPerGroup.value,
-    })
-    cupGroupsMsg.value = result.message
-    alert(result.message)
+    const result = await apiGenerateCupGroups(
+      numberOfGroups.value,
+      playersPerGroup.value,
+      advancingPerGroup.value,
+      luckyLosers.value,
+    )
+    groupStageOk.value = true
+    groupStageMsg.value = result.message
+    console.info('generateCupGroupStage', result)
+    await fCupStatus()
   } catch (err: unknown) {
-    cupGroupsMsg.value = errorText(err)
-    alert(cupGroupsMsg.value)
+    groupStageOk.value = false
+    groupStageMsg.value = errorText(err)
+    console.error('generateCupGroupStage', err)
   } finally {
-    cupGroupsLoad.value = false
+    isLoading.value = false
+    loadingJob.value = null
   }
 }
 
 async function doGenCupKnockout() {
-  if (cupAdvancing.value < 1) {
-    alert('Podaj liczbe awansujacych.')
+  if (isLoading.value) return
+  cupKnockoutMsg.value = ''
+  if (cupAdvancingSetting.value == null || cupLuckySetting.value == null) {
+    cupKnockoutOk.value = false
+    cupKnockoutMsg.value = 'Brak zapisanej konfiguracji awansu. Najpierw wylosuj fazę grupową.'
     return
   }
-  if (!confirm('Wygenerowac drabinke pucharowa?')) return
-  cupKnockoutLoad.value = true
-  cupKnockoutMsg.value = ''
+  if (!confirm(KNOCKOUT_WARNING) || !confirm('OSTATECZNE POTWIERDZENIE: ' + KNOCKOUT_WARNING)) return
+
+  isLoading.value = true
+  loadingJob.value = 'knockout'
   try {
-    const result = await generateCupKnockoutAdmin({
-      advancingInput: cupAdvancing.value,
-      luckyLoserInput: cupLuckyLosers.value,
-    })
+    const result = await apiGenerateCupKnockout()
+    cupKnockoutOk.value = true
     cupKnockoutMsg.value = result.message
-    alert(result.message)
+    console.info('generateCupKnockoutStage', result)
+    await fCupStatus()
   } catch (err: unknown) {
+    cupKnockoutOk.value = false
     cupKnockoutMsg.value = errorText(err)
-    alert(cupKnockoutMsg.value)
+    console.error('generateCupKnockoutStage', err)
   } finally {
-    cupKnockoutLoad.value = false
+    isLoading.value = false
+    loadingJob.value = null
   }
 }
 
@@ -164,23 +255,76 @@ onMounted(() => {
     <p v-if="cupStatusMsg" :class="['text-sm font-bold mt-3',cupStatusMsg.includes('Blad')?'text-red-400':'text-lime']">{{ cupStatusMsg }}</p>
   </AdminSectionCard>
 
-  <!-- GENERATOR GRUP -->
-  <AdminSectionCard title="Generator Grup">
-    <div class="space-y-3">
-      <div><label class="label block text-muted mb-1">Ilosc grup</label><input v-model.number="cupGroupsCount" type="number" min="1" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-      <div><label class="label block text-muted mb-1">Graczy na grupe</label><input v-model.number="cupPlayersPerGroup" type="number" min="2" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-    </div>
-    <button @click="doGenCupGroups" :disabled="cupGroupsLoad" class="mt-4 w-full rounded-xl bg-purple-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-purple-500 disabled:opacity-50">{{ cupGroupsLoad?'Generuje...':'Generuj Grupy Pucharu' }}</button>
-    <p v-if="cupGroupsMsg" :class="['text-sm font-bold mt-3',cupGroupsMsg.includes('Blad')?'text-red-400':'text-lime']">{{ cupGroupsMsg }}</p>
+  <!-- GENERATOR FAZY GRUPOWEJ -->
+  <AdminSectionCard
+    title="Generator Fazy Grupowej"
+    dot-color="bg-purple-500"
+    description="Losuje zapisaną liczbę zawodników do równych grup i układa mecze każdy z każdym. Liczebność grupy, awans oraz lucky losers trafiają do ustawień pucharu."
+    class="xl:col-span-2"
+  >
+    <fieldset :disabled="isLoading" class="disabled:opacity-60">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <label class="block">
+          <span class="label mb-1 block text-muted">Liczba grup</span>
+          <input v-model.number="numberOfGroups" type="number" min="1" max="26" step="1" class="input w-full rounded-xl border border-line bg-fg/5 px-3 py-2 text-sm text-fg" />
+        </label>
+        <label class="block">
+          <span class="label mb-1 block text-muted">Graczy w grupie</span>
+          <input v-model.number="playersPerGroup" type="number" min="2" max="64" step="1" class="input w-full rounded-xl border border-line bg-fg/5 px-3 py-2 text-sm text-fg" />
+        </label>
+        <label class="block">
+          <span class="label mb-1 block text-muted">Awansuje z grupy</span>
+          <input v-model.number="advancingPerGroup" type="number" min="1" :max="playersPerGroup" step="1" class="input w-full rounded-xl border border-line bg-fg/5 px-3 py-2 text-sm text-fg" />
+        </label>
+        <label class="block">
+          <span class="label mb-1 block text-muted">Lucky Losers</span>
+          <input v-model.number="luckyLosers" type="number" min="0" step="1" class="input w-full rounded-xl border border-line bg-fg/5 px-3 py-2 text-sm text-fg" />
+        </label>
+      </div>
+      <p v-if="groupDrawSize != null" class="mt-4 text-xs text-muted">
+        Losowanie weźmie {{ groupDrawSize }} graczy, po {{ playersPerGroup }} w każdej z {{ numberOfGroups }} grup<span v-if="cupRosterReady"> (zapisanych: {{ cupPlayers.length }})</span>.
+      </p>
+      <p class="mt-4 text-xs text-amber-400/90">Losowanie kasuje obecne grupy, terminarz pucharowy i drabinkę.</p>
+      <button
+        type="button"
+        @click="doDrawCupGroups"
+        :disabled="isLoading"
+        class="mt-4 w-full rounded-xl bg-purple-600 px-6 py-3 font-display text-xs font-extrabold uppercase tracking-widest text-white hover:bg-purple-500 disabled:opacity-50"
+      >{{ loadingJob === 'groups' ? 'Losuję...' : 'Losuj Grupy i Generuj Mecze' }}</button>
+    </fieldset>
+    <p v-if="groupStageMsg" :class="['mt-3 text-sm font-bold', groupStageOk ? 'text-lime' : 'text-red-400']" role="status">{{ groupStageMsg }}</p>
   </AdminSectionCard>
-  <!-- GENERATOR FAZY PUCHAROWEJ -->
-  <AdminSectionCard title="Generator Fazy Pucharowej">
-    <div class="space-y-3">
-      <div><label class="label block text-muted mb-1">Awansuje z grupy</label><input v-model.number="cupAdvancing" type="number" min="1" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-      <div><label class="label block text-muted mb-1">Lucky Loser (dodatkowo)</label><input v-model.number="cupLuckyLosers" type="number" min="0" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-    </div>
-    <button @click="doGenCupKnockout" :disabled="cupKnockoutLoad" class="mt-4 w-full rounded-xl bg-amber-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-amber-500 disabled:opacity-50">{{ cupKnockoutLoad?'Generuje...':'Generuj Drabinke Pucharowa' }}</button>
-    <p v-if="cupKnockoutMsg" :class="['text-sm font-bold mt-3',cupKnockoutMsg.includes('Blad')?'text-red-400':'text-lime']">{{ cupKnockoutMsg }}</p>
+
+  <!-- GENERATOR FAZY PUCHAROWEJ (DRABINKA) -->
+  <AdminSectionCard
+    title="Generator Fazy Pucharowej (Drabinka)"
+    dot-color="bg-amber-500"
+    description="Liczy tabele z zakończonych meczów grupowych. Awans i lucky losers bierze z ustawień zapisanych przy losowaniu grup."
+    class="xl:col-span-2"
+  >
+    <fieldset :disabled="isLoading" class="disabled:opacity-60">
+      <p class="text-sm text-fg">
+        <template v-if="cupAdvancingSetting != null && cupLuckySetting != null">
+          Z grupy awansuje <span class="font-bold">{{ cupAdvancingSetting }}</span>,
+          lucky losers: <span class="font-bold">{{ cupLuckySetting }}</span>.
+          <template v-if="knockoutFieldSize != null">
+            Pula: <span class="font-bold">{{ knockoutFieldSize }}</span>.
+          </template>
+        </template>
+        <template v-else>Brak zapisanej konfiguracji awansu. Najpierw wylosuj fazę grupową.</template>
+      </p>
+      <p v-if="knockoutFieldSize != null && !knockoutFieldReady" class="mt-2 text-xs text-amber-400/90">
+        Pula nie jest potęgą dwójki (4, 8, 16). Zmień awans albo lucky losers i wylosuj grupy ponownie.
+      </p>
+      <p class="mt-4 text-xs text-amber-400/90">Generowanie nadpisuje obecną drabinkę i otwiera fazę pucharową.</p>
+      <button
+        type="button"
+        @click="doGenCupKnockout"
+        :disabled="isLoading"
+        class="mt-4 w-full rounded-xl bg-amber-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-amber-500 disabled:opacity-50"
+      >{{ loadingJob === 'knockout' ? 'Generuję...' : 'Generuj Drabinkę (Knockout)' }}</button>
+    </fieldset>
+    <p v-if="cupKnockoutMsg" :class="['mt-3 text-sm font-bold', cupKnockoutOk ? 'text-lime' : 'text-red-400']" role="status">{{ cupKnockoutMsg }}</p>
   </AdminSectionCard>
 
   <!-- TABELA ZAWODNIKOW PUCHARU -->

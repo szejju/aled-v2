@@ -43,7 +43,6 @@ export {
   adminSaveMatchResult,
   addSinglePlayer,
   deletePlayerAdmin,
-  generateLeagueSchedule,
   saveNewsAdmin,
   deleteNewsAdmin,
   updateGlobalSettings,
@@ -67,6 +66,12 @@ export {
   sendPlayerNotification,
   generateSummerGroups,
   replacePlayerWithHistory,
+  updateSummerLeagueStatus,
+  updateSocialStats,
+  updateScheduleDates,
+  generateLeagueSchedule,
+  generateCupGroupStage,
+  generateCupKnockoutStage,
 } from "./admin/index.js";
 
 // ─── Views ───────────────────────────────────────────────────────────────────

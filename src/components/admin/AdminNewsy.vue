@@ -4,9 +4,9 @@
  * Edytor Newsow (Markdown z podgladem), Lista Newsow, Social Media inputy.
  */
 import { computed, onMounted, ref } from 'vue'
-import { get, ref as dbRef, set } from 'firebase/database'
+import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { deleteNewsAdmin, saveNewsAdmin } from '@/services/api'
+import { deleteNewsAdmin, saveNewsAdmin, updateSocialStats } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { errorText } from '@/utils/errorText'
 import { asRecord, optNum, optStr } from '@/utils/rtdb'
@@ -124,17 +124,18 @@ async function loadSoc() {
 }
 
 async function saveSoc() {
+  if (socLoad.value) return
   socLoad.value = true
   socMsg.value = ''
   try {
-    const db = getDatabaseClient()
-    await set(dbRef(db, 'settings/socialStats'), {
+    const result = await updateSocialStats({
       discord: socDiscord.value.trim() || 'Brak danych',
       tiktok: socTiktok.value.trim() || 'Brak danych',
       facebook: socFacebook.value.trim() || 'Brak danych',
     })
-    socMsg.value = 'Zapisano!'
+    socMsg.value = result.message
   } catch (err: unknown) {
+    console.error('updateSocialStats', err)
     socMsg.value = errorText(err)
   } finally {
     socLoad.value = false
