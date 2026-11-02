@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { isAwardedWalkover } from '@/utils/matchFlags'
 
 interface PlayerStats {
   avg?: number | string
@@ -13,14 +14,19 @@ interface ScheduleMatch {
   id: number
   div: string
   round: string | number
+  p1Id?: string
+  p2Id?: string
   p1Name: string
   p2Name: string
   score1?: number
   score2?: number
-  status: 'completed' | 'accepted' | 'pending_exception' | 'proposed' | 'unscheduled'
+  status: string
   date?: string
   time?: string
   isPlayoff?: boolean
+  isWalkover?: boolean
+  isDoubleWO?: boolean
+  walkoverPlayerId?: string
   p1Stats?: PlayerStats
   p2Stats?: PlayerStats
   proofUrl1?: string
@@ -40,6 +46,40 @@ const emit = defineEmits<{
 
 const lightboxImage = ref<string | null>(null)
 
+function readScore(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const score1Num = computed(() => readScore(props.match?.score1))
+const score2Num = computed(() => readScore(props.match?.score2))
+const hasNumericScore = computed(() => score1Num.value != null && score2Num.value != null)
+const isWalkover = computed(() => (props.match ? isAwardedWalkover(props.match) : false))
+const walkoverCaption = computed(() => {
+  if (!isWalkover.value || !props.match) return ''
+  if (props.match.isDoubleWO === true) return 'Obustronny walkower'
+  const winnerId = typeof props.match.walkoverPlayerId === 'string' ? props.match.walkoverPlayerId : ''
+  const winner = winnerId && winnerId === props.match.p1Id
+    ? props.match.p1Name
+    : winnerId && winnerId === props.match.p2Id
+      ? props.match.p2Name
+      : ''
+  return winner ? `Walkower dla ${winner}` : 'Walkower'
+})
+const scoreText = computed(() => {
+  if (hasNumericScore.value) return `${score1Num.value} : ${score2Num.value}`
+  if (isWalkover.value) return 'WO'
+  return '– : –'
+})
+const walkoverNote = computed(() => {
+  if (!isWalkover.value || hasNumericScore.value) return ''
+  return 'Ten walkower ma flagę w bazie, ale nie ma zapisanego wyniku liczbowego.'
+})
+
 // Sprawdź czy mecz jest pucharowy (playoff)
 const isCupMatch = computed(() => props.match?.isPlayoff ?? false)
 
@@ -50,14 +90,14 @@ const player2Stats = computed(() => props.match?.p2Stats || { avg: '-', max: '-'
 // Obliczanie procentu dablów
 const doublePercentage1 = computed(() => {
   const da1 = parseInt(player1Stats.value.da as string) || 0
-  const score1 = props.match?.score1
-  return (da1 > 0 && typeof score1 === 'number') ? ((score1 / da1) * 100).toFixed(0) + '%' : '-'
+  const score1 = score1Num.value
+  return (da1 > 0 && score1 != null) ? ((score1 / da1) * 100).toFixed(0) + '%' : '-'
 })
 
 const doublePercentage2 = computed(() => {
   const da2 = parseInt(player2Stats.value.da as string) || 0
-  const score2 = props.match?.score2
-  return (da2 > 0 && typeof score2 === 'number') ? ((score2 / da2) * 100).toFixed(0) + '%' : '-'
+  const score2 = score2Num.value
+  return (da2 > 0 && score2 != null) ? ((score2 / da2) * 100).toFixed(0) + '%' : '-'
 })
 
 // Sprawdź czy są jakiekolwiek statystyki
@@ -166,6 +206,12 @@ const closeModal = () => {
           >
             {{ isCupMatch ? "🏆 Szczegóły Pucharu" : "Szczegóły Spotkania" }}
           </p>
+          <p v-if="walkoverCaption" class="mb-3 text-[11px] font-black uppercase tracking-widest text-red-400">
+            {{ walkoverCaption }}
+          </p>
+          <p v-if="walkoverNote" class="mb-3 text-[11px] leading-relaxed text-muted">
+            {{ walkoverNote }}
+          </p>
           <div class="flex justify-between items-center gap-2 relative z-10">
             <!-- Gracz 1 -->
             <div class="flex-1 text-right font-display text-xs md:text-sm font-bold uppercase truncate text-fg leading-tight pr-2">
@@ -175,7 +221,7 @@ const closeModal = () => {
             <div class="bg-surface border border-line px-4 py-2 rounded-2xl font-display text-2xl font-bold shadow-inner flex-shrink-0"
               :class="isCupMatch ? 'text-purple-400' : 'text-accent'"
             >
-              {{ match.score1 }} <span class="text-muted mx-1">:</span> {{ match.score2 }}
+              {{ scoreText }}
             </div>
             <!-- Gracz 2 -->
             <div class="flex-1 text-left font-display text-xs md:text-sm font-bold uppercase truncate text-fg leading-tight pl-2">

@@ -180,9 +180,11 @@ export class StatsEngine {
         lw: 0, ll: 0, pts: 0,
         form: [],
         avgSum: 0, avgCount: 0, realAvg: 0, bestAvg: 0, bestAvgOpp: '',
-        max: parseInt(String(p.max || 0), 10) || 0,
-        hf: parseInt(String(p.checkout || 0), 10) || 0,
-        sl: parseInt(String(p.short || 0), 10) || 0,
+        // 180, najwyższy checkout i najkrótszy leg biorą się wyłącznie z protokołów
+        // meczów w koszyku. Dokument gracza (max / checkout / short) nie jest źródłem.
+        max: 0,
+        hf: 0,
+        sl: 0,
         dpi: 0,
         doublesHit: 0, doublesAttempts: 0, doublesPct: 0
       };
@@ -234,6 +236,18 @@ export class StatsEngine {
             if (da > 0 && !isDoubleWO) {
               st.doublesHit += myScore;
               st.doublesAttempts += da;
+            }
+
+            // 180, checkout i krótki leg: tylko mecz zamknięty statusem played/approved.
+            if (isApprovedLeagueMatch(m)) {
+              const matchMax = parseInt(String(myStats.max || 0), 10) || 0;
+              if (matchMax > 0) st.max += matchMax;
+
+              const matchHf = parseInt(String(myStats.hf || 0), 10) || 0;
+              if (matchHf > st.hf) st.hf = matchHf;
+
+              const matchSl = parseInt(String(myStats.sl || 0), 10) || 0;
+              if (matchSl > 0 && (st.sl === 0 || matchSl < st.sl)) st.sl = matchSl;
             }
           }
         };

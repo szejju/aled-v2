@@ -85,6 +85,10 @@ export {
   bookMatch,
   updateVacation,
   enrollForNextSeason,
+  updateProfile,
+  joinCup,
+  submitVerification,
+  updateAvatar,
 } from "./profile/index.js";
 
 // ─── Matches ─────────────────────────────────────────────────────────────────

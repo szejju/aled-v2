@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { ref } from 'vue'
-import { ref as dbRef, onValue, set } from 'firebase/database'
+import { ref as dbRef, onValue } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 
 const currentSeason = ref<number>(2)
@@ -21,12 +21,10 @@ export function useSeason() {
 
     onValue(seasonRef, (snapshot) => {
       const parsed = Number(snapshot.val())
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        set(seasonRef, 2)
-        currentSeason.value = 2
-      } else {
-        currentSeason.value = parsed
-      }
+      currentSeason.value = Number.isFinite(parsed) && parsed > 0 ? parsed : 2
+      seasonReady.value = true
+    }, () => {
+      currentSeason.value = 2
       seasonReady.value = true
     })
   }

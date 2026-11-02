@@ -5,8 +5,8 @@
  * Flow:
  *  1. signInWithEmailAndPassword
  *  2. Sprawdzenie emailVerified – jeśli false → signOut + toast + abort
- *  3. Sprawdzenie roli: players/{uid}.role === 'admin' lub settings/adminEmails
- *  4. Inteligentne przekierowanie: admin → /admin, gracz → /profile
+ *  3. Rola jest addytywna: profil gracza i flaga sędziego mogą iść razem.
+ *  4. Sędzia otwiera panel, a menu zostawia mu też widoki gracza.
  *
  * Efekt "Ciemnej Mgły" (Cinematic Overlay):
  *  - loading: rozmyte tło + spinner
@@ -19,8 +19,8 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth'
-import { ref as dbRef, get } from 'firebase/database'
-import { getAuthClient, getDatabaseClient } from '@/services/firebase'
+import { getAuthClient } from '@/services/firebase'
+import { resolveAuthSession } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
@@ -48,7 +48,6 @@ async function handleLogin() {
 
   try {
     const auth = getAuthClient()
-    const db = getDatabaseClient()
 
     // 1. Logowanie Firebase
     const credential = await signInWithEmailAndPassword(
@@ -73,40 +72,15 @@ async function handleLogin() {
       return
     }
 
-    // 3. Sprawdzenie roli użytkownika
-    let isAdminUser = false
-
-    // ① players/{uid} -> role: 'admin'
+    // 3. Ta sama sesja co navbar: admin nie kasuje roli gracza.
+    let claims: Record<string, unknown> | undefined
     try {
-      const playerSnap = await get(dbRef(db, `players/${user.uid}`))
-      if (playerSnap.exists()) {
-        const data = playerSnap.val()
-        if (data?.role === 'admin') {
-          isAdminUser = true
-        }
-      }
+      claims = (await user.getIdTokenResult()).claims
     } catch (err) {
-      console.warn('[LoginView] Błąd odczytu gracza:', err)
+      console.warn('[LoginView] Błąd odczytu claimów:', err)
     }
-
-    // ② Awaryjnie: settings/adminEmails
-    if (!isAdminUser && user.email) {
-      try {
-        const adminEmailsSnap = await get(dbRef(db, 'settings/adminEmails'))
-        if (adminEmailsSnap.exists()) {
-          const adminEmails: string[] = Object.values(adminEmailsSnap.val())
-          if (
-            adminEmails.some(
-              (e) => e.toLowerCase() === user.email!.toLowerCase(),
-            )
-          ) {
-            isAdminUser = true
-          }
-        }
-      } catch (err) {
-        console.warn('[LoginView] Błąd odczytu adminEmails:', err)
-      }
-    }
+    const session = await resolveAuthSession(user.uid, user.email, claims)
+    const isAdminUser = session.roles.includes('admin')
 
     // 4. Efekt sukcesu → krótki delay przed przekierowaniem
     fogState.value = 'success'

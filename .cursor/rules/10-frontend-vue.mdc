@@ -1,0 +1,18 @@
+---
+description: "Piszemy i modyfikujemy komponenty Vue 3, routing, composables i UI"
+globs:
+  - "src/**/*.{vue,ts,js,css}"
+  - "vite.config.ts"
+---
+
+# Frontend Architecture Guidelines (Vue 3 + Tailwind 4)
+
+## ZASADY UI/UX
+- **Clean Code:** Komponenty powyżej 200-300 linii dziel na composables (np. `useAdminPlayers.ts`) lub mniejsze komponenty.
+- **Stany UI:** Każdy widok/komponent musi obsługiwać: `loading`, `empty state` oraz `try/catch` z powiadomieniem Toast.
+- **Wycieki pamięci:** Pamiętaj o czyszczeniu listenerów RTDB, timerów i event listenerów w `onUnmounted`.
+
+## WIDOKI I TRASY (ROUTER)
+- Trasy publiczne: `/`, `/tabela`, `/mecze`, `/puchar`, `/zawodnicy`, `/rankingi`, `/news`, `/archiwum`.
+- Trasy chronione (Auth): `/profil`, `/admin`.
+- Używaj `createWebHistory()` oraz ikonek z `lucide-vue-next`.

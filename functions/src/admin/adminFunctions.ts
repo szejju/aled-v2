@@ -26,6 +26,7 @@ const getDb = () => {
 };
 
 const verifyAdmin = async (uid: string): Promise<boolean> => {
+  getDb();
   const userRecord = await admin.auth().getUser(uid);
   const email = (userRecord.email || "").toLowerCase();
   const db = getDb();

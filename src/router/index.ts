@@ -1,5 +1,17 @@
+import { watch } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import HomeView from '@/views/HomeView.vue'
+import { useAuth } from '@/composables/useAuth'
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    title?: string
+    /** Wymaga zalogowania. Spełnia je gracz, sędzia i konto z obiema rolami. */
+    requiresAuth?: boolean
+    /** Tylko panel sędziego. Nie dotyczy tras gracza. */
+    requiresAdmin?: boolean
+  }
+}
 
 /**
  * Router podstron aplikacji.
@@ -103,7 +115,7 @@ const router = createRouter({
       path: '/admin',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
-      meta: { title: 'Panel Admina', requiresAuth: true },
+      meta: { title: 'Panel Admina', requiresAuth: true, requiresAdmin: true },
     },
     {
       // Zamiast białego ekranu wracamy na stronę główną.
@@ -122,6 +134,40 @@ const router = createRouter({
     if (to.path !== from.path) return { top: 0 }
     return false
   },
+})
+
+/**
+ * Guard nie rozdziela światów na wyłączność.
+ * /profil, /mecze i pozostałe trasy gracza są otwarte dla sędziego,
+ * który jest też zawodnikiem. requiresAdmin zamyka wyłącznie /admin.
+ */
+router.beforeEach(async (to) => {
+  const auth = useAuth()
+  if (auth.loading.value) {
+    await new Promise<void>((resolve) => {
+      const stop = watch(
+        auth.loading,
+        (pending) => {
+          if (!pending) {
+            stop()
+            resolve()
+          }
+        },
+        { immediate: true },
+      )
+    })
+  }
+
+  const needsAuth = to.matched.some((record) => record.meta.requiresAuth || record.meta.requiresAdmin)
+  if (needsAuth && !auth.isLoggedIn.value) {
+    return { name: 'login' }
+  }
+
+  if (to.matched.some((record) => record.meta.requiresAdmin) && !auth.isAdmin.value) {
+    return { name: 'home' }
+  }
+
+  return true
 })
 
 router.afterEach((to) => {

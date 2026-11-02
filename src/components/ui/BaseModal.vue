@@ -92,12 +92,12 @@ watch(() => props.modelValue, (val: boolean) => {
 
         <!-- Okno modala -->
         <div
-          class="relative w-full bg-[#13171C] rounded-2xl border border-line shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+          class="relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden bg-[#13171C] rounded-2xl border border-line shadow-2xl animate-in fade-in zoom-in-95 duration-200"
           :class="sizeClasses[size]"
           @click.stop
         >
           <!-- Nagłówek -->
-          <div class="flex items-center justify-between px-6 py-4 border-b border-line">
+          <div class="flex shrink-0 items-center justify-between px-6 py-4 border-b border-line">
             <slot name="header">
               <h2 v-if="title" id="modal-title" class="text-lg font-display text-fg">
                 {{ title }}
@@ -118,12 +118,12 @@ watch(() => props.modelValue, (val: boolean) => {
           </div>
 
           <!-- Treść -->
-          <div class="px-6 py-4">
+          <div class="max-h-[calc(100dvh-9rem)] overflow-y-auto px-6 py-4">
             <slot name="default" />
           </div>
 
           <!-- Stopka -->
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
+          <div v-if="$slots.footer" class="flex shrink-0 items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
             <slot name="footer" />
           </div>
         </div>

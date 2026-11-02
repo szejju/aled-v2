@@ -8,9 +8,14 @@ import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
 const isLightMode = ref(false)
+const mobileMenu = ref<HTMLDetailsElement | null>(null)
 
 // ── Auth (reaktywne flagi) ────────────────────────────────────────
-const { isLoggedIn, isPlayer, isAdmin, logout } = useAuth()
+const { isLoggedIn, isAdmin, logout } = useAuth()
+
+function closeMobileMenu() {
+  if (mobileMenu.value) mobileMenu.value.open = false
+}
 
 /** Rozbija cel linku nawigacji na ścieżkę i hash sekcji ('/#mecze' -> '/', '#mecze'). */
 const splitTarget = (to: string) => {
@@ -123,10 +128,9 @@ async function handleLogout() {
 
           <!-- ZALOGOWANY -->
           <template v-else>
-            <!-- Przycisk PROFIL (dla Gracza) -->
+            <!-- Każde zalogowane konto zostaje w świecie gracza. Sędzia dostaje panel obok, nie zamiast. -->
             <RouterLink
-              v-if="isPlayer"
-              to="/player"
+              to="/profil"
               aria-label="Profil"
               class="inline-flex items-center gap-2 rounded-full border border-lime/30 bg-lime/10 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-lime transition hover:bg-lime hover:text-slate-950 md:px-5 md:py-2.5"
             >
@@ -136,17 +140,23 @@ async function handleLogout() {
               <span class="hidden md:inline">Profil</span>
             </RouterLink>
 
-            <!-- Przycisk ADMIN (dla Admina) -->
+            <span
+              v-if="isAdmin"
+              class="mx-0.5 hidden h-6 w-px shrink-0 bg-line md:block"
+              aria-hidden="true"
+            />
+
+            <!-- Panel sędziego jest dodatkiem, nie zastępuje menu gracza. -->
             <RouterLink
               v-if="isAdmin"
               to="/admin"
-              aria-label="Admin"
-              class="inline-flex items-center gap-2 rounded-full border border-purple-500/30 bg-purple-500/10 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-purple-400 transition hover:bg-purple-500 hover:text-white md:px-5 md:py-2.5"
+              aria-label="Panel Administratora"
+              class="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/15 p-2.5 font-display text-sm font-extrabold uppercase tracking-[0.08em] text-purple-300 transition hover:bg-purple-500 hover:text-white md:px-4 md:py-2.5"
             >
               <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
-              <span class="hidden md:inline">Admin</span>
+              <span class="hidden md:inline">Panel Administratora</span>
             </RouterLink>
 
             <!-- Przycisk WYLOGUJ -->
@@ -163,7 +173,7 @@ async function handleLogout() {
         </div>
 
         <!-- Menu mobilne -->
-        <details class="group relative xl:hidden">
+        <details ref="mobileMenu" class="group relative xl:hidden">
           <summary class="grid size-10 cursor-pointer list-none place-items-center rounded-full border border-line sm:size-11 [&::-webkit-details-marker]:hidden">
             <span class="sr-only">Menu</span>
             <svg viewBox="0 0 24 24" class="size-5 group-open:hidden" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
@@ -177,7 +187,24 @@ async function handleLogout() {
                   :aria-current="isLinkActive(i) ? 'page' : undefined"
                   class="block rounded-xl px-3 py-2.5 hover:text-fg"
                   :class="isLinkActive(i) ? 'bg-surface-2 text-fg' : 'text-muted'"
+                  @click="closeMobileMenu"
                   >{{ link.label }}</RouterLink
+                >
+              </li>
+              <li v-if="isLoggedIn" class="mt-1 border-t border-line pt-1">
+                <RouterLink
+                  to="/profil"
+                  class="block rounded-xl px-3 py-2.5 text-lime hover:bg-lime/10"
+                  @click="closeMobileMenu"
+                  >Profil</RouterLink
+                >
+              </li>
+              <li v-if="isLoggedIn && isAdmin" class="mt-1 border-t border-purple-500/30 pt-1">
+                <RouterLink
+                  to="/admin"
+                  class="block rounded-xl bg-purple-500/10 px-3 py-2.5 text-purple-300 hover:bg-purple-500/20"
+                  @click="closeMobileMenu"
+                  >Panel Administratora</RouterLink
                 >
               </li>
             </ul>

@@ -99,12 +99,16 @@ export interface ScheduleMatch {
   score1?: number
   score2?: number
   isDoubleWO?: boolean
+  isWalkover?: boolean
+  walkoverPlayerId?: string
   isPlayoff?: boolean
   badgeState: ScheduleBadgeState
   hasScore: boolean
   displayDate?: string | null
   displayTime?: string | null
   status?: string
+  proposerId?: string
+  proposedBy?: string
   /** Moment zatwierdzenia protokołu przez admina. */
   acceptedAt?: number
   proposedDate?: string
@@ -291,7 +295,8 @@ export interface CupDataResponse {
     score1?: number; score2?: number
     legs1?: number; legs2?: number
     status?: string
-    isKnockout?: boolean; isDoubleWO?: boolean
+    isKnockout?: boolean; isDoubleWO?: boolean; isWalkover?: boolean
+    walkoverPlayerId?: string
     proposedDate?: string; proposedTime?: string; proposedTimestamp?: number
     proposerId?: string; proposedBy?: string
     timestamp?: number

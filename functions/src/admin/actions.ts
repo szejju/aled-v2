@@ -6,6 +6,9 @@
 
 import * as functions from "firebase-functions";
 import admin from "firebase-admin";
+import { getApp, getApps, initializeApp, type App } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getDatabase } from "firebase-admin/database";
 import { archiveDatabase } from "../database/connection.js";
 import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
 import { awardSeasonTrophies } from "../league/ceremony.js";
@@ -13,15 +16,18 @@ import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.j
 
 // ---- Lazy init -----------------------------------------------------------
 
-const getDb = () => {
-  if (!admin.apps.length) admin.initializeApp();
-  return admin.database();
-};
+const DATABASE_URL = "https://ale-dart-dev-default-rtdb.europe-west1.firebasedatabase.app";
 
-// ---- Helper: weryfikacja uprawnień admina --------------------------------
+function adminApp(): App {
+  const existing = getApps().find((app) => app.name === "[DEFAULT]");
+  if (existing) return existing;
+  return initializeApp({ databaseURL: DATABASE_URL });
+}
+
+const getDb = () => getDatabase(adminApp());
 
 const verifyAdmin = async (uid: string): Promise<boolean> => {
-  const userRecord = await admin.auth().getUser(uid);
+  const userRecord = await getAuth(adminApp()).getUser(uid);
   const email = (userRecord.email || "").toLowerCase();
 
   const db = getDb();
@@ -475,8 +481,10 @@ export const handleExceptionRequest = functions.https.onCall(async (request) => 
       success: true,
       message: action === 'approve' ? 'Wyjątek zaakceptowany.' : 'Wyjątek odrzucony.'
     };
-  } catch (error: any) {
-    throw new functions.https.HttpsError(error.code || 'internal', error.message);
+  } catch (error: unknown) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    const message = error instanceof Error ? error.message : 'Nie udało się zapisać decyzji.';
+    throw new functions.https.HttpsError('internal', message);
   }
 });
 

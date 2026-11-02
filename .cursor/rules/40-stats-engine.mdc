@@ -1,0 +1,14 @@
+---
+description: "Algorytmy przeliczania statystyk, punktów DPI, generowanie tabeli ligowej i osiągnięć"
+globs:
+  - "functions/src/stats_engine/**/*.ts"
+  - "src/views/StandingsView.vue"
+  - "src/views/RankingsView.vue"
+  ---
+
+# Silnik Statystyk (StatsEngine)
+
+- **Lokalizacja silnika:** `functions/src/stats_engine/calculator.ts`
+- **Główne zadanie:** `StatsEngine.calculateAllStats()` przelicza dane wejściowe z `players` oraz `schedule`, wyliczając bilans meczów, legów, średnie, najwyższe checkouty, short-legi oraz punktację **DPI**.
+- **Wymóg:** Modyfikacje w sposobie liczenia punktów lub legów MUSZĄ być spójne z widokami `getDivisionTable` oraz `getPlayersList`.
+- **Rankingi:** `rankings.ts` odpowiada za globalne zestawienia historyczne i per-sezon.

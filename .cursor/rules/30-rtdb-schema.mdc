@@ -1,0 +1,21 @@
+---
+description: "Pytania o strukturę bazy Realtime Database (RTDB), zapytania do bazy, relacje i klucze"
+globs:
+  - "functions/src/database/**/*.ts"
+  - "src/types/**/*.ts"
+  - "database.rules.json"
+---
+
+# Realtime Database (RTDB) Schema Map
+
+## KONWENCJA KLUCZY MECZÓW
+- Liga: `S{season}-{division}-R{round}-M{counter}` (np. `S4-DYWIZJA_1-R1-M1`)
+- Puchar Grupa: `{cupId}-G{group}-R{round}-M{counter}`
+- Puchar KO: `CUP-KO-R{round}-M{counter}`
+
+## GŁÓWNE ŚCIEŻKI
+- `players/{playerId}` – dane zawodnika, weryfikacje, statystyki, kary.
+- `schedule/{matchKey}` – mecze ligowe (p1Id, p2Id, score1, score2, legs1, legs2, status, p1Stats, p2Stats, pendingProtocol).
+- `cup/` – `participants/`, `groups/`, `schedule/`, `bracket/`, `settings/`.
+- `settings/` – `adminEmails`, `leagueStructure/`, `rules/`, `socialStats/`.
+- `archive/season_{N}` – odseparowana instancja bazy archiwalnej (`archive-app`).   

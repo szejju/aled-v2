@@ -97,7 +97,8 @@ onMounted(async () => {
     const engine = officialLeagueStats(roster, rawSchedule)
 
     const allMatches: RawScheduleMatch[] = Object.entries(rawSchedule)
-      .map(([id, row]) => ({ id, ...row }))
+      // Klucz z RTDB jest identyfikatorem meczu i musi nadpisać ewentualne `id` z rekordu.
+      .map(([id, row]) => ({ ...row, id }))
       .filter(row => row.p1Id && row.p2Id)
 
     const selectedMatch = pickHitOfTheRound(allMatches, engine, startDateStr)

@@ -1,0 +1,65 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "players": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true",
+      ".indexOn": ["uid", "email"]
+    },
+    "schedule": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "cup": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "news": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "polls": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "archive": {
+      ".read": true,
+      ".write": "auth != null && auth.token.admin == true"
+    },
+
+    "penalties": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "enrollments": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "vacations": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "summer": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true"
+    },
+
+    "settings": {
+      ".write": "auth != null && auth.token.admin == true",
+      "startDate": { ".read": true },
+      "leagueStartDate": { ".read": true },
+      "currentSeason": { ".read": true },
+      "rules": { ".read": true },
+      "leagueStructure": { ".read": true },
+      "socialStats": { ".read": true },
+      "summerLeagueStatus": { ".read": true },
+      "scheduleDates": { ".read": true },
+      "schedule": { ".read": true },
+      "adminEmails": {
+        ".read": "auth != null"
+      }
+    }
+  }
+}

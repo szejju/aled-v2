@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
+import { errorText } from '@/utils/errorText'
 
 export interface Leave { start: string; end: string }
 export interface PlayerProfileHeader {
   id: string; firstName: string; lastName: string
   nick?: string; avatarUrl?: string | null; div: string; leave?: Leave | null
 }
-interface Props { player: PlayerProfileHeader; loading?: boolean; uploadingAvatar?: boolean }
+interface Props {
+  player: PlayerProfileHeader
+  loading?: boolean
+  uploadingAvatar?: boolean
+  uploadAvatar?: (file: File) => Promise<void>
+}
 interface Emits {
-  (e: 'update-avatar', file: File): void
   (e: 'edit-nick'): void
   (e: 'vacation-submit', data: { start: string; end: string }): void
   (e: 'vacation-cancel'): void
@@ -16,6 +21,10 @@ interface Emits {
 const props = withDefaults(defineProps<Props>(), { loading: false })
 const emit = defineEmits<Emits>()
 const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarModalOpen = ref(false)
+const pendingAvatar = ref<File | null>(null)
+const avatarPreview = ref('')
+const avatarError = ref('')
 const vacationModalOpen = ref(false)
 const vacationForm = ref({ start: '', end: '' })
 const isWaitingRoom = computed(() => {
@@ -25,11 +34,57 @@ const isWaitingRoom = computed(() => {
 const hasLeave = computed(() => !!props.player.leave?.start)
 const today = computed(() => new Date().toISOString().slice(0, 10))
 const skeleton = computed(() => props.loading)
-function triggerAvatarUpload() { avatarInput.value?.click() }
+function revokeAvatarPreview() {
+  if (avatarPreview.value) URL.revokeObjectURL(avatarPreview.value)
+  avatarPreview.value = ''
+}
+function closeAvatarModal() {
+  if (props.uploadingAvatar) return
+  revokeAvatarPreview()
+  pendingAvatar.value = null
+  avatarError.value = ''
+  avatarModalOpen.value = false
+}
+function openAvatarModal() {
+  if (props.uploadingAvatar || skeleton.value) return
+  avatarError.value = ''
+  avatarModalOpen.value = true
+}
 function onAvatarChange(event: Event) {
   const input = event.target as HTMLInputElement
-  if (input.files?.[0]) emit('update-avatar', input.files[0])
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    avatarError.value = 'Wybierz plik graficzny.'
+    return
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    avatarError.value = 'Plik jest za duży (maks. 8 MB).'
+    return
+  }
+  revokeAvatarPreview()
+  pendingAvatar.value = file
+  avatarPreview.value = URL.createObjectURL(file)
+  avatarError.value = ''
 }
+async function saveAvatar() {
+  if (!pendingAvatar.value || props.uploadingAvatar) return
+  if (!props.uploadAvatar) {
+    avatarError.value = 'Zapis awatara jest niedostępny.'
+    return
+  }
+  avatarError.value = ''
+  try {
+    await props.uploadAvatar(pendingAvatar.value)
+    revokeAvatarPreview()
+    pendingAvatar.value = null
+    avatarModalOpen.value = false
+  } catch (error: unknown) {
+    avatarError.value = errorText(error, 'Nie udało się zapisać awatara.')
+  }
+}
+onUnmounted(revokeAvatarPreview)
 function openVacationModal() {
   if (props.player.leave?.start) {
     vacationForm.value = { start: props.player.leave.start, end: props.player.leave.end }
@@ -59,7 +114,7 @@ function cancelVacation() { emit('vacation-cancel') }
         <div role="button" tabindex="0"
           :class="['w-32 h-32 rounded-full flex items-center justify-center text-on-lime text-5xl font-black shadow-lg border-4 border-lime/20 relative group overflow-hidden mb-6',
             props.uploadingAvatar ? 'cursor-wait opacity-70' : 'cursor-pointer bg-lime']"
-          @click="triggerAvatarUpload" @keydown.enter="triggerAvatarUpload">
+          @click="openAvatarModal" @keydown.enter="openAvatarModal">
           <span v-if="props.uploadingAvatar" class="absolute inset-0 bg-lime/80 flex items-center justify-center z-10">
             <svg class="animate-spin h-10 w-10 text-on-lime" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -69,7 +124,6 @@ function cancelVacation() { emit('vacation-cancel') }
           <span v-if="!props.uploadingAvatar && !player.avatarUrl">D</span>
           <img v-else-if="!props.uploadingAvatar" :src="player.avatarUrl ?? undefined" alt="Avatar" class="w-full h-full object-cover">
         </div>
-        <input ref="avatarInput" type="file" accept="image/*" class="hidden" @change="onAvatarChange">
         <h2 class="text-2xl md:text-3xl font-display font-black text-fg uppercase tracking-tight">{{ player.firstName }} {{ player.lastName }}</h2>
         <div role="button" class="flex items-center gap-1.5 mt-1.5 mb-4 group cursor-pointer mx-auto px-3 py-1 rounded-lg hover:bg-fg/5" @click="$emit('edit-nick')">
           <p class="text-sm font-semibold italic text-fg/60 group-hover:text-lime">{{ player.nick || 'BRAK PSEUDONIMU' }}</p>
@@ -88,6 +142,37 @@ function cancelVacation() { emit('vacation-cancel') }
       </div>
     </template>
   </div>
+  <Teleport to="body">
+    <Transition name="modal" appear>
+      <div v-if="avatarModalOpen" class="fixed inset-0 z-[99999] flex items-center justify-center p-4" @click.self="closeAvatarModal">
+        <div class="fixed inset-0 bg-ink/70 backdrop-blur-sm" aria-hidden="true" />
+        <div class="relative w-full max-w-md bg-[#13171C] rounded-2xl border border-line shadow-2xl overflow-hidden" role="dialog" aria-labelledby="avatar-modal-title" @click.stop>
+          <div class="flex items-center justify-between px-6 py-4 border-b border-line">
+            <h2 id="avatar-modal-title" class="text-lg font-display text-fg">Zmień awatar</h2>
+            <button type="button" :disabled="uploadingAvatar" @click="closeAvatarModal" class="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-surface-2 disabled:opacity-40" aria-label="Zamknij">X</button>
+          </div>
+          <div class="px-6 py-5 flex flex-col items-center gap-4">
+            <div class="w-32 h-32 rounded-full overflow-hidden border-4 border-lime/20 bg-lime flex items-center justify-center text-on-lime text-5xl font-black">
+              <img v-if="avatarPreview || player.avatarUrl" :src="avatarPreview || player.avatarUrl || undefined" alt="Podgląd awatara" class="w-full h-full object-cover">
+              <span v-else>D</span>
+            </div>
+            <p class="text-sm text-muted text-center">Wybierz zdjęcie. Zapisze się dopiero po potwierdzeniu.</p>
+            <input ref="avatarInput" type="file" accept="image/*" class="hidden" @change="onAvatarChange">
+            <button type="button" :disabled="uploadingAvatar" @click="avatarInput?.click()" class="px-4 py-2 rounded-xl border border-line text-sm font-bold uppercase tracking-wider text-fg hover:border-lime/40 disabled:opacity-40">
+              {{ pendingAvatar ? 'Wybierz inne' : 'Wybierz zdjęcie' }}
+            </button>
+            <p v-if="avatarError" class="text-sm text-red-400 text-center">{{ avatarError }}</p>
+          </div>
+          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
+            <button type="button" :disabled="uploadingAvatar" @click="closeAvatarModal" class="px-4 py-2 rounded-lg font-medium text-muted hover:text-fg text-sm disabled:opacity-40">Anuluj</button>
+            <button type="button" :disabled="!pendingAvatar || uploadingAvatar" @click="saveAvatar" class="px-4 py-2 rounded-lg font-medium text-on-lime bg-accent hover:bg-accent/90 text-sm disabled:opacity-40">
+              {{ uploadingAvatar ? 'Zapisuję...' : 'Zapisz' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 <Teleport to="body">
     <Transition name="modal" appear>
       <div v-if="vacationModalOpen" class="fixed inset-0 z-[99999] flex items-center justify-center p-4" @click.self="vacationModalOpen = false">

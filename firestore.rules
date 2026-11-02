@@ -1,0 +1,97 @@
+rules_version = '2';
+// ALED trzyma ligę w Realtime Database. Ten plik zamyka Firestore,
+// którego klient i Cloud Functions nie używają. Reguły poniżej
+// powielają politykę database.rules.json na wypadek omyłkowego zapisu
+// do kolekcji o tych samych nazwach. Cloud Functions (Admin SDK)
+// omijają te reguły.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.admin == true;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /players/{playerId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /schedule/{matchId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /cup/{document=**} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /news/{newsId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /polls/{pollId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+
+      match /votes/{voterId} {
+        allow read: if true;
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    match /archive/{document=**} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /penalties/{penaltyId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /enrollments/{playerId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /vacations/{playerId} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /summer/{document=**} {
+      allow read: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /settings/{key} {
+      allow read: if key == 'adminEmails' ? signedIn() : true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /notifications/{notifId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /waitlist/{playerId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /achievements/{document=**} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /divisionsSettings/{divisionId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+  }
+}

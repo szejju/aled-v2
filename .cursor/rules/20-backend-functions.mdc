@@ -1,0 +1,19 @@
+---
+description: "Tworzenie i modyfikacja backendu Firebase Cloud Functions, akcji admina i reguł bezpieczeństwa"
+globs:
+  - "functions/src/**/*.ts"
+  - "functions/package.json"
+---
+
+# Backend & Cloud Functions Architecture
+
+## BAZOWE ZASADY BACKENDU
+- WSZYSTKIE funkcje MUSZĄ być wyeksportowane w `functions/src/index.ts`.
+- Zawsze używaj bezpiecznych zapisów wielościeżkowych (`db.ref().update({...})`), zamiast nadpisywać całe obiekty (`.set()`), chyba że tworzysz nowy węzeł.
+- Zakaz stosowania `any` w TypeScript – używaj precyzyjnych interfejsów z `src/types`.
+- Wszystkie akcje administracyjne weryfikują `request.auth.uid` oraz porównują email z `settings/adminEmails` (case-insensitive).
+
+## SZYBKI INDEKS ENDPOINTÓW (ADMIN & MATCHES)
+- **Panel/Reguły:** `confirmMatchResult`, `awardWalkover`, `applyPenalty`
+- **Mecze/Radar:** `approveMatchResult`, `rejectMatchResult`, `submitMatchResult`, `proposeMatchDate`
+- **Generowanie:** `generateLeagueSchedule`, `generateCupGroupsAdmin`, `generateCupKnockoutAdmin`
