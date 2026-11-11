@@ -1,19 +1,34 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { updateProfile } from '@/services/api'
 
 const props = defineProps<{
   currentLink: string
+  /** Sandbox `/debug-modals`: „Zapisz” nie woła `updateProfile`. */
+  preview?: boolean
 }>()
 
-const emit = defineEmits(['close', 'updated'])
+const emit = defineEmits<{
+  close: []
+  updated: [link: string]
+}>()
 
 const newLink = ref(props.currentLink || '')
 const isSaving = ref(false)
 const errorMsg = ref('')
+const inputEl = ref<HTMLInputElement | null>(null)
 
 async function saveLink() {
-  if (newLink.value.trim() === (props.currentLink || '').trim()) {
+  if (isSaving.value) return
+  const link = newLink.value.trim()
+  if (link === (props.currentLink || '').trim()) {
+    emit('close')
+    return
+  }
+
+  if (props.preview) {
+    console.log('[debug-modals] EditDartcounterModal → save', { dartcounter: link })
+    emit('updated', link)
     emit('close')
     return
   }
@@ -22,70 +37,103 @@ async function saveLink() {
   errorMsg.value = ''
 
   try {
-    await updateProfile({ dartcounter: newLink.value })
-    emit('updated', newLink.value.trim())
+    await updateProfile({ dartcounter: link })
+    emit('updated', link)
     emit('close')
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Błąd zapisu:', err)
     errorMsg.value = 'Wystąpił błąd zapisu do bazy danych.'
   } finally {
     isSaving.value = false
   }
 }
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.stopPropagation()
+  emit('close')
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  document.body.style.overflow = 'hidden'
+  inputEl.value?.focus()
+  inputEl.value?.select()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
 </script>
 
 <template>
-  <div 
-    class="fixed inset-0 z-[150] flex flex-col items-center justify-center p-4 bg-black/80 backdrop-blur-sm cursor-pointer"
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="edit-dartcounter-title"
     @click.self="emit('close')"
   >
-    <div class="bg-gray-900 border border-gray-700 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden relative cursor-default p-6 md:p-8 text-center animate-pop-in">
-      <div class="absolute -top-10 -right-10 w-32 h-32 bg-orange-500/10 rounded-full blur-2xl pointer-events-none"></div>
-      
-      <div class="w-16 h-16 bg-orange-500/10 border border-orange-500/30 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-[0_0_15px_rgba(249,115,22,0.2)]">
-        🎯
-      </div>
-      
-      <h3 class="text-xl font-black text-white uppercase mb-1 tracking-widest">Konto Dartcounter</h3>
-      <p class="text-gray-400 text-[9px] uppercase font-bold tracking-widest mb-6">Wklej link do swojego profilu, aby inni mogli Cię łatwo dodać do gry.</p>
-      
-      <input 
-        v-model="newLink" 
-        @keyup.enter="saveLink"
-        type="text" 
-        placeholder="https://dartcounter.net/..." 
-        autocomplete="off" 
-        class="w-full bg-gray-950 border border-gray-800 text-white rounded-xl px-4 py-4 mb-6 focus:outline-none focus:border-orange-500 transition-colors text-center font-bold text-xs tracking-wider shadow-inner placeholder:text-gray-700"
+    <div
+      class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-line bg-surface p-6 shadow-2xl"
+      @click.stop
+    >
+      <button
+        type="button"
+        class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+        aria-label="Zamknij"
+        @click="emit('close')"
       >
-      
-      <p v-if="errorMsg" class="text-red-500 text-xs mb-4">{{ errorMsg }}</p>
+        <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
 
-      <div class="grid grid-cols-2 gap-3 relative z-10">
-        <button 
-          @click="emit('close')" 
-          :disabled="isSaving"
-          class="py-3.5 bg-gray-800 text-gray-400 font-black uppercase text-[10px] rounded-xl hover:bg-gray-700 hover:text-white border border-gray-700 transition-colors tracking-widest disabled:opacity-50"
+      <p class="label pr-8 text-accent">Profil</p>
+      <h2 id="edit-dartcounter-title" class="pr-8 font-display text-2xl font-black uppercase italic text-fg">
+        Konto Dartcounter
+      </h2>
+      <p class="mt-6 text-sm leading-relaxed text-muted">
+        Wklej link do swojego profilu, aby inni mogli Cię łatwo dodać do gry.
+      </p>
+
+      <label class="mt-6 block">
+        <span class="label text-muted">Link</span>
+        <input
+          ref="inputEl"
+          v-model="newLink"
+          type="url"
+          inputmode="url"
+          placeholder="https://dartcounter.net/..."
+          autocomplete="off"
+          class="mt-2 w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg placeholder:text-muted focus:border-lime focus:outline-none"
+          @keyup.enter="saveLink"
         >
-          Anuluj
-        </button>
-        <button 
-          @click="saveLink" 
+      </label>
+
+      <p v-if="errorMsg" class="mt-6 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ errorMsg }}
+      </p>
+
+      <div class="mt-6 flex flex-col gap-2">
+        <button
+          type="button"
+          class="w-full rounded-xl bg-lime px-4 py-3 font-display font-extrabold uppercase tracking-wide text-on-lime transition hover:bg-lime/90 disabled:opacity-40"
           :disabled="isSaving"
-          class="py-3.5 bg-orange-500 text-gray-900 font-black uppercase text-[10px] rounded-xl hover:bg-orange-400 transition-transform active:scale-95 tracking-widest shadow-[0_0_15px_rgba(249,115,22,0.3)] disabled:opacity-50 disabled:active:scale-100"
+          @click="saveLink"
         >
           {{ isSaving ? 'Zapis...' : 'Zapisz' }}
+        </button>
+        <button
+          type="button"
+          class="w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg disabled:opacity-40"
+          :disabled="isSaving"
+          @click="emit('close')"
+        >
+          Anuluj
         </button>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.animate-pop-in {
-  animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes popIn {
-  0% { opacity: 0; transform: scale(0.95); }
-  100% { opacity: 1; transform: scale(1); }
-}
-</style>

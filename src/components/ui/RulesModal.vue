@@ -11,6 +11,8 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 
 interface Props {
   modelValue: boolean
+  /** Sandbox `/debug-modals`: treść z propsa, bez odczytu `settings/rules`. */
+  previewText?: string
 }
 
 const props = defineProps<Props>()
@@ -46,8 +48,16 @@ async function fetchRules() {
 watch(
   () => props.modelValue,
   (isOpen) => {
-    if (isOpen && !rules.value) fetchRules()
+    if (!isOpen) return
+    if (props.previewText) {
+      rules.value = props.previewText
+      loading.value = false
+      error.value = ''
+      return
+    }
+    if (!rules.value) fetchRules()
   },
+  { immediate: true },
 )
 
 function close() {

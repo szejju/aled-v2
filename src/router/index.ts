@@ -136,6 +136,13 @@ const router = createRouter({
       meta: { title: 'Panel Admina', requiresAuth: true, requiresAdmin: true },
     },
     {
+      // Ukryty podgląd modali. Brak linku w nawigacji. Nic stąd nie zapisuje do bazy.
+      path: '/debug-modals',
+      name: 'debug-modals',
+      component: () => import('@/views/debug/ModalsSandbox.vue'),
+      meta: { title: 'Sandbox modali' },
+    },
+    {
       // Zamiast białego ekranu wracamy na stronę główną.
       path: '/:pathMatch(.*)*',
       name: 'not-found',

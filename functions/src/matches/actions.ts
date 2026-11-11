@@ -86,6 +86,63 @@ async function leagueStartMs(database: admin.database.Database): Promise<number 
   return null;
 }
 
+interface ProposalInput {
+  date: string;
+  time: string;
+  timestamp?: number;
+  isException?: boolean;
+  exceptionReason?: string;
+}
+
+/** Wspólna walidacja terminu dla propozycji i kontrpropozycji. */
+async function proposalUpdate(
+  database: admin.database.Database,
+  playerId: string,
+  round: unknown,
+  input: ProposalInput,
+): Promise<Record<string, unknown>> {
+  const { date, time, timestamp, isException, exceptionReason } = input;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    throw new Error("invalid-argument: Nieprawidlowa data lub godzina.");
+  }
+
+  const agreedAt = typeof timestamp === "number" ? timestamp : Number.NaN;
+  if (!plausibleLocalTimestamp(date, time, agreedAt)) {
+    throw new Error("invalid-argument: Godzina musi byc lokalnym czasem gracza.");
+  }
+
+  const reason = (exceptionReason ?? "").trim();
+  if (isException) {
+    if (reason.length < 3) {
+      throw new Error("invalid-argument: Podaj powod wyjatku.");
+    }
+  } else {
+    const startMs = await leagueStartMs(database);
+    const roundNumber = parseInt(String(round ?? ""), 10);
+    const bounds = startMs == null ? null : roundCalendarBounds(startMs, roundNumber);
+    if (!bounds) {
+      throw new Error("failed-precondition: Brak okna kolejki. Zglos termin jako wyjatek.");
+    }
+    if (agreedAt <= Date.now()) {
+      throw new Error("failed-precondition: Termin nie moze byc w przeszlosci.");
+    }
+    if (date < bounds.first || date > bounds.last) {
+      throw new Error("failed-precondition: Data musi wpasc w 7-dniowe okno tej kolejki. Poza oknem zglos wyjatek.");
+    }
+  }
+
+  return {
+    proposedDate: date,
+    proposedTime: time,
+    proposedTimestamp: agreedAt,
+    proposerId: playerId,
+    proposedBy: playerId,
+    status: isException ? "pending_exception" : "proposed",
+    exceptionReason: isException ? reason : null,
+    updatedAt: admin.database.ServerValue.TIMESTAMP,
+  };
+}
+
 /**
  * Proponuje nowy termin meczu (liga lub puchar).
  */
@@ -133,43 +190,9 @@ export const proposeMatchDate = onCall(
       if (!OPENABLE_STATUSES.has(status)) {
         throw new Error("failed-precondition: Ten mecz nie przyjmuje nowej propozycji terminu.");
       }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
-        throw new Error("invalid-argument: Nieprawidlowa data lub godzina.");
-      }
-
-      const agreedAt = typeof timestamp === "number" ? timestamp : Number.NaN;
-      if (!plausibleLocalTimestamp(date, time, agreedAt)) {
-        throw new Error("invalid-argument: Godzina musi byc lokalnym czasem gracza.");
-      }
-
-      const reason = (exceptionReason ?? "").trim();
-      if (isException) {
-        if (reason.length < 3) {
-          throw new Error("invalid-argument: Podaj powod wyjatku.");
-        }
-      } else {
-        const startMs = await leagueStartMs(dbRef);
-        const round = parseInt(String(match.round ?? match.roundNum ?? ""), 10);
-        const bounds = startMs == null ? null : roundCalendarBounds(startMs, round);
-        if (!bounds) {
-          throw new Error("failed-precondition: Brak okna kolejki. Zglos termin jako wyjatek.");
-        }
-        if (agreedAt <= Date.now()) {
-          throw new Error("failed-precondition: Termin nie moze byc w przeszlosci.");
-        }
-        if (date < bounds.first || date > bounds.last) {
-          throw new Error("failed-precondition: Data musi wpasc w 7-dniowe okno tej kolejki. Poza oknem zglos wyjatek.");
-        }
-      }
-
-      const updates: Record<string, unknown> = {
-        proposedDate: date, proposedTime: time, proposedTimestamp: agreedAt,
-        proposerId: playerId, proposedBy: playerId,
-        status: isException ? "pending_exception" : "proposed",
-        exceptionReason: isException ? reason : null,
-        updatedAt: admin.database.ServerValue.TIMESTAMP,
-      };
-
+      const updates = await proposalUpdate(dbRef, playerId, match.round ?? match.roundNum, {
+        date, time, timestamp, isException, exceptionReason,
+      });
       await mr.update(updates);
 
       return {
@@ -191,11 +214,18 @@ export const respondToMatchDate = onCall(
     const uid = request.auth?.uid;
     if (!uid) throw new Error("unauthenticated: Brak autoryzacji.");
 
-    const { matchId, action, isCup } = request.data as {
-      matchId: string; action: "accept" | "reject"; isCup?: boolean;
+    const { matchId, action, isCup, date, time, timestamp, isException, exceptionReason } = request.data as {
+      matchId: string;
+      action: "accept" | "reject" | "counter";
+      isCup?: boolean;
+      date?: string;
+      time?: string;
+      timestamp?: number;
+      isException?: boolean;
+      exceptionReason?: string;
     };
 
-    if (!matchId || !["accept", "reject"].includes(action)) {
+    if (!matchId || !["accept", "reject", "counter"].includes(action)) {
       throw new Error("invalid-argument: Nieprawidlowe dane.");
     }
 
@@ -225,15 +255,42 @@ export const respondToMatchDate = onCall(
           status: "accepted", updatedAt: admin.database.ServerValue.TIMESTAMP,
         });
         return { success: true, message: "Termin zaakceptowany!" };
-      } else {
-        await mr.update({
-          status: "upcoming",
-          proposedDate: null, proposedTime: null, proposedTimestamp: null,
-          proposerId: null, proposedBy: null,
-          updatedAt: admin.database.ServerValue.TIMESTAMP,
-        });
-        return { success: true, message: "Propozycja odrzucona." };
       }
+
+      if (action === "counter") {
+        if (!date || !time) {
+          throw new Error("invalid-argument: Podaj date i godzine kontrpropozycji.");
+        }
+        const updates = await proposalUpdate(dbRef, playerId, match.round ?? match.roundNum, {
+          date, time, timestamp, isException, exceptionReason,
+        });
+        const nextStamp = updates.proposedTimestamp;
+        const currentStamp = typeof match.proposedTimestamp === "number" ? match.proposedTimestamp : Number.NaN;
+        const currentDate = typeof match.proposedDate === "string" ? match.proposedDate : "";
+        const currentTime = typeof match.proposedTime === "string" ? match.proposedTime.slice(0, 5) : "";
+        const sameInstant = Number.isFinite(currentStamp)
+          && typeof nextStamp === "number"
+          && Math.abs(nextStamp - currentStamp) < 60_000;
+        const sameClock = date === currentDate && time.slice(0, 5) === currentTime;
+        if (sameInstant || sameClock) {
+          throw new Error("invalid-argument: Kontrpropozycja musi miec inny termin.");
+        }
+        await mr.update(updates);
+        return {
+          success: true,
+          message: isException
+            ? "Kontrpropozycja wyslana do admina."
+            : "Kontrpropozycja wyslana do rywala.",
+        };
+      }
+
+      await mr.update({
+        status: "upcoming",
+        proposedDate: null, proposedTime: null, proposedTimestamp: null,
+        proposerId: null, proposedBy: null,
+        updatedAt: admin.database.ServerValue.TIMESTAMP,
+      });
+      return { success: true, message: "Propozycja odrzucona." };
     } catch (error: unknown) {
       rethrowCallable(error, "Nie udalo sie zapisac decyzji.");
     }

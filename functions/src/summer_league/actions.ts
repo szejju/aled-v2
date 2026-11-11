@@ -289,6 +289,8 @@ function readPayload(data: unknown): {
   score2: unknown;
   p1Stats: unknown;
   p2Stats: unknown;
+  screenUrl1: unknown;
+  screenUrl2: unknown;
 } {
   const record = asRecord(data);
   return {
@@ -297,7 +299,16 @@ function readPayload(data: unknown): {
     score2: record?.score2,
     p1Stats: record?.p1Stats,
     p2Stats: record?.p2Stats,
+    screenUrl1: record?.screenUrl1,
+    screenUrl2: record?.screenUrl2,
   };
+}
+
+function readScreen(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 2000) return null;
+  return trimmed;
 }
 
 /** Wiersz tabeli Ligi Lato. Różnica legów jest liczona przy sortowaniu, nie trzymana osobno. */
@@ -542,7 +553,7 @@ export const submitSummerMatchResult = onCall(
       throw new HttpsError("unauthenticated", "Musisz być zalogowany, aby wpisać wynik Ligi Lato.");
     }
 
-    const { matchId: rawId, score1, score2, p1Stats, p2Stats } = readPayload(request.data);
+    const { matchId: rawId, score1, score2, p1Stats, p2Stats, screenUrl1, screenUrl2 } = readPayload(request.data);
     const matchId = summerMatchKey(rawId);
     if (!matchId) {
       throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
@@ -593,6 +604,14 @@ export const submitSummerMatchResult = onCall(
 
       const left = readSideStats(p1Stats, legA, "Pierwszy gracz");
       const right = readSideStats(p2Stats, legB, "Drugi gracz");
+      const screen1 = readScreen(screenUrl1);
+      if (!screen1) {
+        throw new HttpsError("invalid-argument", "Wgraj screen protokołu.");
+      }
+      const screen2 = readScreen(screenUrl2);
+      if (left.max + right.max > 0 && !screen2) {
+        throw new HttpsError("invalid-argument", "Przy 180 wymagany jest drugi screen.");
+      }
 
       // Transakcja scala wynik z istniejącym meczem. p1Id, p2Id i grupa zostają.
       // Tabela letnia liczy się dopiero po udanym zapisie, z całego terminarza.
@@ -608,6 +627,8 @@ export const submitSummerMatchResult = onCall(
           score2: legB,
           p1Stats: left,
           p2Stats: right,
+          screen1,
+          screen2,
           timestamp: admin.database.ServerValue.TIMESTAMP,
           submittedBy: uid,
           pendingProtocol: null,

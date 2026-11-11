@@ -1,16 +1,40 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { Lock, Trophy } from 'lucide-vue-next'
 import { joinCup } from '@/services/api'
 
 const props = defineProps<{
   isVerified: boolean // Użyjemy propsa, aby UI wiedziało, który widok pokazać
+  /** Sandbox `/debug-modals`: „Tak, Zapisz” nie woła `joinCup`. */
+  preview?: boolean
 }>()
 
 const emit = defineEmits(['close', 'enrolled'])
 const isSaving = ref(false)
 const errorMsg = ref('')
 
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  event.stopPropagation()
+  emit('close')
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  document.body.style.overflow = 'hidden'
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
+
 async function handleEnroll() {
+  if (props.preview) {
+    console.log('[debug-modals] CupEnrollmentModal → enroll', { isVerified: props.isVerified })
+    emit('enrolled')
+    emit('close')
+    return
+  }
   isSaving.value = true
   errorMsg.value = ''
 
@@ -28,42 +52,91 @@ async function handleEnroll() {
 </script>
 
 <template>
-  <div 
-    class="fixed inset-0 z-[100] flex flex-col items-center justify-center p-4 bg-black/80 backdrop-blur-sm cursor-pointer"
-    @click.self="emit('close')"
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="cup-enroll-title"
+    @click="emit('close')"
   >
-    <!-- WIDOK: BRAK WERYFIKACJI -->
-    <div v-if="!isVerified" class="bg-gray-900 border border-gray-700 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden relative cursor-default p-8 text-center animate-pop-in">
-      <div class="w-16 h-16 bg-red-500/10 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-[0_0_15px_rgba(239,68,68,0.2)]">🔒</div>
-      <h3 class="text-xl font-black text-red-500 uppercase mb-2">Brak Weryfikacji</h3>
-      <p class="text-gray-400 text-xs leading-relaxed mb-8">Aby dołączyć do <b>Pucharu Ligi</b>, Twój profil musi być najpierw w pełni zweryfikowany (Kamera i Średnia).</p>
-      <button @click="emit('close')" class="w-full py-3 bg-gray-800 text-gray-400 font-black uppercase text-[10px] rounded-xl hover:bg-gray-700 hover:text-white border border-gray-700 transition-colors tracking-widest">Rozumiem</button>
-    </div>
+    <div
+      class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-line bg-surface p-6 shadow-2xl"
+      @click.stop
+    >
+      <button
+        type="button"
+        class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+        aria-label="Zamknij"
+        @click="emit('close')"
+      >
+        <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
 
-    <!-- WIDOK: ZWERYFIKOWANY -> MOŻNA ZAPISAĆ -->
-    <div v-else class="bg-gray-900 border border-gray-700 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden relative cursor-default p-8 text-center animate-pop-in">
-      <div class="w-16 h-16 bg-purple-500/10 border border-purple-500/30 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-[0_0_15px_rgba(168,85,247,0.2)]">🏆</div>
-      <h3 class="text-xl font-black text-white uppercase mb-2">Puchar Ligi</h3>
-      <p class="text-gray-400 text-xs leading-relaxed mb-6">Czy potwierdzasz chęć udziału w rozgrywkach o Puchar Ligi?<br>To oficjalne zgłoszenie.</p>
-      
-      <p v-if="errorMsg" class="text-red-500 text-xs mb-4">{{ errorMsg }}</p>
+      <template v-if="!isVerified">
+        <p class="label pr-8 text-accent">Puchar Ligi</p>
+        <h2 id="cup-enroll-title" class="pr-8 font-display text-2xl font-black uppercase italic text-fg">
+          Brak weryfikacji
+        </h2>
 
-      <div class="grid grid-cols-2 gap-3">
-        <button @click="emit('close')" :disabled="isSaving" class="py-3 bg-gray-800 text-gray-400 font-black uppercase text-[10px] rounded-xl hover:bg-gray-700 hover:text-white border border-gray-700 transition-colors tracking-widest disabled:opacity-50">Anuluj</button>
-        <button @click="handleEnroll" :disabled="isSaving" class="py-3 bg-purple-600 text-white font-black uppercase text-[10px] rounded-xl hover:bg-purple-500 transition-transform active:scale-95 tracking-widest shadow-[0_0_15px_rgba(168,85,247,0.4)] disabled:opacity-50">
-          {{ isSaving ? 'Zapis...' : 'Tak, Zapisz' }}
+        <div class="mt-6 flex items-start gap-4 rounded-2xl bg-surface-2 p-4">
+          <div class="grid size-16 shrink-0 place-items-center rounded-2xl bg-danger/10 text-danger ring-1 ring-danger/30">
+            <Lock class="size-7" aria-hidden="true" />
+          </div>
+          <p class="text-sm text-muted">
+            Aby dołączyć do <span class="font-semibold text-fg">Pucharu Ligi</span>, Twój profil musi być najpierw w pełni zweryfikowany (Kamera i Średnia).
+          </p>
+        </div>
+
+        <button
+          type="button"
+          class="mt-6 w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg"
+          @click="emit('close')"
+        >
+          Rozumiem
         </button>
-      </div>
+      </template>
+
+      <template v-else>
+        <p class="label pr-8 text-accent">Zgłoszenie</p>
+        <h2 id="cup-enroll-title" class="pr-8 font-display text-2xl font-black uppercase italic text-fg">
+          Puchar Ligi
+        </h2>
+
+        <div class="mt-6 flex items-start gap-4 rounded-2xl bg-surface-2 p-4">
+          <div class="grid size-16 shrink-0 place-items-center rounded-2xl bg-lime/10 text-lime ring-1 ring-lime/30">
+            <Trophy class="size-7" aria-hidden="true" />
+          </div>
+          <p class="text-sm text-muted">
+            Czy potwierdzasz chęć udziału w rozgrywkach o Puchar Ligi?<br />
+            To oficjalne zgłoszenie.
+          </p>
+        </div>
+
+        <p v-if="errorMsg" class="mt-6 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+          {{ errorMsg }}
+        </p>
+
+        <div class="mt-6 flex flex-col gap-2">
+          <button
+            type="button"
+            class="w-full rounded-xl bg-lime px-4 py-3 font-display font-extrabold uppercase tracking-wide text-on-lime transition hover:bg-lime/90 disabled:opacity-40"
+            :disabled="isSaving"
+            @click="handleEnroll"
+          >
+            {{ isSaving ? 'Zapis...' : 'Tak, Zapisz' }}
+          </button>
+          <button
+            type="button"
+            class="w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg disabled:opacity-40"
+            :disabled="isSaving"
+            @click="emit('close')"
+          >
+            Anuluj
+          </button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
-
-<style scoped>
-.animate-pop-in {
-  animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes popIn {
-  0% { opacity: 0; transform: scale(0.95); }
-  100% { opacity: 1; transform: scale(1); }
-}
-</style>

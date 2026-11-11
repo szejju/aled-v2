@@ -7,14 +7,18 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get, ref as dbRef } from 'firebase/database'
-import { Sun } from 'lucide-vue-next'
 import BaseModal from '@/components/ui/BaseModal.vue'
+import ProtocolBoard from '@/components/schedule/ProtocolBoard.vue'
+import ProtocolScreens from '@/components/schedule/ProtocolScreens.vue'
+import ProtocolWarning from '@/components/schedule/ProtocolWarning.vue'
+import { protocolTone } from '@/components/schedule/protocolTone'
+import { useProtocolFaces } from '@/components/schedule/useProtocolFaces'
+import { useProtocolScreens } from '@/components/schedule/useProtocolScreens'
 import { submitSummerMatchResult } from '@/services/api'
 import { getDatabaseClient } from '@/services/firebase'
 import { errorText } from '@/utils/errorText'
 import {
   resolveSummerMatchFormat,
-  summerFormatHint,
   summerMatchClosed,
   summerMatchKey,
   SUMMER_DEFAULT_FORMAT,
@@ -27,11 +31,16 @@ const props = withDefaults(defineProps<{
   matchId?: string
   p1Name?: string
   p2Name?: string
+  /** Sandbox `/debug-modals`: bez odczytu terminarza i bez zapisu wyniku. */
+  preview?: boolean
+  /** W podglądzie buduje format tak jak stare `bestOf` (np. 11 → first to 6). */
+  previewBestOf?: number
 }>(), {
   modelValue: false,
   matchId: '',
   p1Name: '',
   p2Name: '',
+  preview: false,
 })
 
 const emit = defineEmits<{
@@ -50,6 +59,10 @@ const success = ref(false)
 const loadedFormat = ref<SummerMatchFormat>(SUMMER_DEFAULT_FORMAT)
 const loadedP1 = ref('')
 const loadedP2 = ref('')
+const loadedP1Id = ref('')
+const loadedP2Id = ref('')
+const warning = ref<string | null>(null)
+const accent = protocolTone.yellow
 let loadEpoch = 0
 let submitEpoch = 0
 
@@ -57,10 +70,8 @@ const pageMode = computed(() => route.name === 'SummerMatchModal')
 const isOpen = computed(() => pageMode.value || props.modelValue)
 const activeMatchId = computed(() => summerMatchKey(props.matchId) ?? summerMatchKey(route.params.matchId) ?? '')
 const format = computed(() => loadedFormat.value)
-const formatHint = computed(() => summerFormatHint(format.value))
 const name1 = computed(() => props.p1Name.trim() || loadedP1.value || 'Gracz 1')
 const name2 = computed(() => props.p2Name.trim() || loadedP2.value || 'Gracz 2')
-const canClose = computed(() => !submitting.value)
 const showForm = computed(() => !success.value && !loadingMatch.value && !unavailable.value)
 
 const {
@@ -79,12 +90,34 @@ const {
   p2Name: () => name2.value,
 })
 
-const sides = computed(() => [
-  { key: 'p1' as const, name: name1.value, stats: p1Stats, legs: legs1.value },
-  { key: 'p2' as const, name: name2.value, stats: p2Stats, legs: legs2.value },
-])
+const heading = computed(() => (success.value ? 'Wynik zapisany' : 'Zgłoś wynik'))
 
-const isValid = computed(() => !formError.value)
+const { p1: face1, p2: face2 } = useProtocolFaces({
+  open: () => isOpen.value,
+  preview: () => props.preview,
+  p1Id: () => loadedP1Id.value,
+  p2Id: () => loadedP2Id.value,
+  p1Name: () => name1.value,
+  p2Name: () => name2.value,
+  // Podgląd ma etykiety „Gracz 1”. Na żywo nazwa meczu jest „Imię Nazwisko”.
+  nameOrder: () => (props.preview ? 'last-first' : 'first-last'),
+})
+
+const maxHit = computed(() => (p1Stats.max ?? 0) + (p2Stats.max ?? 0) > 0)
+const {
+  screenUrl1,
+  screenUrl2,
+  isUploading1,
+  isUploading2,
+  upload: uploadImage,
+  clear: clearScreen,
+  reset: resetScreens,
+  problem: screenProblem,
+} = useProtocolScreens({
+  preview: () => props.preview,
+  setError: (message) => { error.value = message },
+})
+const canClose = computed(() => !submitting.value && !isUploading1.value && !isUploading2.value)
 
 function record(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
@@ -111,6 +144,8 @@ async function loadMatch() {
   loadedFormat.value = SUMMER_DEFAULT_FORMAT
   loadedP1.value = ''
   loadedP2.value = ''
+  loadedP1Id.value = ''
+  loadedP2Id.value = ''
   if (!id) {
     unavailable.value = 'Nie ma takiego meczu w terminarzu Ligi Lato.'
     loadingMatch.value = false
@@ -139,6 +174,8 @@ async function loadMatch() {
       unavailable.value = 'Ten mecz Ligi Lato jest już rozliczony.'
       return
     }
+    loadedP1Id.value = text(match.p1Id)
+    loadedP2Id.value = text(match.p2Id)
     const [first, second] = await Promise.all([
       sideName(text(match.p1Id), match.p1Name),
       sideName(text(match.p2Id), match.p2Name),
@@ -158,14 +195,8 @@ async function loadMatch() {
   }
 }
 
-function setLegs(key: 'p1' | 'p2', event: Event) {
-  const value = readCount(event)
-  if (key === 'p1') legs1.value = value
-  else legs2.value = value
-}
-
 function onVisibility(next: boolean) {
-  if (!next && submitting.value) return
+  if (!next && (submitting.value || isUploading1.value || isUploading2.value)) return
   if (pageMode.value) {
     if (!next) void router.push({ name: 'SummerHome' })
     return
@@ -175,9 +206,25 @@ function onVisibility(next: boolean) {
 
 async function handleSubmit() {
   if (submitting.value || !showForm.value) return
-  const problem = formError.value
+  const problem = formError.value || screenProblem(maxHit.value)
   if (problem) {
-    error.value = problem
+    warning.value = problem
+    return
+  }
+  warning.value = null
+  if (props.preview) {
+    console.log('[debug-modals] SummerMatchModal → submit', {
+      matchId: activeMatchId.value,
+      bestOf: props.previewBestOf ?? null,
+      score1: legs1.value,
+      score2: legs2.value,
+      p1Stats: sidePayload(p1Stats),
+      p2Stats: sidePayload(p2Stats),
+      screenUrl1: screenUrl1.value.trim(),
+      screenUrl2: screenUrl2.value.trim() || undefined,
+    })
+    emit('submitted')
+    onVisibility(false)
     return
   }
   const matchId = activeMatchId.value
@@ -195,6 +242,8 @@ async function handleSubmit() {
       score2: legs2.value!,
       p1Stats: sidePayload(p1Stats),
       p2Stats: sidePayload(p2Stats),
+      screenUrl1: screenUrl1.value.trim(),
+      screenUrl2: screenUrl2.value.trim() || undefined,
     })
     if (epoch !== submitEpoch) return
     success.value = true
@@ -212,11 +261,24 @@ watch([isOpen, activeMatchId], ([open]) => {
     loadEpoch += 1
     submitEpoch += 1
     submitting.value = false
+    warning.value = null
+    resetScreens()
+    loadedP1Id.value = ''
+    loadedP2Id.value = ''
     return
   }
   resetFields()
+  resetScreens()
   error.value = null
+  warning.value = null
   success.value = false
+  if (props.preview) {
+    loadEpoch += 1
+    loadingMatch.value = false
+    unavailable.value = null
+    loadedFormat.value = resolveSummerMatchFormat(undefined, undefined, props.previewBestOf, undefined)
+    return
+  }
   void loadMatch()
 }, { immediate: true })
 
@@ -228,97 +290,73 @@ onUnmounted(() => {
 
 <template>
   <BaseModal
-    :modelValue="isOpen"
-    :title="success ? 'Wynik zapisany' : 'Protokół Ligi Lato'"
-    size="xl"
-    header-class="bg-orange-500"
-    close-class="text-stone-950/80 hover:bg-black/10 hover:text-stone-950 focus:ring-stone-950"
-    :close-on-escape="canClose"
-    :close-on-backdrop="canClose"
+    :model-value="isOpen"
+    :title="heading"
+    size="lg"
+    chrome="protocol"
+    :close-on-escape="canClose && !warning"
+    :close-on-backdrop="canClose && !warning"
     :show-close-button="canClose"
-    @update:modelValue="onVisibility"
+    @update:model-value="onVisibility"
   >
     <template #header>
-      <div class="flex items-center gap-2 text-stone-950">
-        <Sun class="size-5 shrink-0" :stroke-width="2.25" aria-hidden="true" />
-        <h2 id="modal-title" class="font-display text-lg font-black">
-          {{ success ? 'Wynik zapisany' : 'Protokół Ligi Lato' }}
-        </h2>
-      </div>
+      <p class="label" :class="accent.text">Liga Lato</p>
+      <h2 id="modal-title" class="font-display text-2xl font-black uppercase italic text-fg">{{ heading }}</h2>
     </template>
 
-    <div v-if="loadingMatch" class="h-40 animate-pulse rounded-xl bg-orange-500/15" aria-hidden="true" />
+    <div v-if="loadingMatch" class="grid gap-3" aria-hidden="true">
+      <div v-for="i in 4" :key="i" class="h-14 animate-pulse rounded-xl bg-surface-2" />
+    </div>
 
-    <div v-else-if="success" class="space-y-3 py-6 text-center">
+    <div v-else-if="success" class="py-6 text-center">
       <p class="font-display text-lg font-black text-fg">Wynik Ligi Lato jest zapisany</p>
-      <p class="text-sm text-muted">Nie liczy się do DPI ani do tabeli sezonu zasadniczego.</p>
+      <p class="mt-2 text-sm text-muted">Nie liczy się do DPI ani do tabeli sezonu zasadniczego.</p>
     </div>
 
     <div v-else-if="unavailable" class="py-6 text-center">
-      <p class="font-display text-lg font-black text-fg">{{ unavailable }}</p>
+      <p class="text-sm text-muted">{{ unavailable }}</p>
     </div>
 
-    <div v-else class="space-y-4">
-      <p class="text-xs text-muted">
-        {{ formatHint }}
-      </p>
-
-      <div class="flex items-center justify-between gap-3 rounded-xl bg-orange-500/10 px-3 py-2">
-        <span class="truncate font-display text-sm font-bold text-fg">{{ name1 }}</span>
-        <span class="font-display text-sm font-black text-orange-400">vs</span>
-        <span class="truncate text-right font-display text-sm font-bold text-fg">{{ name2 }}</span>
-      </div>
-
-      <div>
-        <p class="mb-2 text-[10px] font-bold uppercase text-muted">Legi</p>
-        <div class="flex items-center gap-3">
-          <input :value="legs1 ?? ''" type="text" inputmode="numeric" placeholder="0" class="w-full rounded-xl border border-line bg-surface px-3 py-2 text-center font-display text-xl font-black text-fg focus:border-orange-500 focus:outline-none" @input="setLegs('p1', $event)" />
-          <span class="font-display text-xl font-black text-muted">:</span>
-          <input :value="legs2 ?? ''" type="text" inputmode="numeric" placeholder="0" class="w-full rounded-xl border border-line bg-surface px-3 py-2 text-center font-display text-xl font-black text-fg focus:border-orange-500 focus:outline-none" @input="setLegs('p2', $event)" />
-        </div>
-      </div>
-
-      <div class="space-y-3 rounded-xl border border-orange-500/30 bg-surface-2 p-3">
-        <p class="text-xs text-muted">
-          Średnia i maksy są opcjonalne. Checkout, short leg i próby na doublach są wymagane u gracza, który wygrał lega.
-          Short leg od 9 lotek. Próby na doublach nie mogą być mniejsze niż wygrane legi.
-        </p>
-        <div v-for="side in sides" :key="side.key" class="space-y-2">
-          <p class="truncate text-xs font-black uppercase text-fg">{{ side.name }}</p>
-          <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <label class="block text-[10px] font-bold uppercase text-muted">
-              Średnia
-              <input :value="side.stats.avgText" type="number" step="0.01" min="0" max="167" inputmode="decimal" placeholder="45.67" class="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center text-sm font-bold text-fg focus:border-orange-500 focus:outline-none" @input="writeAvg(side.stats, $event)" />
-            </label>
-            <label class="block text-[10px] font-bold uppercase text-muted">
-              Próby doubl <span v-if="(side.legs ?? 0) >= 1" class="text-orange-400">*</span>
-              <input :value="side.stats.da ?? ''" type="text" inputmode="numeric" class="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center text-sm font-bold text-fg focus:border-orange-500 focus:outline-none" @input="side.stats.da = readCount($event)" />
-            </label>
-            <label class="block text-[10px] font-bold uppercase text-muted">
-              Ile 180
-              <input :value="side.stats.max ?? ''" type="text" inputmode="numeric" class="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center text-sm font-bold text-fg focus:border-orange-500 focus:outline-none" @input="side.stats.max = readCount($event)" />
-            </label>
-            <label class="block text-[10px] font-bold uppercase text-muted">
-              Checkout <span v-if="(side.legs ?? 0) >= 1" class="text-orange-400">*</span>
-              <input :value="side.stats.hf ?? ''" type="text" inputmode="numeric" class="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center text-sm font-bold text-fg focus:border-orange-500 focus:outline-none" @input="side.stats.hf = readCount($event)" />
-            </label>
-            <label class="block text-[10px] font-bold uppercase text-muted">
-              Short leg <span v-if="(side.legs ?? 0) >= 1" class="text-orange-400">*</span>
-              <input :value="side.stats.sl ?? ''" type="text" inputmode="numeric" class="mt-1 w-full rounded-lg border border-line bg-surface px-2 py-2 text-center text-sm font-bold text-fg focus:border-orange-500 focus:outline-none" @input="side.stats.sl = readCount($event)" />
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <p v-if="formError" class="text-xs text-amber-300">{{ formError }}</p>
-      <p v-if="error && error !== formError" class="rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{{ error }}</p>
-    </div>
+    <template v-else>
+      <ProtocolBoard
+        tone="yellow"
+        :face1="face1"
+        :face2="face2"
+        :show-sets="false"
+        :sets1="null"
+        :sets2="null"
+        :legs1="legs1"
+        :legs2="legs2"
+        :p1-stats="p1Stats"
+        :p2-stats="p2Stats"
+        :read-count="readCount"
+        :write-avg="writeAvg"
+        @update:legs1="legs1 = $event"
+        @update:legs2="legs2 = $event"
+      >
+        <template #after>
+          <ProtocolScreens
+            tone="yellow"
+            :max-hit="maxHit"
+            :url1="screenUrl1"
+            :url2="screenUrl2"
+            :uploading1="isUploading1"
+            :uploading2="isUploading2"
+            :locked="submitting || isUploading1 || isUploading2"
+            @file="uploadImage"
+            @clear="clearScreen"
+          />
+        </template>
+      </ProtocolBoard>
+      <p v-if="error" class="mt-4 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">{{ error }}</p>
+    </template>
 
     <template v-if="showForm" #footer>
-      <button type="button" class="rounded-xl border border-line px-4 py-2 text-sm font-bold text-muted disabled:opacity-50" :disabled="submitting" @click="onVisibility(false)">Anuluj</button>
-      <button type="button" class="rounded-xl bg-orange-500 px-5 py-2 text-sm font-bold text-stone-950 disabled:opacity-50" :disabled="!isValid || submitting" :aria-busy="submitting" @click="handleSubmit">
-        {{ submitting ? 'Wysyłanie...' : 'Wyślij' }}
+      <button type="button" class="flex-1 rounded-xl bg-surface-2 px-4 py-3 font-display text-sm font-extrabold uppercase tracking-wide text-muted disabled:opacity-50" :disabled="!canClose" @click="onVisibility(false)">Anuluj</button>
+      <button type="button" class="flex-1 rounded-xl px-4 py-3 font-display text-sm font-extrabold uppercase tracking-wide disabled:opacity-50" :class="accent.button" :disabled="!canClose" :aria-busy="submitting" @click="handleSubmit">
+        {{ submitting ? 'Wysyłanie...' : 'Wyślij wynik' }}
       </button>
     </template>
   </BaseModal>
+  <ProtocolWarning v-if="warning" :message="warning" tone="yellow" @close="warning = null" />
 </template>

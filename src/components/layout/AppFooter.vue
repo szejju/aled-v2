@@ -17,8 +17,8 @@ const showRules = ref(false)
           alt="ALED Logo"
           class="h-10 w-auto object-contain transition-transform hover:scale-105 cursor-pointer"
         />
-        <span class="font-display text-xl font-extrabold uppercase italic tracking-wide">
-          Liga <span class="text-lime">e-Darta</span>
+        <span class="font-display text-lg font-extrabold italic tracking-wide sm:text-xl">
+          Amatorska Liga <span class="text-lime">e-Darta</span>
         </span>
       </RouterLink>
         <p class="max-w-xs text-sm text-muted">Oficjalny portal rozgrywek Amatorskiej Ligi e-Darta.</p>

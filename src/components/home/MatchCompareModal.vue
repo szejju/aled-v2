@@ -78,7 +78,15 @@ interface Meeting {
   score2: number
 }
 
-const props = defineProps<{ match: CompareMatchInput }>()
+const props = defineProps<{
+  match: CompareMatchInput
+  /** Sandbox `/debug-modals`: bilans z propsa, bez odczytu terminarza i graczy. */
+  preview?: {
+    p1: FinalStats
+    p2: FinalStats
+    meetings: Meeting[]
+  }
+}>()
 const emit = defineEmits<{ close: [] }>()
 
 const loading = ref(true)
@@ -183,6 +191,20 @@ const emptyStats = (): FinalStats => ({ realAvg: 0, max: 0, doublesPct: 0, dpi: 
 let loadTicket = 0
 
 async function loadComparison() {
+  if (props.preview) {
+    loadTicket += 1
+    loading.value = false
+    error.value = ''
+    unresolved.value = []
+    p1Avatar.value = null
+    p2Avatar.value = null
+    p1AvatarBroken.value = false
+    p2AvatarBroken.value = false
+    p1Stats.value = props.preview.p1
+    p2Stats.value = props.preview.p2
+    meetings.value = props.preview.meetings
+    return
+  }
   const ticket = ++loadTicket
   loading.value = true
   error.value = ''

@@ -4,7 +4,7 @@
  * Architektura Vue 3 + Firebase V2: komponenty w @/components/profile/*,
  * dane z Cloud Functions/RTDB, akcje przez httpsCallable, loading per sekcja.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import { ref as dbRef, get } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { useAuth } from '@/composables/useAuth'
@@ -32,6 +32,8 @@ import { type MatchEntry } from '@/components/profile/ProfileMatches.vue'
 import ProfileCup from '@/components/profile/ProfileCup.vue'
 import ProfileSummerCard from '@/components/profile/ProfileSummerCard.vue'
 import CupEnrollmentModal from '@/components/profile/CupEnrollmentModal.vue'
+import EditNickModal from '@/components/profile/EditNickModal.vue'
+import EditDartcounterModal from '@/components/profile/EditDartcounterModal.vue'
 import VerificationModal from '@/components/profile/VerificationModal.vue'
 import MatchmakingModal from '@/components/profile/MatchmakingModal.vue'
 import MatchDecisionModal from '@/components/profile/MatchDecisionModal.vue'
@@ -111,7 +113,7 @@ function listedMatchStatus(status: unknown, badgeState?: string): ListedStatus {
 // ─── Player profile (RTDB) ──────────────────────────────────────────
 const playerLoading = ref(true)
 const playerHeader = ref<PlayerProfileHeader>({
-  id: '', firstName: '…', lastName: '…', nick: '', avatarUrl: null, div: '', leave: null,
+  id: '', firstName: '…', lastName: '…', nick: '', avatarUrl: null, div: '', leave: null, dartcounter: '',
 })
 const playerStats = ref<ProfileStatsSet>({
   liga: emptyStats(),
@@ -148,6 +150,7 @@ async function fetchPlayerProfile(id: string) {
       avatarUrl: d.avatarUrl ?? d.photoUrl ?? null,
       div,
       leave: d.leave ?? null,
+      dartcounter: typeof d.dartcounter === 'string' ? d.dartcounter : '',
     }
     enrollmentData.value = {
       verifyAvg: (d.verifyAvg ?? d.weryfikacjaSredniej ?? 'none') as EnrollmentData['verifyAvg'],
@@ -619,17 +622,19 @@ async function handleVerificationSubmit(file: File) {
 }
 
 const editNickModalOpen = ref(false)
-const newNick = ref('')
 function openNickEdit() {
-  newNick.value = playerHeader.value.nick ?? ''
   editNickModalOpen.value = true
 }
-function saveNick() {
-  playerHeader.value = { ...playerHeader.value, nick: newNick.value.trim() || undefined }
-  editNickModalOpen.value = false
+function onNickUpdated(nick: string) {
+  playerHeader.value = { ...playerHeader.value, nick: nick.trim() || undefined }
+  showToast(nick.trim() ? 'Pseudonim zapisany.' : 'Pseudonim usunięty.', 'success')
 }
 
 const dartcounterModalOpen = ref(false)
+function onDartcounterUpdated(link: string) {
+  playerHeader.value = { ...playerHeader.value, dartcounter: link }
+  showToast(link ? 'Link Dartcounter zapisany.' : 'Link Dartcounter usunięty.', 'success')
+}
 const showCupModal = ref(false)
 
 // ─── Matchmaking modals ────────────────────────────────────────────
@@ -650,21 +655,72 @@ const decisionIsCup = ref(false)
 const decisionRound = ref('')
 const decisionSubmitting = ref(false)
 
-function handleMatchPropose(match: MatchEntry | CupMatchEntry) {
+function textField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+interface OpponentSide {
+  first: string
+  last: string
+  id: string
+}
+
+let opponentTicket = 0
+
+function opponentSide(kind: 'league' | 'cup', match: { id: string; isHome: boolean }): OpponentSide {
+  const raw = detailById.value[`${kind}:${match.id}`]
+  return {
+    first: textField(match.isHome ? raw?.p2FirstName : raw?.p1FirstName),
+    last: textField(match.isHome ? raw?.p2LastName : raw?.p1LastName),
+    id: textField(match.isHome ? raw?.p2Id : raw?.p1Id),
+  }
+}
+
+/** Imię i nazwisko z karty gracza. Skrót na meczu zostaje, gdy profilu nie ma. */
+function liveOpponent(kind: 'league' | 'cup', match: { id: string; isHome: boolean; opponent: string }): string {
+  const side = opponentSide(kind, match)
+  return `${side.first} ${side.last}`.trim() || match.opponent || '?'
+}
+
+function safePlayerId(id: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(id)
+}
+
+async function fillOpponent(kind: 'league' | 'cup', match: { id: string; isHome: boolean }, ticket: number) {
+  const side = opponentSide(kind, match)
+  if (`${side.first} ${side.last}`.trim() || !safePlayerId(side.id)) return
+  try {
+    const snap = await get(dbRef(getDatabaseClient(), `players/${side.id}`))
+    if (ticket !== opponentTicket) return
+    const row = snap.val() as Record<string, unknown> | null
+    const first = textField(row?.firstName) || textField(row?.imie)
+    const last = textField(row?.lastName) || textField(row?.nazwisko)
+    const full = `${first} ${last}`.trim()
+    if (full) matchmakingOpponent.value = full
+  } catch (error) {
+    console.error('[ProfileView] opponent name:', error)
+  }
+}
+
+function openProposal(kind: 'league' | 'cup', match: { id: string; isHome: boolean; opponent: string; round?: string }, isCup: boolean) {
+  const ticket = ++opponentTicket
   matchmakingMatchId.value = match.id
-  matchmakingOpponent.value = match.opponent
-  matchmakingIsCup.value = false
+  matchmakingOpponent.value = liveOpponent(kind, match)
+  matchmakingIsCup.value = isCup
   matchmakingRound.value = match.round ?? ''
   matchmakingModal.value = true
+  void fillOpponent(kind, match, ticket)
+}
+
+function handleMatchPropose(match: MatchEntry | CupMatchEntry) {
+  openProposal('league', match, false)
 }
 
 function handleCupPropose(match: CupMatchEntry) {
-  matchmakingMatchId.value = match.id
-  matchmakingOpponent.value = match.opponent
-  matchmakingIsCup.value = true
-  matchmakingRound.value = match.round ?? ''
-  matchmakingModal.value = true
+  openProposal('cup', match, true)
 }
+
+onUnmounted(() => { opponentTicket += 1 })
 
 async function handleMatchmakingSubmit(data: {
   matchId: string; date: string; time: string; timestamp: number
@@ -726,6 +782,8 @@ const resultMatchId = ref('')
 const resultIsCup = ref(false)
 const resultP1 = ref('')
 const resultP2 = ref('')
+const resultP1Id = ref('')
+const resultP2Id = ref('')
 
 function openMatchDetails(prefix: 'league' | 'cup', id: string) {
   selectedDetail.value = detailById.value[`${prefix}:${id}`] ?? null
@@ -737,6 +795,8 @@ function openMatchResult(prefix: 'league' | 'cup', id: string) {
   resultIsCup.value = prefix === 'cup'
   resultP1.value = typeof raw?.p1Name === 'string' ? raw.p1Name : 'Gracz 1'
   resultP2.value = typeof raw?.p2Name === 'string' ? raw.p2Name : 'Gracz 2'
+  resultP1Id.value = typeof raw?.p1Id === 'string' ? raw.p1Id : ''
+  resultP2Id.value = typeof raw?.p2Id === 'string' ? raw.p2Id : ''
   resultOpen.value = true
 }
 
@@ -750,13 +810,21 @@ async function refreshAfterResult() {
 }
 
 async function handleDecision(data: {
-  matchId: string; action: 'accept' | 'reject'; isCup: boolean
+  matchId: string
+  action: 'accept' | 'counter'
+  isCup: boolean
+  date?: string
+  time?: string
+  timestamp?: number
+  isException?: boolean
+  exceptionReason?: string
 }) {
   decisionSubmitting.value = true
   try {
     const sent = await respondToMatchDate(data)
     decisionModal.value = false
-    showToast(sent.message || 'Zapisano decyzję.', 'success')
+    if (data.action === 'counter' && data.isException) exceptionSuccessOpen.value = true
+    else showToast(sent.message || (data.action === 'accept' ? 'Termin zaakceptowany.' : 'Kontrpropozycja wysłana.'), 'success')
     if (data.isCup) await fetchCupData(playerId.value)
     else {
       const div = playerHeader.value.div
@@ -820,6 +888,7 @@ async function handleDecision(data: {
         :verify-avg="enrollmentData.verifyAvg"
         :verify-cam="enrollmentData.verifyCam"
         @edit-nick="openNickEdit"
+        @edit-dartcounter="dartcounterModalOpen = true"
         @verify="openVerificationModal"
         @vacation-submit="submitVacation"
         @vacation-cancel="cancelVacation"
@@ -879,73 +948,23 @@ async function handleDecision(data: {
       v-if="verificationModalOpen"
     />
 
-    <!-- ================================================================ -->
-    <!-- MODAL: EDYCJA PSEUDONIMU                                         -->
-    <!-- ================================================================ -->
-    <Teleport to="body">
-      <Transition name="modal" appear>
-        <div v-if="editNickModalOpen"
-          class="fixed inset-0 z-[99999] flex items-center justify-center p-4"
-          @click.self="editNickModalOpen = false">
-          <div class="fixed inset-0 bg-ink/70 backdrop-blur-sm" aria-hidden="true" />
-          <div class="relative w-full max-w-sm bg-[#13171C] rounded-2xl border border-line shadow-2xl overflow-hidden" @click.stop>
-            <div class="flex items-center justify-between px-6 py-4 border-b border-line">
-              <h2 class="text-lg font-display text-fg">✏️ Edytuj pseudonim</h2>
-              <button type="button" @click="editNickModalOpen = false"
-                class="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-surface-2 transition-colors" aria-label="Zamknij">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div class="px-6 py-4 space-y-4">
-              <label class="block">
-                <span class="text-[10px] font-black uppercase text-muted tracking-widest">Pseudonim</span>
-                <input v-model="newNick" type="text" placeholder="Twój pseudonim" maxlength="30"
-                  class="mt-1 w-full bg-surface-2 border border-line rounded-xl px-4 py-2.5 text-fg text-sm focus:outline-none focus:border-accent transition-colors"
-                  @keyup.enter="saveNick">
-              </label>
-            </div>
-            <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
-              <button type="button" @click="editNickModalOpen = false" class="px-4 py-2 rounded-lg font-medium text-muted hover:text-fg hover:bg-surface-2 transition-colors text-sm">Anuluj</button>
-              <button type="button" @click="saveNick" class="px-4 py-2 rounded-lg font-medium text-on-lime bg-accent hover:bg-accent/90 transition-colors text-sm">Zapisz</button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <EditNickModal
+      v-if="editNickModalOpen"
+      :current-nick="playerHeader.nick ?? ''"
+      @close="editNickModalOpen = false"
+      @updated="onNickUpdated"
+    />
     </div>
 
 <!-- ================================================================ -->
     <!-- MODAL: DARTCOUNTER                                              -->
     <!-- ================================================================ -->
-    <Teleport to="body">
-      <Transition name="modal" appear>
-        <div v-if="dartcounterModalOpen"
-          class="fixed inset-0 z-[99999] flex items-center justify-center p-4"
-          @click.self="dartcounterModalOpen = false">
-          <div class="fixed inset-0 bg-ink/70 backdrop-blur-sm" aria-hidden="true" />
-          <div class="relative w-full max-w-md bg-[#13171C] rounded-2xl border border-line shadow-2xl overflow-hidden" @click.stop>
-            <div class="flex items-center justify-between px-6 py-4 border-b border-line">
-              <h2 class="text-lg font-display text-fg">🎯 Dartcounter</h2>
-              <button type="button" @click="dartcounterModalOpen = false"
-                class="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-surface-2 transition-colors" aria-label="Zamknij">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <div class="px-6 py-4 space-y-4">
-              <p class="text-muted text-sm">Skopiuj link do swojego profilu Dartcounter i wklej go poniżej.</p>
-              <label class="block">
-                <span class="text-[10px] font-black uppercase text-muted tracking-widest">URL profilu Dartcounter</span>
-                <input type="url" placeholder="https://dartcounter.com/de/profile/..." class="mt-1 w-full bg-surface-2 border border-line rounded-xl px-4 py-2.5 text-fg text-sm focus:outline-none focus:border-accent transition-colors">
-              </label>
-            </div>
-            <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
-              <button type="button" @click="dartcounterModalOpen = false" class="px-4 py-2 rounded-lg font-medium text-muted hover:text-fg hover:bg-surface-2 transition-colors text-sm">Anuluj</button>
-              <button type="button" @click="dartcounterModalOpen = false" class="px-4 py-2 rounded-lg font-medium text-on-lime bg-accent hover:bg-accent/90 transition-colors text-sm">Zapisz link</button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+    <EditDartcounterModal
+      v-if="dartcounterModalOpen"
+      :current-link="playerHeader.dartcounter ?? ''"
+      @close="dartcounterModalOpen = false"
+      @updated="onDartcounterUpdated"
+    />
 
     <!-- ================================================================ -->
     <!-- MODAL: PUCHAR LIGI – ZAPIS                                        -->
@@ -979,6 +998,8 @@ async function handleDecision(data: {
       :is-cup="resultIsCup"
       :p1-name="resultP1"
       :p2-name="resultP2"
+      :p1-id="resultP1Id"
+      :p2-id="resultP2Id"
       @submitted="refreshAfterResult"
     />
 
@@ -1013,6 +1034,7 @@ async function handleDecision(data: {
       :proposed-time="decisionProposedTime"
       :is-cup="decisionIsCup"
       :round="decisionRound"
+      :league-start="leagueStartDate"
       :submitting="decisionSubmitting"
       @close="decisionModal = false"
       @decide="handleDecision"

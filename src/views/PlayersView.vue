@@ -265,9 +265,17 @@ const showDcModal = ref(false)
 const dcModalPlayerName = ref('')
 const dcModalLink = ref('')
 
-function openDcModal(name: string, dartcounterUsername: string) {
+function dartcounterProfileUrl(value: string): string {
+  const trimmed = value.trim()
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (/^\/\//.test(trimmed)) return `https:${trimmed}`
+  if (/dartcounter\./i.test(trimmed)) return `https://${trimmed}`
+  return `https://dartcounter.com/de/profile/${trimmed}`
+}
+
+function openDcModal(name: string, dartcounter: string) {
   dcModalPlayerName.value = name
-  dcModalLink.value = `https://dartcounter.com/de/profile/${dartcounterUsername}`
+  dcModalLink.value = dartcounterProfileUrl(dartcounter)
   showDcModal.value = true
 }
 </script>

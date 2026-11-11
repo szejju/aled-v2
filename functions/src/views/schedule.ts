@@ -1,6 +1,7 @@
 // functions/src/views/schedule.ts
 import * as functions from 'firebase-functions';
 import { db } from '../database/connection.js';
+import { playerDirectory } from '../players/publicName.js';
 
 export const getSchedule = functions.https.onCall(async (request) => {
   const division = request.data?.division; // <--- Używamy request.data
@@ -11,9 +12,13 @@ export const getSchedule = functions.https.onCall(async (request) => {
   }
 
   try {
-    // 1. Pobieramy mecze z bazy
-    const scheduleSnap = await db().ref('schedule').once('value');
+    // 1. Pobieramy mecze i aktualne imiona z kart graczy
+    const [scheduleSnap, playersSnap] = await Promise.all([
+      db().ref('schedule').once('value'),
+      db().ref('players').once('value'),
+    ]);
     const rawSchedule = scheduleSnap.val() || {};
+    const names = playerDirectory(playersSnap.val());
 
     const matches: any[] = Array.isArray(rawSchedule)
       ? rawSchedule
@@ -55,8 +60,15 @@ export const getSchedule = functions.https.onCall(async (request) => {
       else if (m.status === 'pending_exception') badgeState = 'exception';
       else if (m.status === 'proposed') badgeState = 'in_negotiation';
 
+      const p1 = names.lookup(m.p1Id);
+      const p2 = names.lookup(m.p2Id);
+
       groupedByRound[r].push({
         ...m,
+        p1FirstName: p1.firstName,
+        p1LastName: p1.lastName,
+        p2FirstName: p2.firstName,
+        p2LastName: p2.lastName,
         displayDate: formattedDate,
         displayTime: formattedTime,
         badgeState,

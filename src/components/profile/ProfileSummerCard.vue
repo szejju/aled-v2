@@ -12,6 +12,7 @@ import { useToast } from '@/composables/useToast'
 import { getDatabaseClient } from '@/services/firebase'
 import { errorText } from '@/utils/errorText'
 import { asRecord } from '@/utils/rtdb'
+import SummerMatchDetailsModal from '@/components/summer/SummerMatchDetailsModal.vue'
 import { summerMatchKey } from '../../../functions/src/summer_league/scoreRules.ts'
 
 const UID_KEY = /^[A-Za-z0-9_-]{1,128}$/
@@ -23,6 +24,7 @@ interface SummerProfileMatch {
   routable: boolean
   statusLabel: string
   resultLabel: string
+  detail: Record<string, unknown>
 }
 
 const props = defineProps<{
@@ -40,6 +42,7 @@ const loadError = ref('')
 const scheduleError = ref('')
 const scheduleReady = ref(false)
 const matches = ref<SummerProfileMatch[]>([])
+const selectedMatch = ref<Record<string, unknown> | null>(null)
 
 const ownProfile = computed(() => {
   const sessionUid = userData.value?.uid ?? ''
@@ -90,6 +93,8 @@ function playerMatches(value: unknown, uid: string): SummerProfileMatch[] {
     const played = status === 'played'
     const mine = mineIsP1 ? leg(row.score1) : leg(row.score2)
     const theirs = mineIsP1 ? leg(row.score2) : leg(row.score1)
+    const score1 = leg(row.score1)
+    const score2 = leg(row.score2)
     rows.push({
       id,
       opponent,
@@ -97,6 +102,27 @@ function playerMatches(value: unknown, uid: string): SummerProfileMatch[] {
       routable: summerMatchKey(id) != null,
       statusLabel: played ? 'Rozegrany' : 'Do rozegrania',
       resultLabel: played && mine != null && theirs != null ? `${mine} : ${theirs}` : played ? '—' : 'VS',
+      detail: {
+        id,
+        p1Id: p1,
+        p2Id: p2,
+        p1Name: typeof row.p1Name === 'string' ? row.p1Name : '',
+        p2Name: typeof row.p2Name === 'string' ? row.p2Name : '',
+        score1,
+        score2,
+        status,
+        date: typeof row.date === 'string' ? row.date : undefined,
+        time: typeof row.time === 'string' ? row.time : undefined,
+        proposedDate: typeof row.proposedDate === 'string' ? row.proposedDate : undefined,
+        proposedTime: typeof row.proposedTime === 'string' ? row.proposedTime : undefined,
+        p1Stats: asRecord(row.p1Stats) ?? undefined,
+        p2Stats: asRecord(row.p2Stats) ?? undefined,
+        isWalkover: row.isWalkover === true,
+        isDoubleWO: row.isDoubleWO === true,
+        walkoverPlayerId: typeof row.walkoverPlayerId === 'string' ? row.walkoverPlayerId : undefined,
+        proofUrl1: typeof row.proofUrl1 === 'string' ? row.proofUrl1 : undefined,
+        proofUrl2: typeof row.proofUrl2 === 'string' ? row.proofUrl2 : undefined,
+      },
     })
   }
   rows.sort((a, b) => {
@@ -131,6 +157,7 @@ function startSchedule(uid: string, ticket: number) {
       (err) => {
         if (ticket !== epoch) return
         matches.value = []
+        selectedMatch.value = null
         scheduleError.value = errorText(err, 'Nie udało się odczytać terminarza Ligi Lato.')
         scheduleReady.value = true
         announce(err, 'Nie udało się odczytać terminarza Ligi Lato.')
@@ -139,6 +166,7 @@ function startSchedule(uid: string, ticket: number) {
   } catch (err: unknown) {
     if (ticket !== epoch) return
     matches.value = []
+    selectedMatch.value = null
     scheduleError.value = errorText(err, 'Nie udało się odczytać terminarza Ligi Lato.')
     scheduleReady.value = true
     announce(err, 'Nie udało się odczytać terminarza Ligi Lato.')
@@ -152,6 +180,7 @@ function bind(uid: string) {
   enrolled.value = false
   registrationOpen.value = false
   matches.value = []
+  selectedMatch.value = null
   loadError.value = ''
   scheduleError.value = ''
   scheduleReady.value = false
@@ -180,6 +209,7 @@ function bind(uid: string) {
         else {
           stopSchedule()
           matches.value = []
+          selectedMatch.value = null
           scheduleError.value = ''
           scheduleReady.value = true
         }
@@ -190,6 +220,7 @@ function bind(uid: string) {
         enrolled.value = false
         stopSchedule()
         matches.value = []
+        selectedMatch.value = null
         loadError.value = errorText(err, 'Nie udało się odczytać statusu Ligi Lato.')
         loading.value = false
         announce(err, 'Nie udało się odczytać statusu Ligi Lato.')
@@ -230,6 +261,7 @@ watch(
 
 onUnmounted(() => {
   epoch += 1
+  selectedMatch.value = null
   stopAll()
 })
 </script>
@@ -284,12 +316,16 @@ onUnmounted(() => {
           class="bento flex items-center justify-between gap-3 rounded-2xl border-l-4 p-4"
           :class="match.played ? 'border-l-amber-700/50' : 'border-l-amber-400'"
         >
-          <div class="min-w-0">
+          <button
+            type="button"
+            class="min-w-0 flex-1 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            @click="selectedMatch = match.detail"
+          >
             <p class="mb-0.5 text-[10px] font-bold uppercase" :class="match.played ? 'text-muted' : 'text-amber-400'">
               {{ match.statusLabel }}
             </p>
             <p class="truncate font-display text-xs font-black uppercase text-fg">{{ match.opponent }}</p>
-          </div>
+          </button>
           <div class="flex shrink-0 items-center gap-2">
             <span
               class="min-w-[44px] rounded-lg px-2 py-1 text-center font-display text-xs font-black"
@@ -307,6 +343,12 @@ onUnmounted(() => {
           </div>
         </li>
       </ul>
+
+      <SummerMatchDetailsModal
+        v-if="selectedMatch"
+        :match="selectedMatch"
+        @close="selectedMatch = null"
+      />
     </template>
   </section>
 </template>

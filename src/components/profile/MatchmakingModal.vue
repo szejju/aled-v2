@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import EuroCalendar from '@/components/profile/EuroCalendar.vue'
 import {
   formatWarsawDate,
@@ -35,14 +35,19 @@ const dateIso = ref('')
 const time = ref('20:00')
 const isException = ref(false)
 const exceptionReason = ref('')
-const zoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || 'czas lokalny'
-
 const isoDate = computed(() => (/^\d{4}-\d{2}-\d{2}$/.test(dateIso.value) ? dateIso.value : null))
 const dateLabel = computed(() => (isoDate.value ? isoToEuropean(isoDate.value) : 'Wybierz dzień'))
 
 const roundNumber = computed(() => {
   const parsed = parseInt(props.round ?? '', 10)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+})
+
+const contextLabel = computed(() => {
+  const kind = props.isCup ? 'Puchar' : 'Liga'
+  if (roundNumber.value != null) return `${kind} · Kolejka ${roundNumber.value}`
+  if (props.round?.trim()) return `${kind} · ${props.round.trim()}`
+  return kind
 })
 
 const windowMs = computed(() => {
@@ -87,7 +92,7 @@ const hint = computed(() => {
   if (roundNumber.value == null) return 'Ten mecz nie ma numeru kolejki. Termin przejdzie tylko jako wyjątek do admina.'
   if (!windowMs.value) return 'Brak daty startu ligi. Zwykły termin jest zablokowany — zgłoś wyjątek.'
   if (windowClosed.value) return 'Okno tej kolejki już minęło. Nowy termin tylko jako wyjątek do admina.'
-  return `Kolejka ${roundNumber.value}: ${windowLabel.value}. Poza tym oknem tylko wyjątek.`
+  return `${windowLabel.value}. Poza tym oknem tylko wyjątek.`
 })
 
 const canSubmit = computed(() => {
@@ -121,57 +126,119 @@ function handleClose() {
   exceptionReason.value = ''
   emit('close')
 }
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') handleClose()
+}
+
+watch(() => props.open, (isOpen) => {
+  if (isOpen) {
+    document.addEventListener('keydown', onKeydown)
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.removeEventListener('keydown', onKeydown)
+    document.body.style.overflow = ''
+  }
+}, { immediate: true })
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
 </script>
 
 <template>
   <Teleport to="body">
     <Transition name="modal" appear>
-      <div v-if="open" class="fixed inset-0 z-[99999] flex items-center justify-center p-4" @click.self="handleClose">
-        <div class="fixed inset-0 bg-ink/70 backdrop-blur-sm" aria-hidden="true" />
-        <div class="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-[#13171C] shadow-2xl" @click.stop>
-          <div class="flex shrink-0 items-center justify-between border-b border-line px-6 py-4">
-            <h2 class="text-lg font-display text-fg">
-              Zaproponuj termin
-              <span v-if="round" class="text-muted text-sm font-normal ml-1">K{{ round }}</span>
-            </h2>
-            <button type="button" @click="handleClose" class="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-surface-2 transition-colors" aria-label="Zamknij">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </div>
-          <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
-            <p class="text-muted text-sm">Proponujesz termin meczu przeciwko <span class="text-fg font-bold">{{ opponent }}</span>.</p>
-            <p class="text-xs text-muted leading-relaxed">{{ hint }} Godzina jest w Twojej strefie ({{ zoneName }}) i zapisuje się jako timestamp, więc rywal zobaczy ją u siebie.</p>
-            <div>
-              <span class="text-[10px] font-black uppercase text-muted tracking-widest">Data</span>
-              <p class="mt-1 rounded-xl border border-line bg-surface px-4 py-2.5 font-display text-sm font-black text-fg">{{ dateLabel }}</p>
-              <div class="mt-2">
-                <EuroCalendar v-model="dateIso" :min-iso="calendarMin" :max-iso="calendarMax" :unrestricted="isException" />
-              </div>
-            </div>
-            <label class="block">
-              <span class="text-[10px] font-black uppercase text-muted tracking-widest">Godzina</span>
-              <input v-model="time" type="time" class="mt-1 w-full bg-surface-2 border border-line rounded-xl px-4 py-2.5 text-fg text-sm focus:outline-none focus:border-accent transition-colors" />
-            </label>
-            <p v-if="isoDate && time && !isException && !inWindow" class="text-xs text-amber-300">
-              Ta data jest poza oknem kolejki albo już minęła. Zaznacz wyjątek i podaj powód.
+      <div
+        v-if="open"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="matchmaking-title"
+        @click.self="handleClose"
+      >
+        <div
+          class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-line bg-surface p-6 shadow-2xl"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+            aria-label="Zamknij"
+            @click="handleClose"
+          >
+            <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          <p class="label pr-8 text-accent">{{ contextLabel }}</p>
+          <h2 id="matchmaking-title" class="pr-8 font-display text-2xl font-black uppercase italic text-fg">Zaproponuj termin</h2>
+
+          <div class="mt-6">
+            <p class="text-sm text-muted">
+              Proponujesz termin meczu przeciwko
+              <span class="font-display font-extrabold uppercase text-fg">{{ opponent }}</span>.
             </p>
-            <label class="flex items-start gap-3" :class="windowClosed ? 'opacity-80' : 'cursor-pointer'">
-              <input v-model="isException" type="checkbox" :disabled="windowClosed" class="mt-0.5 w-4 h-4 rounded bg-surface-2 border-line text-accent focus:ring-accent" />
-              <div>
-                <span class="text-sm font-semibold text-fg">Zgłoś jako wyjątek</span>
-                <p class="text-xs text-muted mt-0.5">Termin idzie do admina, nie od razu do rywala.</p>
-              </div>
-            </label>
-            <label v-if="isException" class="block">
-              <span class="text-[10px] font-black uppercase text-muted tracking-widest">Powód wyjątku</span>
-              <textarea v-model="exceptionReason" rows="2" placeholder="Np. konflikt terminów, urlop..." class="mt-1 w-full bg-surface-2 border border-line rounded-xl px-4 py-2.5 text-fg text-sm focus:outline-none focus:border-accent transition-colors resize-none"></textarea>
-            </label>
+            <p class="mt-2 text-sm text-muted">{{ hint }}</p>
           </div>
-          <div class="flex shrink-0 items-center justify-end gap-3 border-t border-line bg-surface/50 px-6 py-4">
-            <button type="button" @click="handleClose" class="px-4 py-2 rounded-lg font-medium text-muted hover:text-fg hover:bg-surface-2 transition-colors text-sm">Anuluj</button>
-            <button type="button" :disabled="!canSubmit" @click="handleSubmit" class="px-4 py-2 rounded-lg font-medium text-on-lime bg-accent hover:bg-accent/90 transition-colors text-sm disabled:opacity-40 flex items-center gap-2">
-              <svg v-if="submitting" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+
+          <div class="mt-6">
+            <span class="label text-muted">Data</span>
+            <p class="mt-2 rounded-xl bg-surface-2 px-4 py-3 font-display text-base font-extrabold tabular-nums text-fg">{{ dateLabel }}</p>
+            <div class="mt-4">
+              <EuroCalendar v-model="dateIso" :min-iso="calendarMin" :max-iso="calendarMax" :unrestricted="isException" />
+            </div>
+          </div>
+
+          <label class="mt-6 block">
+            <span class="label text-muted">Godzina</span>
+            <input
+              v-model="time"
+              type="time"
+              class="mt-2 w-full rounded-xl border border-line bg-surface-2 px-4 py-3 font-display text-base font-extrabold tabular-nums text-fg focus:border-lime focus:outline-none"
+            />
+          </label>
+
+          <p v-if="isoDate && time && !isException && !inWindow" class="mt-4 text-sm text-danger">
+            Ta data jest poza oknem kolejki albo już minęła. Zaznacz wyjątek i podaj powód.
+          </p>
+
+          <label class="mt-6 flex items-start gap-3 rounded-2xl bg-surface-2 p-4" :class="windowClosed ? 'opacity-80' : 'cursor-pointer'">
+            <input v-model="isException" type="checkbox" :disabled="windowClosed" class="mt-1 size-4 rounded border-line bg-surface text-lime focus:ring-lime" />
+            <div>
+              <span class="text-sm font-semibold text-fg">Zgłoś jako wyjątek</span>
+              <p class="mt-1 text-sm text-muted">Termin idzie do admina, nie od razu do rywala.</p>
+            </div>
+          </label>
+
+          <label v-if="isException" class="mt-6 block">
+            <span class="label text-muted">Powód wyjątku</span>
+            <textarea
+              v-model="exceptionReason"
+              rows="2"
+              placeholder="Np. konflikt terminów, urlop..."
+              class="mt-2 w-full resize-none rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg focus:border-lime focus:outline-none"
+            ></textarea>
+          </label>
+
+          <div class="mt-6 flex flex-col gap-2">
+            <button
+              type="button"
+              :disabled="!canSubmit"
+              class="flex w-full items-center justify-center gap-2 rounded-xl bg-lime px-4 py-3 font-display font-extrabold uppercase tracking-wide text-on-lime transition hover:bg-lime/90 disabled:opacity-40"
+              @click="handleSubmit"
+            >
+              <svg v-if="submitting" class="size-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
               {{ isException ? 'Wyślij do admina' : 'Wyślij propozycję' }}
+            </button>
+            <button
+              type="button"
+              class="w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg"
+              @click="handleClose"
+            >
+              Anuluj
             </button>
           </div>
         </div>

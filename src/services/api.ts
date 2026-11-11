@@ -96,6 +96,11 @@ export interface ScheduleMatch {
   p2Name: string
   p1Id?: string
   p2Id?: string
+  /** Aktualne imię i nazwisko z `players`, doklejane przez getSchedule. */
+  p1FirstName?: string
+  p1LastName?: string
+  p2FirstName?: string
+  p2LastName?: string
   score1?: number
   score2?: number
   isDoubleWO?: boolean
@@ -315,6 +320,9 @@ export interface SubmitSummerMatchResultPayload {
   score2: number
   p1Stats: SubmitSummerStatsPayload
   p2Stats: SubmitSummerStatsPayload
+  /** Screen protokołu. Drugi jest wymagany, gdy w meczu padło 180. */
+  screenUrl1: string
+  screenUrl2?: string
 }
 
 export interface SubmitSummerMatchResultResponse {
@@ -358,6 +366,8 @@ export interface CupDataResponse {
     id?: string
     p1Id: string; p2Id: string
     p1Name: string; p2Name: string
+    p1FirstName?: string; p1LastName?: string
+    p2FirstName?: string; p2LastName?: string
     group?: string; round?: number; roundNum?: number
     score1?: number; score2?: number
     legs1?: number; legs2?: number
@@ -462,11 +472,17 @@ export const proposeMatchDate = makeCallable<
 
 export interface RespondToMatchDatePayload {
   matchId: string;
-  action: 'accept' | 'reject';
+  action: 'accept' | 'reject' | 'counter';
   isCup: boolean;
+  /** Kontrpropozycja: nowy dzień w formacie YYYY-MM-DD. */
+  date?: string;
+  time?: string;
+  timestamp?: number;
+  isException?: boolean;
+  exceptionReason?: string;
 }
 
-/** Akceptuje lub odrzuca propozycję terminu meczu. */
+/** Akceptuje, odrzuca albo podmienia propozycję terminu meczu. */
 export const respondToMatchDate = makeCallable<
   RespondToMatchDatePayload,
   { success: boolean; message: string }

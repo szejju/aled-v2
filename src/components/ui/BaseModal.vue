@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 
 interface Props {
   modelValue?: boolean
@@ -12,6 +12,8 @@ interface Props {
   headerClass?: string
   /** Opcjonalne kolory przycisku zamknięcia, gdy nagłówek ma jasne tło. */
   closeClass?: string
+  /** `protocol` — muszla jak porównanie meczu. Domyślny pasek zostaje przy pozostałych modalach. */
+  chrome?: 'default' | 'protocol'
 }
 
 interface Emits {
@@ -27,9 +29,12 @@ const props = withDefaults(defineProps<Props>(), {
   showCloseButton: true,
   headerClass: '',
   closeClass: '',
+  chrome: 'default',
 })
 
 const emit = defineEmits<Emits>()
+
+const isProtocol = computed(() => props.chrome === 'protocol')
 
 const sizeClasses = {
   sm: 'max-w-sm',
@@ -92,18 +97,42 @@ watch(() => props.modelValue, (val: boolean) => {
       >
         <!-- Backdrop z rozmyciem -->
         <div
-          class="fixed inset-0 bg-ink/70 backdrop-blur-sm transition-opacity duration-200"
+          class="fixed inset-0 backdrop-blur-sm transition-opacity duration-200"
+          :class="isProtocol ? 'bg-black/80' : 'bg-ink/70'"
           aria-hidden="true"
         />
 
         <!-- Okno modala -->
         <div
-          class="relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden bg-[#13171C] rounded-2xl border border-line shadow-2xl animate-in fade-in zoom-in-95 duration-200"
-          :class="sizeClasses[size]"
+          class="relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden border border-line shadow-2xl"
+          :class="isProtocol
+            ? ['rounded-3xl bg-surface', sizeClasses[size]]
+            : ['rounded-2xl bg-[#13171C] animate-in fade-in zoom-in-95 duration-200', sizeClasses[size]]"
           @click.stop
         >
           <!-- Nagłówek -->
-          <div class="flex shrink-0 items-center justify-between border-b border-line px-6 py-4" :class="headerClass">
+          <div
+            v-if="isProtocol"
+            class="relative shrink-0 px-6 pt-6 pr-14"
+          >
+            <slot name="header">
+              <h2 v-if="title" id="modal-title" class="font-display text-2xl font-black uppercase italic text-fg">
+                {{ title }}
+              </h2>
+            </slot>
+            <button
+              v-if="showCloseButton"
+              type="button"
+              class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+              aria-label="Zamknij modal"
+              @click="handleClose"
+            >
+              <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div v-else class="flex shrink-0 items-center justify-between border-b border-line px-6 py-4" :class="headerClass">
             <slot name="header">
               <h2 v-if="title" id="modal-title" class="text-lg font-display text-fg">
                 {{ title }}
@@ -125,12 +154,19 @@ watch(() => props.modelValue, (val: boolean) => {
           </div>
 
           <!-- Treść -->
-          <div class="max-h-[calc(100dvh-9rem)] overflow-y-auto px-6 py-4">
+          <div
+            class="overflow-y-auto px-6 py-4"
+            :class="isProtocol ? 'min-h-0 flex-1' : 'max-h-[calc(100dvh-9rem)]'"
+          >
             <slot name="default" />
           </div>
 
           <!-- Stopka -->
-          <div v-if="$slots.footer" class="flex shrink-0 items-center justify-end gap-3 px-6 py-4 border-t border-line bg-surface/50">
+          <div
+            v-if="$slots.footer"
+            class="flex shrink-0 items-center gap-3 px-6"
+            :class="isProtocol ? 'border-t border-line bg-surface pb-6 pt-4' : 'justify-end border-t border-line bg-surface/50 py-4'"
+          >
             <slot name="footer" />
           </div>
         </div>

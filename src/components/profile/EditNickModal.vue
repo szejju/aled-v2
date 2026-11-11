@@ -1,19 +1,34 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { updateProfile } from '@/services/api'
 
 const props = defineProps<{
   currentNick: string
+  /** Sandbox `/debug-modals`: „Zapisz” nie woła `updateProfile`. */
+  preview?: boolean
 }>()
 
-const emit = defineEmits(['close', 'updated'])
+const emit = defineEmits<{
+  close: []
+  updated: [nick: string]
+}>()
 
 const newNick = ref(props.currentNick || '')
 const isSaving = ref(false)
 const errorMsg = ref('')
+const inputEl = ref<HTMLInputElement | null>(null)
 
 async function saveNick() {
-  if (newNick.value.trim() === (props.currentNick || '').trim()) {
+  if (isSaving.value) return
+  const nick = newNick.value.trim()
+  if (nick === (props.currentNick || '').trim()) {
+    emit('close')
+    return
+  }
+
+  if (props.preview) {
+    console.log('[debug-modals] EditNickModal → save', { nick })
+    emit('updated', nick)
     emit('close')
     return
   }
@@ -23,69 +38,100 @@ async function saveNick() {
 
   try {
     await updateProfile({ nick: newNick.value })
-    emit('updated', newNick.value.trim())
+    emit('updated', nick)
     emit('close')
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Błąd zapisu:', err)
     errorMsg.value = 'Wystąpił błąd zapisu do bazy danych.'
   } finally {
     isSaving.value = false
   }
 }
+
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') emit('close')
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  document.body.style.overflow = 'hidden'
+  inputEl.value?.focus()
+  inputEl.value?.select()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  document.body.style.overflow = ''
+})
 </script>
 
 <template>
-  <div 
-    class="fixed inset-0 z-[150] flex flex-col items-center justify-center p-4 bg-black/80 backdrop-blur-sm cursor-pointer"
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="edit-nick-title"
     @click.self="emit('close')"
   >
-    <div class="bg-gray-900 border border-gray-700 w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden relative cursor-default p-6 md:p-8 text-center animate-pop-in">
-      <div class="absolute -top-10 -right-10 w-32 h-32 bg-lime-500/10 rounded-full blur-2xl pointer-events-none"></div>
-      
-      <div class="w-16 h-16 bg-lime-500/10 border border-lime-500/30 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-[0_0_15px_rgba(132,204,22,0.2)]">
-        ✏️
-      </div>
-      
-      <h3 class="text-xl font-black text-white uppercase mb-1 tracking-widest">Zmień Pseudonim</h3>
-      <p class="text-gray-400 text-[9px] uppercase font-bold tracking-widest mb-6">Wpisz nową ksywkę lub zostaw puste, aby usunąć.</p>
-      
-      <input 
-        v-model="newNick" 
-        @keyup.enter="saveNick"
-        type="text" 
-        placeholder="Np. The Boss" 
-        autocomplete="off" 
-        class="w-full bg-gray-950 border border-gray-800 text-white rounded-xl px-4 py-4 mb-6 focus:outline-none focus:border-lime-500 transition-colors text-center font-black text-lg tracking-wider shadow-inner placeholder:text-gray-700"
+    <div
+      class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-line bg-surface p-6 shadow-2xl"
+      @click.stop
+    >
+      <button
+        type="button"
+        class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+        aria-label="Zamknij"
+        @click="emit('close')"
       >
-      
-      <p v-if="errorMsg" class="text-red-500 text-xs mb-4">{{ errorMsg }}</p>
+        <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
 
-      <div class="grid grid-cols-2 gap-3 relative z-10">
-        <button 
-          @click="emit('close')" 
-          :disabled="isSaving"
-          class="py-3.5 bg-gray-800 text-gray-400 font-black uppercase text-[10px] rounded-xl hover:bg-gray-700 hover:text-white border border-gray-700 transition-colors tracking-widest disabled:opacity-50"
+      <p class="label pr-8 text-accent">Profil</p>
+      <h2 id="edit-nick-title" class="pr-8 font-display text-2xl font-black uppercase italic text-fg">
+        Zmień pseudonim
+      </h2>
+      <p class="mt-6 text-sm leading-relaxed text-muted">
+        Wpisz nową ksywkę lub zostaw puste, aby usunąć.
+      </p>
+
+      <label class="mt-6 block">
+        <span class="label text-muted">Pseudonim</span>
+        <input
+          ref="inputEl"
+          v-model="newNick"
+          type="text"
+          maxlength="30"
+          placeholder="Np. The Boss"
+          autocomplete="off"
+          class="mt-2 w-full rounded-xl border border-line bg-surface-2 px-4 py-3 font-display text-base font-extrabold text-fg placeholder:font-sans placeholder:text-sm placeholder:font-normal placeholder:text-muted focus:border-lime focus:outline-none"
+          @keyup.enter="saveNick"
         >
-          Anuluj
-        </button>
-        <button 
-          @click="saveNick" 
+      </label>
+
+      <p v-if="errorMsg" class="mt-6 rounded-xl bg-danger/10 px-4 py-3 text-sm text-danger">
+        {{ errorMsg }}
+      </p>
+
+      <div class="mt-6 flex flex-col gap-2">
+        <button
+          type="button"
+          class="w-full rounded-xl bg-lime px-4 py-3 font-display font-extrabold uppercase tracking-wide text-on-lime transition hover:bg-lime/90 disabled:opacity-40"
           :disabled="isSaving"
-          class="py-3.5 bg-lime-500 text-gray-900 font-black uppercase text-[10px] rounded-xl hover:bg-lime-400 transition-transform active:scale-95 tracking-widest shadow-[0_0_15px_rgba(132,204,22,0.3)] disabled:opacity-50 disabled:active:scale-100"
+          @click="saveNick"
         >
           {{ isSaving ? 'Zapis...' : 'Zapisz' }}
+        </button>
+        <button
+          type="button"
+          class="w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg disabled:opacity-40"
+          :disabled="isSaving"
+          @click="emit('close')"
+        >
+          Anuluj
         </button>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.animate-pop-in {
-  animation: popIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-@keyframes popIn {
-  0% { opacity: 0; transform: scale(0.95); }
-  100% { opacity: 1; transform: scale(1); }
-}
-</style>
