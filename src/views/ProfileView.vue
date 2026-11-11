@@ -31,6 +31,7 @@ import { type StandingEntry } from '@/components/profile/ProfileMiniTable.vue'
 import ProfileMatches from '@/components/profile/ProfileMatches.vue'
 import { type MatchEntry } from '@/components/profile/ProfileMatches.vue'
 import ProfileCup from '@/components/profile/ProfileCup.vue'
+import ProfileSummerCard from '@/components/profile/ProfileSummerCard.vue'
 import CupEnrollmentModal from '@/components/profile/CupEnrollmentModal.vue'
 import VerificationModal from '@/components/profile/VerificationModal.vue'
 import MatchmakingModal from '@/components/profile/MatchmakingModal.vue'
@@ -856,6 +857,8 @@ async function handleDecision(data: {
         @details="(match) => openMatchDetails('cup', match.id)"
         @info="(message) => showToast(message, 'info')"
       />
+
+      <ProfileSummerCard :profile-uid="userData?.uid ?? ''" />
 <!-- ================================================================ -->
     <!-- MODAL: WERYFIKACJA                                               -->
     <!-- ================================================================ -->

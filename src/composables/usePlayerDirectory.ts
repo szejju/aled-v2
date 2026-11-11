@@ -4,6 +4,8 @@ import { asRecord, flag, mapEntries, optNum, optStr } from '@/utils/rtdb'
 
 export interface VerifiedPlayer {
   id: string
+  /** Konto Auth. Klucz węzła `/summer_league/participants`. */
+  uid?: string
   firstName?: string
   lastName?: string
   nick?: string
@@ -57,6 +59,7 @@ export function splitPlayers(value: unknown): { verified: VerifiedPlayer[]; unve
     if (flag(player.isVerified) && !flag(player.isDisqualified)) {
       verified.push({
         id: playerId,
+        uid: optStr(player.uid),
         firstName: optStr(player.firstName),
         lastName: optStr(player.lastName),
         nick: optStr(player.nick),

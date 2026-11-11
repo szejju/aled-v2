@@ -111,6 +111,24 @@ const router = createRouter({
       redirect: { name: 'profile' },
     },
     {
+      path: '/lato',
+      name: 'SummerHome',
+      component: () => import('@/views/summer/SummerDashboard.vue'),
+      meta: { title: 'Liga Lato', requiresAuth: true },
+    },
+    {
+      path: '/lato/tabela',
+      name: 'SummerStandings',
+      component: () => import('@/views/summer/SummerStandings.vue'),
+      meta: { title: 'Tabela Ligi Lato', requiresAuth: true },
+    },
+    {
+      path: '/lato/protokol/:matchId',
+      name: 'SummerMatchModal',
+      component: () => import('@/components/summer/SummerMatchModal.vue'),
+      meta: { title: 'Protokół Ligi Lato', requiresAuth: true },
+    },
+    {
       // Panel administratora (placeholder – docelowo AdminView)
       path: '/admin',
       name: 'admin',

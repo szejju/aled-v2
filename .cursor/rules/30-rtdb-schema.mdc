@@ -18,4 +18,5 @@ globs:
 - `schedule/{matchKey}` – mecze ligowe (p1Id, p2Id, score1, score2, legs1, legs2, status, p1Stats, p2Stats, pendingProtocol).
 - `cup/` – `participants/`, `groups/`, `schedule/`, `bracket/`, `settings/`.
 - `settings/` – `adminEmails`, `leagueStructure/`, `rules/`, `socialStats/`.
-- `archive/season_{N}` – odseparowana instancja bazy archiwalnej (`archive-app`).   
+- `archive/season_{N}` – odseparowana instancja bazy archiwalnej (`archive-app`).
+- `summer_league/` – sandbox Ligi Lato (`settings/`, `participants/{uid}`, `schedule/`, `standings/`). Wyniki nie wchodzą do StatsEngine. Zapis tylko przez Cloud Functions. `settings.matchFormat` (`firstTo.target`, domyślnie 6 z remisem 5:5, albo `fixedSum.legs`) waliduje legi. `submitSummerMatchResult` dopisuje do `schedule/{matchId}` status `played`, a potem `recalculateSummerStandings` nadpisuje `standings` (3 pkt za wygraną legów, 1 za remis).   

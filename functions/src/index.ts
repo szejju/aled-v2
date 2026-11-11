@@ -52,6 +52,10 @@ export {
   manageAdminEmails,
   linkAdminProfile,
   generatePlayoffsAdmin,
+  manageSummerLeagueSettings,
+  generateSummerSchedule,
+  removeSummerLeaguePlayer,
+  replaceSummerLeaguePlayer,
   // adminFunctions.ts
   addPenalty,
   removePenalty,
@@ -107,3 +111,6 @@ export {
 export {
   submitPollVote,
 } from "./polls/index.js";
+
+// ─── Liga Lato (izolowany węzeł /summer_league) ──────────────────────────────
+export { registerForSummerLeague, submitSummerMatchResult } from "./summer_league/actions.js";

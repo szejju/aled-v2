@@ -17,3 +17,4 @@ globs:
 - **Panel/Reguły:** `confirmMatchResult`, `awardWalkover`, `applyPenalty`
 - **Mecze/Radar:** `approveMatchResult`, `rejectMatchResult`, `submitMatchResult`, `proposeMatchDate`
 - **Generowanie:** `generateLeagueSchedule`, `generateCupGroupsAdmin`, `generateCupKnockoutAdmin`
+- **Liga Lato:** `registerForSummerLeague`, `submitSummerMatchResult`, `manageSummerLeagueSettings`, `generateSummerSchedule`, `removeSummerLeaguePlayer`, `replaceSummerLeaguePlayer`

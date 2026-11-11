@@ -282,6 +282,56 @@ export const enrollForNextSeason = makeCallable<
   EnrollForNextSeasonResponse
 >('enrollForNextSeason')
 
+// ─── registerForSummerLeague ─────────────────────────────────────────────────
+
+export interface RegisterForSummerLeagueResponse {
+  ok: true
+  alreadyRegistered: boolean
+  message: string
+}
+
+/**
+ * Zapis do Ligi Lato. Imię i UID bierze Cloud Function z konta Auth
+ * oraz profilu — klient nie przysyła danych zawodnika.
+ */
+export const registerForSummerLeague = makeCallable<
+  Record<string, never>,
+  RegisterForSummerLeagueResponse
+>('registerForSummerLeague')
+
+// ─── submitSummerMatchResult ─────────────────────────────────────────────────
+
+export interface SubmitSummerStatsPayload {
+  da?: number | null
+  max?: number | null
+  hf?: number | null
+  sl?: number | null
+  avg?: number | null
+}
+
+export interface SubmitSummerMatchResultPayload {
+  matchId: string
+  score1: number
+  score2: number
+  p1Stats: SubmitSummerStatsPayload
+  p2Stats: SubmitSummerStatsPayload
+}
+
+export interface SubmitSummerMatchResultResponse {
+  ok: true
+  message: string
+}
+
+/**
+ * Wynik Ligi Lato. score1/score2 to legi.
+ * Zapis idzie do /summer_league/schedule, a serwer odświeża /summer_league/standings.
+ * Bez DPI i bez tabeli sezonu.
+ */
+export const submitSummerMatchResult = makeCallable<
+  SubmitSummerMatchResultPayload,
+  SubmitSummerMatchResultResponse
+>('submitSummerMatchResult')
+
 // ─── getCupData ────────────────────────────────────────────────────────────────
 
 export interface CupDataResponse {
@@ -945,6 +995,46 @@ export const generateSummerGroups = makeCallable<
   { success: boolean; message: string; groups?: Record<string, string[]> }
 >('generateSummerGroups')
 
+/**
+ * Grupy i terminarz Ligi Lato.
+ * Serwer czyta `/summer_league/participants`, zapisuje `group`, `schedule` i `standings`.
+ */
+export interface GenerateSummerSchedulePayload {
+  numberOfGroups: number
+}
+
+export interface GenerateSummerScheduleResult {
+  success: boolean
+  message: string
+  matchCount: number
+  groups: Record<string, string[]>
+}
+
+export const generateSummerSchedule = makeCallable<
+  GenerateSummerSchedulePayload,
+  GenerateSummerScheduleResult
+>('generateSummerSchedule')
+
+export interface RemoveSummerLeaguePlayerPayload {
+  uid: string
+}
+
+export const removeSummerLeaguePlayer = makeCallable<
+  RemoveSummerLeaguePlayerPayload,
+  { success: boolean; message: string; removedMatches: number }
+>('removeSummerLeaguePlayer')
+
+export interface ReplaceSummerLeaguePlayerPayload {
+  oldUid: string
+  newUid: string
+  newName: string
+}
+
+export const replaceSummerLeaguePlayer = makeCallable<
+  ReplaceSummerLeaguePlayerPayload,
+  { success: boolean; message: string; changedMatches: number }
+>('replaceSummerLeaguePlayer')
+
 // ─── updateSummerLeagueStatus / updateSocialStats / updateScheduleDates ────
 
 export interface UpdateSummerLeagueStatusPayload {
@@ -955,6 +1045,18 @@ export const updateSummerLeagueStatus = makeCallable<
   UpdateSummerLeagueStatusPayload,
   { success: boolean; message: string }
 >('updateSummerLeagueStatus')
+
+export interface ManageSummerLeagueSettingsPayload {
+  isActive?: boolean
+  registrationOpen?: boolean
+  seasonName?: string
+  playersLimit?: number
+}
+
+export const manageSummerLeagueSettings = makeCallable<
+  ManageSummerLeagueSettingsPayload,
+  { success: boolean; message: string }
+>('manageSummerLeagueSettings')
 
 export interface UpdateSocialStatsPayload {
   facebook?: string | number

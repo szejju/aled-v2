@@ -45,6 +45,10 @@
       ".read": "auth != null",
       ".write": "auth != null && auth.token.admin == true"
     },
+    "summer_league": {
+      ".read": "auth != null",
+      ".write": false
+    },
 
     "settings": {
       ".write": "auth != null && auth.token.admin == true",

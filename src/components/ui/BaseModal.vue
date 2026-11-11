@@ -8,6 +8,10 @@ interface Props {
   closeOnEscape?: boolean
   closeOnBackdrop?: boolean
   showCloseButton?: boolean
+  /** Opcjonalne tło paska tytułu, np. letni `bg-orange-500`. Puste = dotychczasowy nagłówek. */
+  headerClass?: string
+  /** Opcjonalne kolory przycisku zamknięcia, gdy nagłówek ma jasne tło. */
+  closeClass?: string
 }
 
 interface Emits {
@@ -21,6 +25,8 @@ const props = withDefaults(defineProps<Props>(), {
   closeOnEscape: true,
   closeOnBackdrop: true,
   showCloseButton: true,
+  headerClass: '',
+  closeClass: '',
 })
 
 const emit = defineEmits<Emits>()
@@ -97,7 +103,7 @@ watch(() => props.modelValue, (val: boolean) => {
           @click.stop
         >
           <!-- Nagłówek -->
-          <div class="flex shrink-0 items-center justify-between px-6 py-4 border-b border-line">
+          <div class="flex shrink-0 items-center justify-between border-b border-line px-6 py-4" :class="headerClass">
             <slot name="header">
               <h2 v-if="title" id="modal-title" class="text-lg font-display text-fg">
                 {{ title }}
@@ -108,7 +114,8 @@ watch(() => props.modelValue, (val: boolean) => {
               v-if="showCloseButton"
               type="button"
               @click="handleClose"
-              class="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-surface-2 transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-[#13171C]"
+              class="rounded-lg p-1.5 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#13171C]"
+              :class="closeClass || 'text-muted hover:bg-surface-2 hover:text-fg focus:ring-accent'"
               aria-label="Zamknij modal"
             >
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

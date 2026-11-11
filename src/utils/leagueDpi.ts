@@ -24,6 +24,10 @@ function finiteScore(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function finiteLegs(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+}
+
 function protocolOf(value: unknown): MatchPlayerStats | undefined {
   const raw = asRecord(value)
   return raw ? (raw as MatchPlayerStats) : undefined
@@ -62,6 +66,8 @@ export function collectOfficialCupMatches(schedule: unknown): Match[] {
       p2Name: typeof raw.p2Name === 'string' ? raw.p2Name : undefined,
       score1,
       score2,
+      legs1: finiteLegs(raw.legs1),
+      legs2: finiteLegs(raw.legs2),
       p1Stats: protocolOf(raw.p1Stats),
       p2Stats: protocolOf(raw.p2Stats),
       isDoubleWO: raw.isDoubleWO === true,

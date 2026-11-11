@@ -146,7 +146,9 @@ export const sendPlayerNotification = functions.https.onCall(async (request) => 
     : `Wyslano powiadomienie do ${playerIds.length} graczy.`;
   return { success: true, message: sent, count: playerIds.length };
 });
-// ---- generateSummerGroups -------------------------------------------------
+// ---- generateSummerGroups (legacy: węzeł /summer, nie /summer_league) ------
+// Liga Lato czyta i zapisuje wyłącznie /summer_league. Ten endpoint zostaje
+// dla starych wywołań. Nowy terminarz grup: generateSummerSchedule.
 
 function fisherYatesShuffle<T>(arr: T[]): T[] {
   for (let i = arr.length - 1; i > 0; i--) {

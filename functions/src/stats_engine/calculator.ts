@@ -19,6 +19,12 @@ export interface Match {
   p2Name?: string;
   score1: number;
   score2: number;
+  /**
+   * Wygrane legi. W pucharze score1/score2 to sety,
+   * a procent checkoutu bierze właśnie te pola.
+   */
+  legs1?: number;
+  legs2?: number;
   p1Stats?: MatchPlayerStats;
   p2Stats?: MatchPlayerStats;
   isDoubleWO?: boolean;
@@ -107,6 +113,12 @@ function hasDpiProtocol(match: Match, playerId: string): boolean {
 
 function roundIndex(match: Match): number {
   return typeof match.round === "number" && Number.isFinite(match.round) ? match.round : 0;
+}
+
+/** Legi zapisane przy meczu. Brak pola nie wraca do wyniku setowego. */
+function recordedLegs(value: number | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return value;
 }
 
 export class StatsEngine {
@@ -286,7 +298,8 @@ export class StatsEngine {
       if (typeof m.score1 !== 'number') return;
       const isDoubleWO = m.isDoubleWO === true;
 
-      const processSide = (playerId: string, myScore: number, matchStats?: MatchPlayerStats, oppName?: string) => {
+      // score1/score2 w pucharze to sety. Darts na double liczą legs1/legs2.
+      const processSide = (playerId: string, legsWon: number | null, matchStats?: MatchPlayerStats, oppName?: string) => {
         const st = stats[playerId];
         if (!st || !matchStats) return;
 
@@ -307,14 +320,14 @@ export class StatsEngine {
         if (sl > 0) st.sl = Math.min(st.sl, sl);
 
         const da = parseInt(String(matchStats.da || 0), 10) || 0;
-        if (da > 0 && !isDoubleWO) {
-          st.doublesHit += myScore;
+        if (da > 0 && !isDoubleWO && legsWon !== null) {
+          st.doublesHit += legsWon;
           st.doublesAttempts += da;
         }
       };
 
-      processSide(m.p1Id, m.score1, m.p1Stats, m.p2Name);
-      processSide(m.p2Id, m.score2, m.p2Stats, m.p1Name);
+      processSide(m.p1Id, recordedLegs(m.legs1), m.p1Stats, m.p2Name);
+      processSide(m.p2Id, recordedLegs(m.legs2), m.p2Stats, m.p1Name);
     });
 
     Object.values(stats).forEach(st => {

@@ -8,6 +8,7 @@ import { HttpsError, onCall, type FunctionsErrorCode } from "firebase-functions/
 import { db } from "../database/connection.js";
 import * as admin from "firebase-admin";
 import { parseLeagueStartMs, plausibleLocalTimestamp, roundCalendarBounds } from "../league/roundWindow.js";
+import { checkoutProblem, isLegalCupSetScore, parseAverage, shortLegMinimum } from "./protocolRules.js";
 
 const CALLABLE_CODES = new Set<FunctionsErrorCode>([
   "unauthenticated",
@@ -251,24 +252,49 @@ function wholeNumber(value: unknown, min: number, max: number): number | null {
   return parsed;
 }
 
+function readAverage(raw: unknown, who: string): number {
+  if (raw === undefined || raw === null || raw === "") return 0;
+  const parsed = parseAverage(raw);
+  if (parsed === null) {
+    throw new Error(`invalid-argument: ${who}: srednia to liczba od 0 do 167 z krokiem 0.01.`);
+  }
+  return parsed;
+}
+
 function readSideStats(
   raw: Record<string, unknown> | undefined,
   legsWon: number,
   who: string,
-): { da: number; max: number; hf: number; sl: number } {
+  isCup: boolean,
+): { da: number; max: number; hf: number; sl: number; avg: number } {
+  const avg = readAverage(raw?.avg, who);
   const max = raw?.max === undefined || raw?.max === null || raw?.max === ""
     ? 0
     : wholeNumber(raw.max, 0, 99);
   if (max === null) {
     throw new Error(`invalid-argument: ${who}: maksy podaj jako liczbe albo zostaw puste.`);
   }
-  if (legsWon < 1) return { da: 0, max, hf: 0, sl: 0 };
+  if (legsWon < 1) return { da: 0, max, hf: 0, sl: 0, avg };
 
   const da = wholeNumber(raw?.da, 1, 999);
+  const hfRaw = typeof raw?.hf === "number" ? raw.hf : Number(raw?.hf);
+  if (Number.isFinite(hfRaw)) {
+    const finish = checkoutProblem(hfRaw);
+    if (finish === "high") {
+      throw new Error(`invalid-argument: ${who}: checkout nie moze byc wyzszy niz 170.`);
+    }
+    if (finish === "impossible") {
+      throw new Error(`invalid-argument: ${who}: checkout ${hfRaw} jest niemozliwy.`);
+    }
+  }
   const hf = wholeNumber(raw?.hf, 2, 170);
+  const minimumLeg = shortLegMinimum(isCup);
   const sl = wholeNumber(raw?.sl, 1, 999);
   if (da === null) {
     throw new Error(`invalid-argument: ${who}: podaj proby na doublach, bo wygral lega.`);
+  }
+  if (da < legsWon) {
+    throw new Error(`invalid-argument: ${who}: proby na doublach nie moga byc mniejsze niz wygrane legi.`);
   }
   if (hf === null) {
     throw new Error(`invalid-argument: ${who}: podaj checkout, bo wygral lega.`);
@@ -276,7 +302,10 @@ function readSideStats(
   if (sl === null) {
     throw new Error(`invalid-argument: ${who}: podaj short leg, bo wygral lega.`);
   }
-  return { da, max, hf, sl };
+  if (sl < minimumLeg) {
+    throw new Error(`invalid-argument: ${who}: short leg to minimum ${minimumLeg} lotek.`);
+  }
+  return { da, max, hf, sl, avg };
 }
 
 export const submitMatchResult = onCall(
@@ -341,9 +370,12 @@ export const submitMatchResult = onCall(
       if (setA === null || setB === null) {
         throw new Error("invalid-argument: W pucharze podaj wynik setowy.");
       }
+      if (isCup && !isLegalCupSetScore(setA, setB)) {
+        throw new Error("invalid-argument: Puchar: dozwolone sa tylko wyniki setow BO3, BO5 albo BO7. Remis jest zabroniony.");
+      }
 
-      const left = readSideStats(p1Stats, legA, "Pierwszy gracz");
-      const right = readSideStats(p2Stats, legB, "Drugi gracz");
+      const left = readSideStats(p1Stats, legA, "Pierwszy gracz", isCup === true);
+      const right = readSideStats(p2Stats, legB, "Drugi gracz", isCup === true);
       if (!screenUrl1 || typeof screenUrl1 !== "string" || !screenUrl1.trim()) {
         throw new Error("invalid-argument: Wgraj przynajmniej jeden screen protokolu.");
       }
