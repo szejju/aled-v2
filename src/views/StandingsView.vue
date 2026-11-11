@@ -233,15 +233,11 @@ const showPlayerCardModal = (player: DivisionTablePlayer) => {
     <!-- Nagłówek podstrony -->
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <p class="label text-lime">Sezon 4 · Po 10 kolejkach</p>
+        <p class="label text-lime">Sezon 4</p>
         <h1 class="mt-2 font-display text-5xl font-black uppercase italic leading-[0.9] sm:text-6xl">
           Tabela <span class="text-glow text-accent">ligowa</span>
         </h1>
       </div>
-      <p class="max-w-sm text-sm leading-relaxed text-muted">
-        Strefy awansu, baraży i spadku liczone dynamicznie z drzewka rozgrywek. Kliknij
-        nazwisko zawodnika, aby otworzyć jego kartę.
-      </p>
     </header>
 
     <!-- Zakładki dywizji -->
@@ -450,7 +446,7 @@ const showPlayerCardModal = (player: DivisionTablePlayer) => {
         </div>
 
         <p class="border-t border-line px-6 py-4 text-xs text-muted">
-          Tie-breaki: punkty po odjęciu kar → różnica legów → wygrane legi → bilans H2H.
+          Kolejność w tabeli ustalana jest następująco: punkty po odjęciu kar → różnica legów → wygrane legi → bilans H2H.
           Zdyskwalifikowani zawodnicy zawsze zamykają tabelę i nie zajmują miejsc barażowych.
         </p>
       </section>

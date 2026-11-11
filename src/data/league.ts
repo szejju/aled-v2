@@ -38,12 +38,12 @@ export const navLinks: NavLink[] = [
   { label: 'Home', to: '/' },
   { label: 'Tabela', to: '/tabela' },
   { label: 'Terminarz', to: '/mecze' },
-  { label: 'Puchar Ligi', to: '/puchar' },
   { label: 'Zawodnicy', to: '/zawodnicy' },
   { label: 'Rankingi', to: '/rankingi' },
   { label: 'Newsy', to: '/news' },
-  { label: 'Archiwum', to: '/#wyniki' },
+  { label: 'Puchar Ligi', to: '/puchar' },
   { label: 'Liga Lato', to: '/lato' },
+  { label: 'Archiwum', to: '/#wyniki' },
 ]
 
 export const currentSeason = 'Sezon 4'

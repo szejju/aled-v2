@@ -1,15 +1,15 @@
 ﻿<script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { ref as dbRef, get } from 'firebase/database'
-import { getDatabaseClient } from '@/services/firebase'
+import { getAuthClient, getDatabaseClient } from '@/services/firebase'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import { officialLeagueStats } from '@/utils/leagueDpi'
 
 /**
  * Podstrona „Rankingi” – Top 10 w 7 kategoriach.
  *
- * Dane pobierane z RTDB (players, schedule, cup/schedule).
- * Kategorie poza DPI liczone są z protokołów na ekranie.
+ * Liga i Puchar Ligi biorą protokoły z /schedule i /cup/schedule.
+ * Liga Lato jest osobnym zakresem, jak puchar: tylko /summer_league, bez DPI.
  * Power Ranking bierze wyłącznie zatwierdzone mecze ligowe z silnika DPI.
  */
 
@@ -17,8 +17,8 @@ import { officialLeagueStats } from '@/utils/leagueDpi'
  *  Modele danych
  * ------------------------------------------------------------------ */
 
-/** Identyfikator zakładki: „ALL” (wszyscy), „CUP” (puchar) lub id dywizji. */
-type TabId = 'ALL' | 'CUP' | string
+/** Identyfikator zakładki: „ALL”, „CUP”, „SUMMER” albo id dywizji. */
+type TabId = 'ALL' | 'CUP' | 'SUMMER' | string
 
 /** Surowy rekord meczu (liga lub puchar). */
 interface RawMatch {
@@ -85,7 +85,6 @@ interface RankingList {
   id: string
   icon: string
   title: string
-  hint: string
   isPct: boolean
   highlight: boolean
   items: RankingItem[]
@@ -118,6 +117,41 @@ interface ModalPlayer extends Player {
   max: number
 }
 
+/** Liga Lato trzyma „Imię Nazwisko”. Ranking pokazuje „Nazwisko Imię”, jak liga. */
+function splitGivenName(name: string): { firstName: string; lastName: string } {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: '', lastName: parts[0] }
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') }
+}
+
+function surnameFirst(name: string): string {
+  const { firstName, lastName } = splitGivenName(name)
+  return `${lastName} ${firstName}`.trim()
+}
+
+function parseSummerPlayers(raw: unknown): Player[] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+  const players: Player[] = []
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+    const row = value as Record<string, unknown>
+    const stored = typeof row.name === 'string' ? row.name : ''
+    const { firstName, lastName } = splitGivenName(stored)
+    const group = typeof row.group === 'string' ? row.group.trim() : ''
+    const uid = typeof row.uid === 'string' && row.uid.trim() ? row.uid.trim() : id
+    players.push({
+      id,
+      uid,
+      div: group ? `GR ${group}` : 'LATO',
+      group: group || undefined,
+      firstName,
+      lastName,
+    })
+  }
+  return players
+}
+
 /* ------------------------------------------------------------------ *
  *  Stan ładowania i surowe dane z RTDB
  * ------------------------------------------------------------------ */
@@ -128,20 +162,46 @@ const error = ref<string | null>(null)
 const allPlayers = ref<Player[]>([])
 const scheduleData = ref<Record<string, RawMatch>>({})
 const cupScheduleData = ref<Record<string, RawMatch>>({})
+const summerScheduleData = ref<Record<string, RawMatch>>({})
+const summerPlayers = ref<Player[]>([])
+/** Odczyt /summer_league wymaga logowania. Gość widzi zakładkę, ale bez liczb. */
+const summerLocked = ref(false)
 const divisions = ref<DivisionTab[]>([])
 
 onMounted(async () => {
   try {
     const db = getDatabaseClient()
-    const [playersSnap, scheduleSnap, cupSnap, structureSnap] = await Promise.all([
+    const auth = getAuthClient()
+    const summerTask = (async () => {
+      try {
+        await auth.authStateReady()
+        if (!auth.currentUser) {
+          summerLocked.value = true
+          return
+        }
+        const [scheduleSnap, participantsSnap] = await Promise.all([
+          get(dbRef(db, '/summer_league/schedule')),
+          get(dbRef(db, '/summer_league/participants')),
+        ])
+        summerScheduleData.value = (scheduleSnap.val() || {}) as Record<string, RawMatch>
+        summerPlayers.value = parseSummerPlayers(participantsSnap.val())
+      } catch (summerError: unknown) {
+        console.warn('[RankingsView] Liga Lato:', summerError)
+        summerLocked.value = true
+      }
+    })()
+    const leagueReads = Promise.all([
       get(dbRef(db, '/players')),
       get(dbRef(db, '/schedule')),
       get(dbRef(db, '/cup/schedule')),
       get(dbRef(db, '/settings/leagueStructure')),
     ])
+    await summerTask
+    const [playersSnap, scheduleSnap, cupSnap, structureSnap] = await leagueReads
     const rawPlayers = (playersSnap.val() || {}) as Record<string, any>
     allPlayers.value = Object.entries(rawPlayers).map(([id, data]) => ({
       id,
+      uid: typeof data.uid === 'string' ? data.uid : undefined,
       div: String(data.div ?? ''),
       group: data.group ? String(data.group) : undefined,
       firstName: String(data.firstName ?? ''),
@@ -173,10 +233,19 @@ const activeGroup = ref<string | null>(null)
 
 const isAllActive = computed(() => activeTab.value === 'ALL')
 const isCupActive = computed(() => activeTab.value === 'CUP')
+const isSummerActive = computed(() => activeTab.value === 'SUMMER')
 
-const themeAccentText = computed(() =>
-  isCupActive.value ? 'text-purple-400' : 'text-accent',
-)
+const themeAccentText = computed(() => {
+  if (isCupActive.value) return 'text-purple-400'
+  if (isSummerActive.value) return 'text-amber-400'
+  return 'text-accent'
+})
+
+const scopeEyebrow = computed(() => {
+  if (isCupActive.value) return 'Puchar Ligi'
+  if (isSummerActive.value) return 'Liga Lato'
+  return 'Statystyki ligowe'
+})
 
 /** Parsowanie wartości numerycznej ze statystyk (może być string). */
 const parseNum = (v: unknown): number => {
@@ -246,7 +315,26 @@ const statsMap = computed<Record<string, PlayerStats>>(() => {
     }
   }
 
-  if (isCupActive.value) {
+  if (isSummerActive.value) {
+    const alias = new Map<string, string>()
+    for (const player of summerPlayers.value) {
+      alias.set(player.id, player.id)
+      if (player.uid) alias.set(player.uid, player.id)
+    }
+    for (const player of allPlayers.value) {
+      if (!player.uid) continue
+      const canonical = alias.get(player.uid)
+      if (canonical) alias.set(player.id, canonical)
+    }
+    const summerMatches = Object.values(summerScheduleData.value) as RawMatch[]
+    for (const m of summerMatches) {
+      if (!m.p1Stats && !m.p2Stats) continue
+      const left = alias.get(m.p1Id || '') || m.p1Id || ''
+      const right = alias.get(m.p2Id || '') || m.p2Id || ''
+      processPlayer(left, surnameFirst(m.p2Name || ''), m.p1Stats as Record<string, unknown> | undefined)
+      processPlayer(right, surnameFirst(m.p1Name || ''), m.p2Stats as Record<string, unknown> | undefined)
+    }
+  } else if (isCupActive.value) {
     const cupMatches = Object.values(cupScheduleData.value) as RawMatch[]
     for (const m of cupMatches) {
       if (!m.p1Stats && !m.p2Stats) continue
@@ -299,14 +387,23 @@ const statsMap = computed<Record<string, PlayerStats>>(() => {
  *  Filtrowanie zawodników
  * ------------------------------------------------------------------ */
 
-const formatDivShort = (div: string): string => {
-  const cleaned = div.replace(/DYWIZJA/gi, '').trim()
-  return /^\d+$/.test(cleaned) ? `D${cleaned}` : cleaned.toUpperCase()
+/** „DYWIZJA 2 GR A”, a bez grupy samo „DYWIZJA 1”. */
+const formatDivisionLabel = (player: Player): string => {
+  const div = player.div || ''
+  const number = (div.match(/(\d+)/) || [])[1] || ''
+  const embedded = div.match(/GRUPA\s+([A-Z0-9]+)/i)?.[1] || ''
+  const group = (player.group || embedded).trim().toUpperCase().replace(/^(?:GRUPA|GR)\s+/i, '')
+  if (!number) {
+    if (group) return `LIGA LATO GR ${group}`
+    return /^lato$/i.test(div) ? 'LIGA LATO' : div.toUpperCase()
+  }
+  return group ? `DYWIZJA ${number} GR ${group}` : `DYWIZJA ${number}`
 }
 
 const divisionPlayers = computed<Player[]>(() => {
   const scope = activeScope.value
   if (scope === 'ALL' || scope === 'CUP') return allPlayers.value
+  if (scope === 'SUMMER') return summerPlayers.value
   // Dopasuj graczy do konkretnej dywizji (z opcjonalną grupą)
   return allPlayers.value.filter((p) => {
     const pDivNorm = (p.div || '').replace(/DYWIZJA/gi, '').trim().toUpperCase()
@@ -348,15 +445,15 @@ const rankingRows = computed(() => {
     const st = statsMap.value[p.id]
     if (!st) return
     const name = `${p.lastName || ''} ${p.firstName || ''}`.trim()
-    const divShort = formatDivShort(p.div)
+    const divLabel = formatDivisionLabel(p)
 
-    if (st.realAvg > 0) rows.avg.push({ id: p.id, name, val: st.realAvg, info: divShort })
-    if (st.bestAvg > 0) rows.bestAvg.push({ id: p.id, name, val: st.bestAvg, info: st.bestAvgOpp })
-    if (st.max > 0) rows.max.push({ id: p.id, name, val: st.max, info: divShort })
-    if (st.hf > 0) rows.finish.push({ id: p.id, name, val: st.hf, info: divShort })
-    if (st.sl > 0) rows.short.push({ id: p.id, name, val: st.sl, info: divShort })
-    if (st.doublesPct > 0) rows.doubles.push({ id: p.id, name, val: st.doublesPct, info: divShort })
-    if (st.dpi > 0) rows.dpi.push({ id: p.id, name, val: st.dpi, info: divShort })
+    if (st.realAvg > 0) rows.avg.push({ id: p.id, name, val: st.realAvg, info: divLabel })
+    if (st.bestAvg > 0) rows.bestAvg.push({ id: p.id, name, val: st.bestAvg, info: divLabel })
+    if (st.max > 0) rows.max.push({ id: p.id, name, val: st.max, info: divLabel })
+    if (st.hf > 0) rows.finish.push({ id: p.id, name, val: st.hf, info: divLabel })
+    if (st.sl > 0) rows.short.push({ id: p.id, name, val: st.sl, info: divLabel })
+    if (st.doublesPct > 0) rows.doubles.push({ id: p.id, name, val: st.doublesPct, info: divLabel })
+    if (st.dpi > 0) rows.dpi.push({ id: p.id, name, val: st.dpi, info: divLabel })
   })
 
   return rows
@@ -366,18 +463,24 @@ const sortTop = (data: RankingItem[], isAsc: boolean): RankingItem[] =>
   [...data].sort((a, b) => (isAsc ? a.val - b.val : b.val - a.val)).slice(0, 10)
 
 const rankingLists = computed<RankingList[]>(() => [
-  { id: 'avg', icon: '🎯', title: 'Średnia meczowa', hint: 'śr. 3-rzutkowa', isPct: false, highlight: false, items: sortTop(rankingRows.value.avg, false) },
-  { id: 'bestAvg', icon: '🚀', title: 'Najwyższa średnia w meczu', hint: 'rekord meczu', isPct: false, highlight: false, items: sortTop(rankingRows.value.bestAvg, false) },
-  { id: 'max', icon: '🔥', title: 'Maksy 180', hint: 'liczba maksów', isPct: false, highlight: false, items: sortTop(rankingRows.value.max, false) },
-  { id: 'finish', icon: '💥', title: 'Najwyższy checkout', hint: 'zamknięcie', isPct: false, highlight: false, items: sortTop(rankingRows.value.finish, false) },
-  { id: 'short', icon: '⚡', title: 'Najszybszy leg', hint: 'najmniej dartów', isPct: false, highlight: false, items: sortTop(rankingRows.value.short, true) },
-  { id: 'doubles', icon: '🟢', title: 'Skuteczność dablów', hint: 'celność na dublach', isPct: true, highlight: false, items: sortTop(rankingRows.value.doubles, false) },
-  { id: 'dpi', icon: '👑', title: 'Power Ranking / DPI', hint: 'indeks DPI', isPct: false, highlight: true, items: sortTop(rankingRows.value.dpi, false) },
+  { id: 'dpi', icon: '👑', title: 'Power Ranking', isPct: false, highlight: true, items: sortTop(rankingRows.value.dpi, false) },
+  { id: 'avg', icon: '🎯', title: 'Średnia meczowa', isPct: false, highlight: false, items: sortTop(rankingRows.value.avg, false) },
+  { id: 'max', icon: '🔥', title: 'Maksy 180', isPct: false, highlight: false, items: sortTop(rankingRows.value.max, false) },
+  { id: 'bestAvg', icon: '🚀', title: 'Najwyższa średnia w meczu', isPct: false, highlight: false, items: sortTop(rankingRows.value.bestAvg, false) },
+  { id: 'finish', icon: '💥', title: 'Najwyższy checkout', isPct: false, highlight: false, items: sortTop(rankingRows.value.finish, false) },
+  { id: 'short', icon: '⚡', title: 'Najszybszy leg', isPct: false, highlight: false, items: sortTop(rankingRows.value.short, true) },
+  { id: 'doubles', icon: '🟢', title: 'Skuteczność dablów', isPct: true, highlight: false, items: sortTop(rankingRows.value.doubles, false) },
 ])
 
 const visibleLists = computed<RankingList[]>(() =>
-  rankingLists.value.filter((list) => list.id !== 'dpi' || !isCupActive.value),
+  rankingLists.value.filter((list) => list.id !== 'dpi' || (!isCupActive.value && !isSummerActive.value)),
 )
+
+/** Od md pierwszy rząd ma 3 kafle, drugi 4. Bez Power Rankingu zostają dwa rzędy po 3. */
+const tileSpan = (index: number): string => {
+  if (visibleLists.value.length === 7) return index < 3 ? 'md:col-span-4' : 'md:col-span-3'
+  return 'md:col-span-4'
+}
 
 const formatVal = (item: RankingItem, isPct: boolean): string => {
   const displayVal = item.val.toFixed(Number.isInteger(item.val) && !isPct ? 0 : 2)
@@ -459,10 +562,11 @@ const resolvedDivisionId = computed<string>(() => {
   return found ? found.id : mainId
 })
 
-/** Aktualny filtr zakresu: ALL, CUP, lub konkretny identyfikator dywizji. */
+/** Aktualny filtr zakresu: ALL, CUP, SUMMER albo konkretny identyfikator dywizji. */
 const activeScope = computed<TabId>(() => {
   if (isAllActive.value) return 'ALL'
   if (isCupActive.value) return 'CUP'
+  if (isSummerActive.value) return 'SUMMER'
   return resolvedDivisionId.value
 })
 
@@ -475,17 +579,20 @@ const tabOptions = computed<DivisionTab[]>(() => {
     tabs.push({ id: d.id, label: d.label })
   })
   tabs.push({ id: 'CUP', label: '🏆 Puchar Ligi' })
+  tabs.push({ id: 'SUMMER', label: '☀️ Liga Lato' })
   return tabs
 })
 
 const tabButtonClass = (tab: TabId): string => {
   const isActive = activeTab.value === tab
   if (!isActive) return 'bg-surface-2 text-muted hover:text-fg'
-  return tab === 'CUP' ? 'bg-purple-600 text-white' : 'bg-lime text-on-lime'
+  if (tab === 'CUP') return 'bg-purple-600 text-white'
+  if (tab === 'SUMMER') return 'bg-amber-400 text-on-lime'
+  return 'bg-lime text-on-lime'
 }
 
 const setFilter = (div: TabId) => {
-  if (div === 'ALL' || div === 'CUP') {
+  if (div === 'ALL' || div === 'CUP' || div === 'SUMMER') {
     activeTab.value = div
     selectedDivision.value = ''
     activeGroup.value = null
@@ -517,12 +624,18 @@ const setGroup = (group: string | null) => {
 const selectedPlayer = ref<ModalPlayer | null>(null)
 
 const openPlayerModal = (id: string) => {
-  const p = allPlayers.value.find((player) => player.id === id)
+  const summer = summerPlayers.value.find((player) => player.id === id)
+  const league = allPlayers.value.find((player) => player.id === id)
+    ?? (summer?.uid
+      ? allPlayers.value.find((player) => player.uid === summer.uid)
+      : undefined)
+  const p = league ?? summer
   if (!p) return
   const st = statsMap.value[id]
   if (!st) return
   selectedPlayer.value = {
     ...p,
+    div: league ? league.div : '',
     st: {
       m: 10,
       w: 6,
@@ -549,7 +662,7 @@ const openPlayerModal = (id: string) => {
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <p class="label" :class="themeAccentText">
-          Sezon 4 · {{ isCupActive ? 'Puchar Ligi' : 'Statystyki ligowe' }}
+          Sezon 4 · {{ scopeEyebrow }}
         </p>
         <h1 class="mt-2 font-display text-5xl font-black uppercase italic leading-[0.9] sm:text-6xl">
           Ranking<span class="text-glow" :class="themeAccentText">i</span>
@@ -557,7 +670,7 @@ const openPlayerModal = (id: string) => {
       </div>
       <p class="max-w-sm text-sm leading-relaxed text-muted">
         Top 10 najlepszych wyników w każdej kategorii. Przełącz zakres, aby porównać
-        ligę z Pucharem Ligi i zawęzić wyniki do wybranej grupy.
+        ligę, Puchar Ligi i Ligę Lato albo zawęzić wyniki do wybranej grupy.
       </p>
     </header>
 
@@ -575,6 +688,7 @@ const openPlayerModal = (id: string) => {
       >
         <template v-if="tab.id === 'ALL'">Wszyscy</template>
         <template v-else-if="tab.id === 'CUP'">🏆 Puchar Ligi</template>
+        <template v-else-if="tab.id === 'SUMMER'">☀️ Liga Lato</template>
         <template v-else>Dywizja {{ tab.label.replace('D', '') }}</template>
       </button>
     </nav>
@@ -598,23 +712,33 @@ const openPlayerModal = (id: string) => {
       </button>
     </nav>
 
+    <p
+      v-if="isSummerActive && summerLocked"
+      class="rounded-2xl border border-line bg-surface px-4 py-6 text-sm text-muted"
+    >
+      Ranking Ligi Lato jest dostępny po zalogowaniu.
+    </p>
+
     <!-- Karty Bento z rankingami -->
-    <section aria-label="Rankingi" class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <section
+      v-else
+      aria-label="Rankingi"
+      class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-12"
+    >
       <article
-        v-for="list in visibleLists"
+        v-for="(list, index) in visibleLists"
         :key="list.id"
-        class="bg-surface border border-line rounded-2xl p-4"
-        :class="list.highlight ? 'border-l-4 border-l-accent' : ''"
+        class="relative overflow-hidden bg-surface border border-line rounded-2xl p-4"
+        :class="[tileSpan(index), list.highlight ? 'power-metal border-l-4 border-l-accent' : '']"
       >
-        <header class="mb-3 flex items-center justify-between gap-3">
-          <h2 class="flex items-center gap-2 font-display text-base font-bold uppercase tracking-wide text-fg">
+        <header class="relative z-10 mb-3">
+          <h2 class="flex min-w-0 items-center gap-2 font-display text-base font-bold uppercase tracking-wide text-fg">
             <span aria-hidden="true">{{ list.icon }}</span>
             {{ list.title }}
           </h2>
-          <span class="label shrink-0 text-muted">{{ list.hint }}</span>
         </header>
 
-        <ol class="space-y-0.5">
+        <ol class="relative z-10 space-y-0.5">
           <li v-if="list.items.length === 0" class="py-4 text-center text-xs italic text-muted">
             Brak wyników
           </li>
@@ -655,3 +779,51 @@ const openPlayerModal = (id: string) => {
     />
   </div>
 </template>
+
+<style scoped>
+/* Połysk jak odbicie światła na wygiętym metalu: miękki łuk u góry i wąski błysk. */
+.power-metal {
+  background-image:
+    radial-gradient(90% 55% at 18% -8%, color-mix(in oklab, var(--fg) 11%, transparent), transparent 48%),
+    linear-gradient(168deg, color-mix(in oklab, var(--accent) 16%, transparent), transparent 36%);
+}
+
+.power-metal::before {
+  content: '';
+  position: absolute;
+  top: -40%;
+  bottom: -40%;
+  left: 0;
+  width: 34%;
+  pointer-events: none;
+  background: linear-gradient(
+    104deg,
+    transparent 0%,
+    color-mix(in oklab, var(--fg) 6%, transparent) 30%,
+    color-mix(in oklab, var(--fg) 32%, transparent) 47%,
+    color-mix(in oklab, var(--accent) 34%, transparent) 52%,
+    color-mix(in oklab, var(--fg) 8%, transparent) 62%,
+    transparent 78%
+  );
+  transform: translateX(-160%) skewX(-18deg);
+  animation: ranking-metal-glint 6.8s cubic-bezier(0.45, 0.05, 0.25, 1) infinite;
+}
+
+@keyframes ranking-metal-glint {
+  0%, 62% {
+    transform: translateX(-170%) skewX(-18deg);
+    opacity: 0;
+  }
+  70% {
+    opacity: 1;
+  }
+  86% {
+    transform: translateX(360%) skewX(-18deg);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(360%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+</style>

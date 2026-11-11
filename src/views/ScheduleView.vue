@@ -5,9 +5,13 @@
  * Backend zwraca gotowy, pogrupowany po kolejkach terminarz:
  *   schedule: [{ round, roundTitle, matches: [{ ..., badgeState, hasScore }] }]
  */
-import { computed, ref, watch, onMounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { ChevronDown } from 'lucide-vue-next'
+import { get, ref as dbRef } from 'firebase/database'
 import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
 import { getSchedule, getPlayersList, type ScheduleMatch, type ScheduleRound } from '@/services/api'
+import { getDatabaseClient } from '@/services/firebase'
+import { formatWarsawDate, isoToEuropean, roundWindowFromStart } from '@/utils/roundWindow'
 
 interface DivisionTab {
   id: string
@@ -71,8 +75,47 @@ const resolvedDivisionId = computed<string>(() => {
   return found ? found.id : mainId
 })
 
+/** Data startu ligi albo stary zapis z godziną (`YYYY-MM-DDTHH:mm`). */
+function readLeagueStart(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const raw = value.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return raw
+  return ''
+}
+
+const leagueStart = ref<string | null>(null)
+
+/** Start sezonu: aktualne ustawienia, potem starsze pola. */
+async function fetchLeagueStart() {
+  try {
+    const db = getDatabaseClient()
+    const [schedSnap, legacySnap, startSnap] = await Promise.all([
+      get(dbRef(db, 'settings/scheduleDates')),
+      get(dbRef(db, 'settings/leagueStartDate')),
+      get(dbRef(db, 'settings/startDate')),
+    ])
+    const raw = schedSnap.val() as { leagueStart?: unknown } | null
+    const start = readLeagueStart(raw?.leagueStart) || readLeagueStart(legacySnap.val()) || readLeagueStart(startSnap.val())
+    leagueStart.value = start || null
+  } catch {
+    leagueStart.value = null
+  }
+}
+
+/** Kalendarzowe okno kolejki: start sezonu + (numer − 1) × 7 dni. */
+function roundDateLabel(round: string): string {
+  if (!leagueStart.value || !/^\d+$/.test(round)) return ''
+  const slot = roundWindowFromStart(leagueStart.value, Number(round))
+  if (!slot) return ''
+  const first = isoToEuropean(formatWarsawDate(slot.start))
+  const last = isoToEuropean(formatWarsawDate(slot.end - 1))
+  return `${first} – ${last}`
+}
+
 /** Dynamicznie odkrywa dywizje, odrzuca POCZEKALNIA, dodaje baraże */
 onMounted(async () => {
+  void fetchLeagueStart()
   try {
     const res = await getPlayersList({})
     const uniqueDivs = [...new Set(
@@ -198,6 +241,52 @@ watch(resolvedDivisionId, (id) => {
 /** Klucze kolejek (już posortowane przez backend). */
 const sortedRounds = computed(() => visibleRounds.value.map((r) => r.round))
 
+/** Kotwica sekcji kolejki – stabilne id do „skocz do kolejki”. */
+const roundAnchorId = (round: string): string => {
+  const safe = round.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return `kolejka-${safe || 'x'}`
+}
+
+const jumpOpen = ref(false)
+const jumpMenuRoot = ref<HTMLElement | null>(null)
+
+const closeJumpMenu = () => {
+  jumpOpen.value = false
+}
+
+const onPointerDownOutside = (event: PointerEvent) => {
+  const root = jumpMenuRoot.value
+  if (root && !root.contains(event.target as Node)) closeJumpMenu()
+}
+
+const onJumpKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape') closeJumpMenu()
+}
+
+watch(jumpOpen, (open) => {
+  if (open) {
+    document.addEventListener('pointerdown', onPointerDownOutside)
+    document.addEventListener('keydown', onJumpKeydown)
+  } else {
+    document.removeEventListener('pointerdown', onPointerDownOutside)
+    document.removeEventListener('keydown', onJumpKeydown)
+  }
+})
+
+watch([selectedMainDiv, selectedGroup], () => {
+  closeJumpMenu()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onPointerDownOutside)
+  document.removeEventListener('keydown', onJumpKeydown)
+})
+
+const jumpToRound = (round: string) => {
+  closeJumpMenu()
+  document.getElementById(roundAnchorId(round))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 /** Mapa kolejka -> mecze (do iteracji w szablonie). */
 const groupedByRound = computed<Record<string, ScheduleMatch[]>>(() => {
   const map: Record<string, ScheduleMatch[]> = {}
@@ -266,13 +355,9 @@ const getTimeText = (m: ScheduleMatch) => {
       <div>
         <p class="label text-lime">Sezon 4 · Terminarz</p>
         <h1 class="mt-2 font-display text-5xl font-black uppercase italic leading-[0.9] sm:text-6xl">
-          Mecze <span class="text-glow text-accent">i kolejki</span>
+          Mecze <span class="text-glow text-accent">ligowe</span>
         </h1>
       </div>
-      <p class="max-w-sm text-sm leading-relaxed text-muted">
-        Rozegrane mecze mają status „zakończony”. Kliknij kartę meczu, aby zobaczyć
-        szczegóły i statystyki.
-      </p>
     </header>
 
     <!-- Filtry dywizji – dwupoziomowe -->
@@ -339,6 +424,49 @@ const getTimeText = (m: ScheduleMatch) => {
       </button>
     </nav>
 
+    <!-- Skok do kolejki – pod wierszem dywizji (i grupy, jeśli jest) -->
+    <div
+      v-if="!loading && !error && sortedRounds.length > 0"
+      ref="jumpMenuRoot"
+      class="relative"
+    >
+      <button
+        type="button"
+        class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2 font-display text-sm font-bold uppercase tracking-[0.1em] text-fg transition-colors hover:border-lime/40 hover:text-lime"
+        :class="jumpOpen ? 'border-lime/50 text-lime' : ''"
+        :aria-expanded="jumpOpen"
+        aria-haspopup="listbox"
+        aria-controls="jump-round-list"
+        @click="jumpOpen = !jumpOpen"
+      >
+        Skocz do kolejki
+        <ChevronDown
+          class="size-4 shrink-0 transition-transform duration-200"
+          :class="jumpOpen ? 'rotate-180' : ''"
+          aria-hidden="true"
+        />
+      </button>
+
+      <ul
+        v-if="jumpOpen"
+        id="jump-round-list"
+        role="listbox"
+        aria-label="Wybór kolejki"
+        class="absolute left-0 z-30 mt-2 max-h-72 min-w-52 overflow-y-auto rounded-2xl border border-line bg-surface p-1.5 shadow-2xl"
+      >
+        <li v-for="block in visibleRounds" :key="block.round">
+          <button
+            type="button"
+            role="option"
+            class="w-full rounded-xl px-3 py-2 text-left font-display text-sm font-bold uppercase tracking-[0.1em] text-muted transition-colors hover:bg-lime hover:text-on-lime"
+            @click="jumpToRound(block.round)"
+          >
+            {{ block.roundTitle }}
+          </button>
+        </li>
+      </ul>
+    </div>
+
     <!-- Stan ładowania -->
     <section v-if="loading" class="bento p-10 text-center">
       <p class="label animate-pulse text-muted">Ładowanie terminarza…</p>
@@ -358,12 +486,17 @@ const getTimeText = (m: ScheduleMatch) => {
 
     <!-- Grupowanie po kolejkach -->
     <div v-else class="space-y-6">
-      <div v-for="round in sortedRounds" :key="round" class="bento p-5">
+      <div
+        v-for="round in sortedRounds"
+        :id="roundAnchorId(round)"
+        :key="round"
+        class="bento scroll-mt-36 p-5"
+      >
         <!-- Nagłówek kolejki -->
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 class="font-display text-xl font-black uppercase italic">
             {{ isNaN(parseInt(round)) ? round : `Kolejka ${round}` }}
-            <span class="label ml-2 font-sans text-muted">{{ groupedByRound[round]?.length ?? 0 }} meczów</span>
+            <span v-if="roundDateLabel(round)" class="label ml-2 font-sans text-muted">{{ roundDateLabel(round) }}</span>
           </h2>
           <div class="h-px flex-1 rounded-full bg-line opacity-60"></div>
         </div>
