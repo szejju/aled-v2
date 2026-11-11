@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * ProfileMiniTable – skrócona tabela ligowa z podświetleniem gracza.
- * Dane pobierane przez getDivisionTable w rodzicu.
+ * ProfileMiniTable – okno tabeli ligowej: miejsce gracza oraz dwa nad i pod.
+ * Pełna tabela zostaje na /tabela. Dane pobiera getDivisionTable w rodzicu.
  */
 import { computed } from 'vue'
 
@@ -23,76 +23,128 @@ export interface StandingEntry {
 interface Props {
   entries: StandingEntry[]
   playerFullName: string
+  playerId?: string
   loading?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { loading: false })
+const props = withDefaults(defineProps<Props>(), {
+  playerId: '',
+  loading: false,
+})
+
+/** Ile miejsc nad i pod wyróżnionym graczem. */
+const NEIGHBORS = 2
+
 const skeleton = computed(() => props.loading)
+
+function sameName(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('pl')
+  const target = normalize(right)
+  return target.length > 0 && normalize(left) === target
+}
+
+const playerIndex = computed(() => {
+  if (props.playerId) {
+    const byId = props.entries.findIndex((entry) => entry.id === props.playerId)
+    if (byId >= 0) return byId
+  }
+  return props.entries.findIndex((entry) => sameName(entry.name, props.playerFullName))
+})
+
+const playerPlace = computed(() => {
+  const index = playerIndex.value
+  if (index < 0) return null
+  return props.entries[index]?.pos ?? index + 1
+})
+
+/** Gracz, dwa miejsca nad nim i dwa pod nim. Brak sąsiada skraca okno. */
+const visibleEntries = computed(() => {
+  const entries = props.entries
+  if (entries.length === 0) return []
+  const index = playerIndex.value
+  if (index < 0) return entries.slice(0, NEIGHBORS * 2 + 1)
+  const start = Math.max(0, index - NEIGHBORS)
+  return entries.slice(start, index + NEIGHBORS + 1)
+})
+
+function isPlayer(entry: StandingEntry): boolean {
+  if (props.playerId && entry.id === props.playerId) return true
+  return sameName(entry.name, props.playerFullName)
+}
 </script>
 
 <template>
-  <div class="space-y-4 w-full">
-    <h3 class="font-display font-extrabold text-lg uppercase tracking-tight text-fg flex items-center gap-2">
-      <span class="w-2.5 h-2.5 bg-lime rounded-full animate-pulse" />
-      Tabela Ligowa
-    </h3>
+  <div class="w-full min-w-0">
+    <div class="mb-3 flex items-center justify-between gap-2">
+      <h4 class="flex items-center gap-2 font-display text-sm font-extrabold uppercase tracking-tight text-fg">
+        <span class="h-2 w-2 rounded-full bg-lime animate-pulse" />
+        Tabela ligowa
+      </h4>
+      <div class="flex items-center gap-2">
+        <span v-if="playerPlace != null" class="text-[10px] font-extrabold uppercase tracking-wider text-lime">
+          {{ playerPlace }}. miejsce
+        </span>
+        <RouterLink
+          to="/tabela"
+          class="text-[10px] font-extrabold uppercase tracking-wider text-muted transition-colors hover:text-lime"
+        >
+          Pełna
+        </RouterLink>
+      </div>
+    </div>
 
     <template v-if="skeleton">
-      <div class="bento rounded-2xl p-6 space-y-3">
-        <div v-for="i in 4" :key="i" class="h-6 bg-surface-2 rounded animate-pulse" />
+      <div class="space-y-2" aria-hidden="true">
+        <div v-for="i in 5" :key="i" class="h-11 rounded-lg bg-surface-2 animate-pulse" />
       </div>
     </template>
 
-    <div v-else-if="entries.length === 0" class="bento rounded-2xl p-8 text-center w-full">
-      <span class="text-3xl mb-3 block">⏳</span>
-      <h4 class="text-base md:text-lg font-display font-black text-amber-400">Poczekalnia Ligi</h4>
-      <p class="text-xs text-amber-200/80 font-medium max-w-sm mx-auto">
+    <div v-else-if="entries.length === 0" class="rounded-xl bg-surface-2 px-3 py-4 text-center">
+      <h5 class="font-display text-sm font-black text-amber-400">Poczekalnia ligi</h5>
+      <p class="mt-1 text-[11px] font-medium leading-snug text-amber-200/80">
         Trwa przerwa międzysezonowa lub nie uczestniczysz w obecnym sezonie.
       </p>
     </div>
 
-    <div v-else class="bento rounded-2xl overflow-hidden w-full min-h-[150px]">
-      <div class="overflow-x-auto">
-        <table class="w-full text-xs font-bold uppercase">
-          <thead>
-            <tr class="bg-surface-2 text-muted border-b border-line">
-              <th class="py-2.5 px-3 text-left w-8">#</th>
-              <th class="py-2.5 px-3 text-left">Gracz</th>
-              <th class="py-2.5 px-2 text-center w-8">M</th>
-              <th class="py-2.5 px-2 text-center w-8">W</th>
-              <th class="py-2.5 px-2 text-center w-8">D</th>
-              <th class="py-2.5 px-2 text-center w-8">L</th>
-              <th class="py-2.5 px-2 text-center w-10">LW</th>
-              <th class="py-2.5 px-2 text-center w-10">LL</th>
-              <th class="py-2.5 px-3 text-center w-10">Pkt</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="entry in entries" :key="entry.pos"
-              :class="[
-                'border-b border-line/40 transition-colors',
-                entry.isDisqualified
-                  ? 'opacity-60 bg-red-500/5'
-                  : entry.name === playerFullName
-                    ? 'bg-lime/5 font-black text-lime border-l-4 border-l-lime'
-                    : 'text-fg/70 hover:bg-fg/5',
-              ]">
-              <td class="py-2.5 px-3 text-left">{{ entry.pos }}</td>
-              <td class="py-2.5 px-3 text-left truncate max-w-[120px]">
-                <span :class="entry.isDisqualified ? 'line-through text-red-400/70' : ''">{{ entry.name }}</span>
-                <span v-if="entry.isDisqualified" class="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-red-500/10 text-red-400 border border-red-500/20 no-underline">DSQ</span>
-              </td>
-              <td class="py-2.5 px-2 text-center">{{ entry.m }}</td>
-              <td class="py-2.5 px-2 text-center">{{ entry.w }}</td>
-              <td class="py-2.5 px-2 text-center">{{ entry.d }}</td>
-              <td class="py-2.5 px-2 text-center">{{ entry.l }}</td>
-              <td class="py-2.5 px-2 text-center">{{ entry.lw }}</td>
-              <td class="py-2.5 px-2 text-center">{{ entry.ll }}</td>
-              <td class="py-2.5 px-3 text-center font-black" :class="entry.isDisqualified ? 'text-red-400' : 'text-lime'">{{ entry.pts }}</td>
-            </tr>
-          </tbody>
-        </table>
+    <div v-else>
+      <div class="mb-1 flex items-center gap-2 px-2 text-[10px] font-bold uppercase tracking-wider text-muted">
+        <span class="w-6 shrink-0">#</span>
+        <span class="min-w-0 flex-1">Gracz</span>
+        <span class="shrink-0">Pkt</span>
       </div>
+      <ul>
+        <li
+          v-for="entry in visibleEntries"
+          :key="entry.id ?? entry.pos"
+          class="flex items-center gap-2 rounded-lg px-2 py-1.5"
+          :class="[
+            entry.isDisqualified
+              ? 'bg-red-500/5 opacity-60'
+              : isPlayer(entry)
+                ? 'bg-lime/10 text-lime'
+                : 'text-fg/80',
+          ]"
+        >
+          <span class="w-6 shrink-0 font-display text-xs font-black">{{ entry.pos }}</span>
+          <span class="min-w-0 flex-1">
+            <span class="flex items-center gap-1.5">
+              <span class="truncate text-xs font-bold uppercase" :class="entry.isDisqualified ? 'text-red-400/70 line-through' : ''">{{ entry.name }}</span>
+              <span
+                v-if="entry.isDisqualified"
+                class="shrink-0 rounded border border-red-500/20 bg-red-500/10 px-1 py-px text-[8px] font-black text-red-400"
+              >DSQ</span>
+            </span>
+            <span
+              class="mt-0.5 block text-[10px] font-bold uppercase tracking-wide"
+              :class="isPlayer(entry) ? 'text-lime/70' : 'text-muted'"
+              :title="`Mecze ${entry.m}, wygrane ${entry.w}, remisy ${entry.d}, przegrane ${entry.l}, legi ${entry.lw}–${entry.ll}`"
+            >
+              {{ entry.m }}M · {{ entry.w }}W · {{ entry.d }}D · {{ entry.l }}L · {{ entry.lw }}–{{ entry.ll }}
+            </span>
+          </span>
+          <span class="shrink-0 font-display text-sm font-black" :class="entry.isDisqualified ? 'text-red-400' : 'text-lime'">{{ entry.pts }}</span>
+        </li>
+      </ul>
     </div>
   </div>
 </template>

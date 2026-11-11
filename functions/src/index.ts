@@ -114,3 +114,4 @@ export {
 
 // ─── Liga Lato (izolowany węzeł /summer_league) ──────────────────────────────
 export { registerForSummerLeague, submitSummerMatchResult } from "./summer_league/actions.js";
+export { getSummerPlayerStats } from "./summer_league/stats.js";

@@ -15,9 +15,11 @@ export interface PenaltyJournalEntry {
 interface Props {
   entries: PenaltyJournalEntry[]
   loading?: boolean
+  /** Sekcja wewnątrz karty gracza, bez własnego tła bento. */
+  embedded?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { loading: false })
+const props = withDefaults(defineProps<Props>(), { loading: false, embedded: false })
 
 const total = computed(() => props.entries.reduce((sum, row) => sum + row.points, 0))
 
@@ -32,7 +34,7 @@ function formatDate(timestamp: number | null): string {
 </script>
 
 <template>
-  <div class="bento rounded-2xl p-6">
+  <div :class="embedded ? 'mt-6 border-t border-line pt-6' : 'bento rounded-2xl p-6'">
     <div class="mb-4 flex items-center justify-between gap-3">
       <div class="flex items-center gap-2">
         <span class="h-2.5 w-2.5 rounded-full bg-red-500" />

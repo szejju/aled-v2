@@ -14,7 +14,7 @@ import { errorText } from '@/utils/errorText'
 import { officialCupStats, officialLeagueStats } from '@/utils/leagueDpi'
 import { uploadToCloudinary } from '@/services/cloudinary'
 import {
-  getDivisionTable, getSchedule, getCupData, updateVacation, enrollForNextSeason,
+  getDivisionTable, getSchedule, getCupData, getSummerPlayerStats, updateVacation, enrollForNextSeason,
   submitVerification, updateAvatar, proposeMatchDate, respondToMatchDate,
   type DivisionTablePlayer, type ScheduleMatch, type CupDataResponse,
 } from '@/services/api'
@@ -26,7 +26,6 @@ import ProfilePenalties from '@/components/profile/ProfilePenalties.vue'
 import { type PenaltyJournalEntry } from '@/components/profile/ProfilePenalties.vue'
 import ProfileEnrollment from '@/components/profile/ProfileEnrollment.vue'
 import { type EnrollmentData } from '@/components/profile/ProfileEnrollment.vue'
-import ProfileMiniTable from '@/components/profile/ProfileMiniTable.vue'
 import { type StandingEntry } from '@/components/profile/ProfileMiniTable.vue'
 import ProfileMatches from '@/components/profile/ProfileMatches.vue'
 import { type MatchEntry } from '@/components/profile/ProfileMatches.vue'
@@ -117,6 +116,7 @@ const playerHeader = ref<PlayerProfileHeader>({
 const playerStats = ref<ProfileStatsSet>({
   liga: emptyStats(),
   puchar: emptyStats(),
+  lato: emptyStats(),
 })
 const enrollmentData = ref<EnrollmentData>({
   verifyAvg: 'none', verifyCam: 'none', enrolledSeason: null, currentSeason: currentSeason.value,
@@ -129,7 +129,7 @@ watch(currentSeason, (season) => {
 async function fetchPlayerProfile(id: string) {
   if (!id) return
   playerLoading.value = true
-  playerStats.value = { liga: emptyStats(), puchar: emptyStats() }
+  playerStats.value = { liga: emptyStats(), puchar: emptyStats(), lato: emptyStats() }
   try {
     const db = getDatabaseClient()
     const [profileSnap, scheduleSnap] = await Promise.all([
@@ -164,6 +164,14 @@ async function fetchPlayerProfile(id: string) {
     playerStats.value = {
       ...playerStats.value,
       liga: toStatsRow(engine[id]),
+    }
+    try {
+      const summer = await getSummerPlayerStats({})
+      playerStats.value = { ...playerStats.value, lato: toStatsRow(summer) }
+    } catch (error: unknown) {
+      console.error('[ProfileView] statystyki Ligi Lato:', error)
+      showToast(errorText(error, 'Nie udało się pobrać statystyk Ligi Lato.'), 'error')
+      playerStats.value = { ...playerStats.value, lato: emptyStats() }
     }
   } catch (e) {
     console.error('[ProfileView] fetchPlayer:', e)
@@ -784,7 +792,7 @@ async function handleDecision(data: {
     <!-- GÓRNA CZĘŚĆ: 3 KOLUMNY                                           -->
     <!-- ================================================================ -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-      <!-- LEWA KOLUMNA: STATUSY, ZAPISY I DZIENNIK KAR -->
+      <!-- LEWA KOLUMNA: STATUSY I ZAPISY -->
       <div class="flex flex-col gap-6">
         <ProfileEnrollment
           :data="enrollmentData"
@@ -798,43 +806,45 @@ async function handleDecision(data: {
           :cup-phase="cupEnrollment?.phase ?? ''"
           :cup-loading="cupLoading"
           :enrolling="enrolling"
-          @verify="openVerificationModal"
           @enroll="handleEnroll"
           @join-cup="handleJoinCup"
         />
-        <ProfilePenalties
-          :entries="penaltyJournal"
-          :loading="penaltyLoading"
-        />
       </div>
 
-      <!-- ŚRODKOWA: KARTA GRACZA -->
+      <!-- ŚRODKOWA: KARTA GRACZA + DZIENNIK KAR -->
       <ProfileHeader
         :player="playerHeader"
         :loading="playerLoading"
         :uploading-avatar="isUploadingAvatar"
         :upload-avatar="handleAvatarUpload"
+        :verify-avg="enrollmentData.verifyAvg"
+        :verify-cam="enrollmentData.verifyCam"
         @edit-nick="openNickEdit"
+        @verify="openVerificationModal"
         @vacation-submit="submitVacation"
         @vacation-cancel="cancelVacation"
-      />
+      >
+        <ProfilePenalties
+          embedded
+          :entries="penaltyJournal"
+          :loading="penaltyLoading"
+        />
+      </ProfileHeader>
 
       <!-- PRAWA: STATYSTYKI -->
       <ProfileStats
         :stats="playerStats"
         :loading="playerLoading || cupLoading"
+        :entries="tableEntries"
+        :player-full-name="playerFullName"
+        :player-id="playerId"
+        :table-loading="tableLoading || playerLoading"
       />
     </div>
 <!-- ================================================================ -->
-    <!-- DOLNA SEKCJA: TABELA I TERMINARZE                                 -->
+    <!-- DOLNA SEKCJA: TERMINARZE                                            -->
     <!-- ================================================================ -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start pt-4 border-t border-line/50">
-      <ProfileMiniTable
-        :entries="tableEntries"
-        :player-full-name="playerFullName"
-        :loading="tableLoading || playerLoading"
-      />
-
       <ProfileMatches
         :matches="leagueMatches"
         :loading="scheduleLoading"

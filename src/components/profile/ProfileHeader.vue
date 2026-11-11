@@ -2,6 +2,7 @@
 import { computed, onUnmounted, ref } from 'vue'
 import { errorText } from '@/utils/errorText'
 
+type VerifyStatus = 'none' | 'pending' | 'verified'
 export interface Leave { start: string; end: string }
 export interface PlayerProfileHeader {
   id: string; firstName: string; lastName: string
@@ -12,13 +13,20 @@ interface Props {
   loading?: boolean
   uploadingAvatar?: boolean
   uploadAvatar?: (file: File) => Promise<void>
+  verifyAvg?: VerifyStatus
+  verifyCam?: VerifyStatus
 }
 interface Emits {
   (e: 'edit-nick'): void
   (e: 'vacation-submit', data: { start: string; end: string }): void
   (e: 'vacation-cancel'): void
+  (e: 'verify', type: 'avg' | 'cam'): void
 }
-const props = withDefaults(defineProps<Props>(), { loading: false })
+const props = withDefaults(defineProps<Props>(), {
+  loading: false,
+  verifyAvg: 'none',
+  verifyCam: 'none',
+})
 const emit = defineEmits<Emits>()
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarModalOpen = ref(false)
@@ -98,19 +106,38 @@ function submitVacation() {
   }
 }
 function cancelVacation() { emit('vacation-cancel') }
+function verifyFrame(status: VerifyStatus): string {
+  if (status === 'verified') return 'border-lime/30 bg-lime/5'
+  if (status === 'pending') return 'border-amber-500/30 bg-amber-500/5'
+  return 'border-line hover:border-lime/30'
+}
+function verifyBadge(status: VerifyStatus): string {
+  if (status === 'verified') return 'bg-lime/10 border-lime/30 text-lime'
+  if (status === 'pending') return 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+  return 'bg-red-500/10 border-red-500/30 text-red-400'
+}
+function verifyLabel(status: VerifyStatus): string {
+  if (status === 'verified') return 'OK'
+  if (status === 'pending') return '...'
+  return 'X'
+}
 </script>
 <template>
   <div class="bento p-6 relative overflow-hidden h-fit">
     <div class="absolute top-0 left-0 w-full h-1 bg-lime" />
     <template v-if="skeleton">
-      <div class="flex flex-col items-center text-center mb-7">
+      <div class="flex flex-col items-center text-center">
         <div class="w-32 h-32 rounded-full bg-surface-2 animate-pulse mb-6" />
         <div class="h-8 w-48 bg-surface-2 rounded-lg animate-pulse mb-2" />
         <div class="h-5 w-32 bg-surface-2 rounded-lg animate-pulse" />
       </div>
+      <div class="mt-6 flex flex-col gap-3">
+        <div class="h-[4.5rem] rounded-2xl bg-surface-2 animate-pulse" />
+        <div class="h-[4.5rem] rounded-2xl bg-surface-2 animate-pulse" />
+      </div>
     </template>
     <template v-else>
-      <div class="flex flex-col items-center text-center mb-7">
+      <div class="flex flex-col items-center text-center">
         <div role="button" tabindex="0"
           :class="['w-32 h-32 rounded-full flex items-center justify-center text-on-lime text-5xl font-black shadow-lg border-4 border-lime/20 relative group overflow-hidden mb-6',
             props.uploadingAvatar ? 'cursor-wait opacity-70' : 'cursor-pointer bg-lime']"
@@ -140,6 +167,37 @@ function cancelVacation() { emit('vacation-cancel') }
           <span v-else>Zglos urlop</span>
         </button>
       </div>
+      <div class="mt-6 flex flex-col gap-3">
+        <div :class="['rounded-2xl p-4 flex items-center justify-between gap-3 border', verifyFrame(verifyAvg)]">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 bg-surface-2 rounded-xl flex items-center justify-center border border-line text-lg">A</div>
+            <div class="text-left">
+              <h4 class="text-sm font-bold uppercase text-fg">Srednia</h4>
+              <span :class="['inline-block mt-1 px-3 py-1 rounded-lg text-xs font-extrabold uppercase border', verifyBadge(verifyAvg)]">{{ verifyLabel(verifyAvg) }}</span>
+            </div>
+          </div>
+          <button v-if="verifyAvg !== 'verified'" type="button" @click="emit('verify', 'avg')"
+            class="text-xs font-bold uppercase px-4 py-2 rounded-xl border transition-all"
+            :class="verifyAvg === 'pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'">
+            {{ verifyAvg === 'pending' ? 'Podmien' : 'Dodaj' }}
+          </button>
+        </div>
+        <div :class="['rounded-2xl p-4 flex items-center justify-between gap-3 border', verifyFrame(verifyCam)]">
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 bg-surface-2 rounded-xl flex items-center justify-center border border-line text-lg">K</div>
+            <div class="text-left">
+              <h4 class="text-sm font-bold uppercase text-fg">Kamera</h4>
+              <span :class="['inline-block mt-1 px-3 py-1 rounded-lg text-xs font-extrabold uppercase border', verifyBadge(verifyCam)]">{{ verifyLabel(verifyCam) }}</span>
+            </div>
+          </div>
+          <button v-if="verifyCam !== 'verified'" type="button" @click="emit('verify', 'cam')"
+            class="text-xs font-bold uppercase px-4 py-2 rounded-xl border transition-all"
+            :class="verifyCam === 'pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'">
+            {{ verifyCam === 'pending' ? 'Podmien' : 'Dodaj' }}
+          </button>
+        </div>
+      </div>
+      <slot />
     </template>
   </div>
   <Teleport to="body">

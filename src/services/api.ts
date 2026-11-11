@@ -332,6 +332,23 @@ export const submitSummerMatchResult = makeCallable<
   SubmitSummerMatchResultResponse
 >('submitSummerMatchResult')
 
+export interface SummerPlayerStatsResponse {
+  realAvg: number
+  max: number
+  hf: number
+  sl: number
+  doublesPct: number
+}
+
+/**
+ * Osiągnięcia Ligi Lato zalogowanego gracza.
+ * Liczy je Cloud Function z /summer_league/schedule. Bez DPI.
+ */
+export const getSummerPlayerStats = makeCallable<
+  Record<string, never>,
+  SummerPlayerStatsResponse
+>('getSummerPlayerStats')
+
 // ─── getCupData ────────────────────────────────────────────────────────────────
 
 export interface CupDataResponse {
