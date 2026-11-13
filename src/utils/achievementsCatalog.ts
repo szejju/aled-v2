@@ -406,3 +406,75 @@ export function parseTrophyId(id: string): ParsedTrophy | null {
 export function trophyLabel(trophy: ParsedTrophy): string {
   return `${trophy.label} · S${trophy.season}`
 }
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return null
+}
+
+/** Tablica identyfikatorów. RTDB czasem oddaje ją jako mapę `0..n`, nie jako liczniki. */
+function listValues(value: unknown): unknown[] {
+  if (typeof value === 'string') return [value]
+  if (Array.isArray(value)) return value
+  const record = asRecord(value)
+  if (!record) return []
+  return Object.keys(record)
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    .map((key) => record[key])
+}
+
+function entryId(item: unknown): string | null {
+  if (typeof item === 'string') {
+    const key = item.trim()
+    return key || null
+  }
+  const row = asRecord(item)
+  if (!row) return null
+  if (typeof row.id === 'string' && row.id.trim()) return row.id.trim()
+  if (typeof row.type === 'string' && row.type.trim()) return row.type.trim()
+  return null
+}
+
+function stringEntries(value: unknown): string[] {
+  const ids: string[] = []
+  for (const item of listValues(value)) {
+    const id = entryId(item)
+    if (id) ids.push(id)
+  }
+  return ids
+}
+
+function storedCount(value: unknown): number {
+  const raw = asRecord(value)?.count
+  if (typeof raw === 'number') return raw
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+/**
+ * Składa półkę z węzła `/achievements/{id}` albo z odpowiedzi `getPlayersList`.
+ * Kamienie milowe biorą się wyłącznie z pięciu pól `milestones`, próg liczy katalog.
+ */
+export function readStoredPlayerAchievements(value: unknown): PlayerAchievements {
+  const root = asRecord(value)
+  const milestones = asRecord(root?.milestones)
+  const progress = (key: MilestoneKey): MilestoneProgress =>
+    milestoneProgress(milestoneDefinition(key), storedCount(milestones?.[key]))
+  const epicMoments = stringEntries(root?.epic_moments)
+  return {
+    milestones: {
+      matches_played: progress('matches_played'),
+      matches_won: progress('matches_won'),
+      seasons_completed: progress('seasons_completed'),
+      total_180s: progress('total_180s'),
+      total_100_checkouts: progress('total_100_checkouts'),
+    },
+    trophies: stringEntries(root?.trophies),
+    epic_moments: epicMoments.length > 0 ? epicMoments : stringEntries(root?.epicMoments),
+  }
+}

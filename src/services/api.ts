@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { httpsCallable } from 'firebase/functions'
+import type { PlayerAchievements } from '../utils/achievementsCatalog'
 import { getFunctionsClient } from './firebase'
 
 // ─── Typy wspólne ────────────────────────────────────────────────────────────
@@ -163,11 +164,7 @@ export interface PlayerListItem {
     wins: number
     losses: number
   }
-  achievements: {
-    trophies: Array<string | { id?: string; type?: string; title?: string; icon?: string }>
-    earnedMilestones: string[]
-    epicMoments: string[]
-  }
+  achievements: PlayerAchievements
 }
 
 export interface PlayersListResponse {
