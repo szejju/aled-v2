@@ -10,6 +10,12 @@ import { getAuth } from "firebase-admin/auth";
 import { db, adminInstance, archiveDatabase } from "../database/connection.js";
 import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
 import { awardSeasonTrophies } from "../league/ceremony.js";
+import {
+  officialResult,
+  settleMany,
+  settleMatchAchievements,
+  type CurrentMatchData,
+} from "../league/playerAchievements.js";
 import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.js";
 import { buildSummerStandings } from "../summer_league/actions.js";
 import { summerMatchKey } from "../summer_league/scoreRules.js";
@@ -90,6 +96,25 @@ export const approveMatchResult = functions.https.onCall(async (request) => {
 
     await matchRef.update(updatePayload);
 
+    // Mecz już leży w bazie. Archeolog nie może przewrócić odpowiedzi sędziego.
+    try {
+      const played = officialResult({
+        matchId,
+        before: matchData,
+        isCup: sourcePath === "cup/schedule",
+        score1: finalScore1,
+        score2: finalScore2,
+        p1Stats,
+        p2Stats,
+      });
+      if (played) await settleMatchAchievements(played);
+    } catch (archeologistError) {
+      console.error(
+        "[evaluatePlayerAchievements] Odznaki po meczu nie zostały zapisane.",
+        archeologistError,
+      );
+    }
+
     // 🔥 NOWE: Automatyczny awans w drabince (tylko dla pucharu)
     if (sourcePath === "cup/schedule") {
       const freshSnap = await matchRef.once('value');
@@ -142,6 +167,7 @@ export const rejectMatchResult = functions.https.onCall(async (request) => {
       updatedAt: admin.database.ServerValue.TIMESTAMP,
     };
 
+    // Odrzucenie zostawia mecz jako pending/accepted. Odznak nie cofamy i nie nadajemy.
     await database.ref(`${sourcePath}/${matchId}`).update(updatePayload);
     return { success: true, message: "Wynik odesłany do poprawy." };
   } catch (error: any) {
@@ -291,24 +317,36 @@ function awardScheduledWalkovers(
   schedule: Record<string, any>,
   playerId: string,
   legs: number,
-): number {
+): { count: number; played: CurrentMatchData[] } {
   let count = 0;
+  const played: CurrentMatchData[] = [];
   for (const [matchId, match] of Object.entries(schedule)) {
     if (!match || (match.p1Id !== playerId && match.p2Id !== playerId)) continue;
     if (!isUnplayedMatch(match)) continue;
 
     const kickedIsHome = match.p1Id === playerId;
+    const score1 = kickedIsHome ? 0 : legs;
+    const score2 = kickedIsHome ? legs : 0;
     const prefix = `${basePath}/${matchId}`;
-    updates[`${prefix}/score1`] = kickedIsHome ? 0 : legs;
-    updates[`${prefix}/score2`] = kickedIsHome ? legs : 0;
+    updates[`${prefix}/score1`] = score1;
+    updates[`${prefix}/score2`] = score2;
     updates[`${prefix}/status`] = "played";
     updates[`${prefix}/isPlayed`] = true;
     updates[`${prefix}/isWalkover`] = true;
     updates[`${prefix}/isDoubleWO`] = false;
     updates[`${prefix}/walkoverPlayerId`] = kickedIsHome ? match.p2Id : match.p1Id;
+    const result = officialResult({
+      matchId,
+      before: match,
+      isCup: basePath === "cup/schedule",
+      score1,
+      score2,
+      isDoubleWO: false,
+    });
+    if (result) played.push(result);
     count += 1;
   }
-  return count;
+  return { count, played };
 }
 
 export const kickPlayer = functions.https.onCall(async (request) => {
@@ -328,21 +366,34 @@ export const kickPlayer = functions.https.onCall(async (request) => {
   const database = db();
   const updates: any = {};
   let walkoverCount = 0;
+  let played: CurrentMatchData[] = [];
 
   try {
     if (isCup) {
       updates[`cup/participants/${playerId}`] = null;
       const snap = await database.ref('cup/schedule').once('value');
       const schedule = snap.val() || {};
-      walkoverCount = awardScheduledWalkovers(updates, "cup/schedule", schedule, playerId, walkoverLegs);
+      const awarded = awardScheduledWalkovers(updates, "cup/schedule", schedule, playerId, walkoverLegs);
+      walkoverCount = awarded.count;
+      played = awarded.played;
     } else {
       updates[`players/${playerId}/isDisqualified`] = true;
       const snap = await database.ref('schedule').once('value');
       const schedule = snap.val() || {};
-      walkoverCount = awardScheduledWalkovers(updates, "schedule", schedule, playerId, walkoverLegs);
+      const awarded = awardScheduledWalkovers(updates, "schedule", schedule, playerId, walkoverLegs);
+      walkoverCount = awarded.count;
+      played = awarded.played;
     }
 
     await database.ref().update(updates);
+    try {
+      await settleMany(played);
+    } catch (archeologistError) {
+      console.error(
+        "[evaluatePlayerAchievements] Odznaki po walkowerach nie zostały zapisane.",
+        archeologistError,
+      );
+    }
     return { success: true, message: `Wyrzucono gracza. Rozdano ${walkoverCount} walkowerów.` };
   } catch (error: any) {
     throw new functions.https.HttpsError(error.code || 'internal', error.message);
@@ -710,6 +761,24 @@ export const adminSaveMatchResult = functions.https.onCall(async (request) => {
     }
 
     // TODO: Tutaj w przyszłości podepniemy API Mobilne (calculateAllStats)
+
+    try {
+      const played = officialResult({
+        matchId,
+        before: match,
+        isCup: isCupMatch === true,
+        score1: s1,
+        score2: s2,
+        p1Stats,
+        p2Stats,
+      });
+      if (played) await settleMatchAchievements(played);
+    } catch (archeologistError) {
+      console.error(
+        "[evaluatePlayerAchievements] Odznaki po meczu nie zostały zapisane.",
+        archeologistError,
+      );
+    }
 
     return { success: true, message: "Protokół zapisany!" };
   } catch (error: any) {
@@ -1084,6 +1153,7 @@ export const setDoubleWalkoverAdmin = functions.https.onCall(async (request) => 
 
   const isCup = matchId.startsWith('CUP-');
   const basePath = isCup ? `cup/schedule/${matchId}` : `schedule/${matchId}`;
+  const matchSnap = await db().ref(basePath).once('value');
 
   await db().ref(basePath).update({
     score1: 0,
@@ -1092,6 +1162,23 @@ export const setDoubleWalkoverAdmin = functions.https.onCall(async (request) => 
     status: 'played',
     isPlayed: true,
   });
+
+  try {
+    const played = officialResult({
+      matchId,
+      before: matchSnap.val(),
+      isCup,
+      score1: 0,
+      score2: 0,
+      isDoubleWO: true,
+    });
+    if (played) await settleMatchAchievements(played);
+  } catch (archeologistError) {
+    console.error(
+      "[evaluatePlayerAchievements] Odznaki po meczu nie zostały zapisane.",
+      archeologistError,
+    );
+  }
 
   return { success: true, message: 'Obustronny walkower zapisany.' };
 });
