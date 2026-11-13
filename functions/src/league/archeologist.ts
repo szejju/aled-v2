@@ -354,6 +354,7 @@ function sameEpics(left: readonly string[], right: readonly string[]): boolean {
  * Wynik transakcji `/achievements/{playerId}`.
  * `undefined` = nic się nie zmienia, transakcja ma się wycofać.
  * `seasons_completed` zostaje przy dotychczasowym liczniku.
+ * `seasonCredits` zostaje w węźle: archiwizacja po nim poznaje, że sezon już doliczono.
  */
 export function commitShelf(
   current: unknown,

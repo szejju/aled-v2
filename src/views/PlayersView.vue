@@ -3,7 +3,7 @@
  * Podstrona „Zawodnicy” – dane pobierane z Cloud Function `getPlayersList`.
  *
  * Kafelki bento prezentują: awatar, nick, Power Ranking (DPI), średnią oraz
- * Gablotę Osiągnięć (puchary, kamienie milowe, epickie momenty).
+ * Gablotę Osiągnięć (puchary, zdobyte progi, epickie momenty).
  */
 import { computed, ref, watch, onMounted } from 'vue'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
@@ -157,16 +157,28 @@ watch(resolvedDivisionId, fetchPlayers)
  *  Gablota osiągnięć
  * ------------------------------------------------------------------ */
 
+function badgeIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+}
+
 const playerTrophies = (p: PlayerListItem): DecodedTrophy[] =>
-  (p.achievements?.trophies ?? []).map(decodeTrophy)
+  (Array.isArray(p.achievements?.trophies) ? p.achievements.trophies : []).flatMap((entry) => {
+    const decoded = decodeTrophy(entry)
+    return decoded ? [decoded] : []
+  })
 
 const playerMilestones = (p: PlayerListItem): DecodedMilestone[] =>
-  Object.entries(p.achievements?.careerStats ?? {}).map(([key, value]) =>
-    decodeMilestone(key, Number(value))
-  )
+  badgeIds(p.achievements?.earnedMilestones).flatMap((id) => {
+    const decoded = decodeMilestone(id)
+    return decoded ? [decoded] : []
+  })
 
 const playerEpicMoments = (p: PlayerListItem): DecodedEpicMoment[] =>
-  Object.keys(p.achievements?.epicMoments ?? {}).map(decodeEpicMoment)
+  badgeIds(p.achievements?.epicMoments).flatMap((id) => {
+    const decoded = decodeEpicMoment(id)
+    return decoded ? [decoded] : []
+  })
 
 const hasAchievements = (p: PlayerListItem): boolean =>
   playerTrophies(p).length > 0 ||

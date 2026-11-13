@@ -47,7 +47,7 @@ export {
   setCupStatusAdmin,
   // rewardsActions.ts
   runArcheologAdmin,
-  distributeSeasonTrophiesAdmin,
+  backfillPlayerAchievements,
   // actions.ts – ciąg dalszy migracji z admin.js
   manageAdminEmails,
   linkAdminProfile,

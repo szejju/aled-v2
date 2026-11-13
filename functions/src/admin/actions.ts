@@ -9,7 +9,7 @@ import * as admin from "firebase-admin";
 import { getAuth } from "firebase-admin/auth";
 import { db, adminInstance, archiveDatabase } from "../database/connection.js";
 import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
-import { awardSeasonTrophies } from "../league/ceremony.js";
+import { awardSeasonTrophies, persistSeasonClose, type SeasonClose } from "../league/ceremony.js";
 import {
   officialResult,
   settleMany,
@@ -1022,6 +1022,7 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
   let nextSeason = 2;
   let updates: Record<string, unknown> = {};
   let payload: Record<string, unknown> = {};
+  let seasonClose: SeasonClose = { trophies: {}, seasonPlayerIds: [] };
 
   try {
     const snapSettings = await database.ref("settings/currentSeason").once("value");
@@ -1075,10 +1076,8 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
     updates["settings/currentSeason"] = nextSeason;
 
     const snapshot = buildSeasonSnapshot(playersData, scheduleData, penaltiesData, cupData);
-    const trophies = awardSeasonTrophies(playersData, scheduleData, penaltiesData);
-    for (const [playerId, list] of Object.entries(trophies)) {
-      updates[`achievements/${playerId}/trophies`] = list;
-    }
+    // Ceremoniarz zanim znikną tabele: podium Dywizji 1, puchary ligi, Sezonowiec.
+    seasonClose = awardSeasonTrophies(playersData, scheduleData, penaltiesData, currentSeason);
     payload = {
       season: currentSeason,
       timestamp: admin.database.ServerValue.TIMESTAMP,
@@ -1090,7 +1089,7 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
       stats: toRtdb(snapshot.stats),
       cupStats: toRtdb(snapshot.cupStats),
       tables: toRtdb(snapshot.tables),
-      trophies: toRtdb(trophies),
+      trophies: toRtdb(seasonClose.trophies),
     };
   } catch (err) {
     console.error(
@@ -1117,6 +1116,20 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
   }
 
   try {
+    // Półka osiągnięć przed resetem. Powtórka nie dubluje pucharów ani Sezonowca.
+    await persistSeasonClose(database, seasonClose, currentSeason);
+  } catch (err) {
+    console.error(
+      `[archiveCurrentSeason] Sezon ${currentSeason} jest w archiwum, ale gablota nie została zapisana. Baza operacyjna nietknięta.`,
+      err
+    );
+    throw new functions.https.HttpsError(
+      "internal",
+      `Sezon ${currentSeason} jest w archiwum, ale puchary i Sezonowiec nie weszły. Baza operacyjna bez zmian. Ponów operację.`
+    );
+  }
+
+  try {
     await database.ref().update(updates);
   } catch (err) {
     console.error(
@@ -1128,6 +1141,10 @@ export const archiveCurrentSeason = functions.https.onCall(async (request) => {
       `Sezon ${currentSeason} jest w archiwum, ale reset bazy operacyjnej nie doszedł do skutku. Ponów operację.`
     );
   }
+
+  console.info(
+    `[archiveCurrentSeason] Sezon ${currentSeason}: puchary ${Object.keys(seasonClose.trophies).length}, sezonowcy ${seasonClose.seasonPlayerIds.length}.`,
+  );
 
   return {
     success: true,

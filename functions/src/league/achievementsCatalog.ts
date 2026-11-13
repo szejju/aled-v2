@@ -1,9 +1,6 @@
 // Katalog Gabloty Osiągnięć (achievements_blueprint.md).
 // Lustro stałych: src/utils/achievementsCatalog.ts
 // Liczniki czyta się po polach PlayerAchievements, nie przez Object.keys.
-//
-// Eksporty LEGACY na dole trzymają płaskie identyfikatory, dopóki Archeolog
-// i Ceremoniarz nie przejdą na ten model (kroki 2–3). Nowy kod ich nie używa.
 
 export const TIERS = ["bronze", "silver", "gold", "diamond"] as const;
 
@@ -409,60 +406,3 @@ export function parseTrophyId(id: string): ParsedTrophy | null {
 export function trophyLabel(trophy: ParsedTrophy): string {
   return `${trophy.label} · S${trophy.season}`;
 }
-
-// --- LEGACY (płaskie liczniki). Nie rozszerzać. Zniknie w krokach 2–3. ---
-
-export const AWARD_TYPES = [
-  "award_champion",
-  "award_avg_king",
-  "award_max_king",
-  "award_sniper",
-] as const;
-
-export type AwardType = (typeof AWARD_TYPES)[number];
-
-export const EPIC_MOMENTS = [
-  "nine_darter",
-  "big_fish",
-  "small_fish",
-  "whitewash",
-] as const;
-
-export type EpicMomentId = (typeof EPIC_MOMENTS)[number];
-
-export type MilestoneStat = "matches" | "wins" | "max180" | "checkouts100";
-
-export interface MilestoneRule {
-  id: string;
-  stat: MilestoneStat;
-  at: number;
-}
-
-/**
- * Próg jest w identyfikatorze: `matches_50` = 50 rozegranych meczów,
- * `wins_10` = 10 wygranych, `checkout_100` = 100 finishy 100+.
- * Niższe szczeble tej samej drabiny też wchodzą, gdy licznik je minie.
- */
-export const MILESTONES: readonly MilestoneRule[] = [
-  { id: "matches_10", stat: "matches", at: 10 },
-  { id: "matches_50", stat: "matches", at: 50 },
-  { id: "matches_100", stat: "matches", at: 100 },
-  { id: "matches_250", stat: "matches", at: 250 },
-  { id: "matches_500", stat: "matches", at: 500 },
-  { id: "wins_10", stat: "wins", at: 10 },
-  { id: "wins_25", stat: "wins", at: 25 },
-  { id: "wins_50", stat: "wins", at: 50 },
-  { id: "wins_100", stat: "wins", at: 100 },
-  { id: "wins_250", stat: "wins", at: 250 },
-  { id: "max_10", stat: "max180", at: 10 },
-  { id: "max_50", stat: "max180", at: 50 },
-  { id: "max_100", stat: "max180", at: 100 },
-  { id: "max_250", stat: "max180", at: 250 },
-  { id: "max_500", stat: "max180", at: 500 },
-  { id: "checkout_10", stat: "checkouts100", at: 10 },
-  { id: "checkout_25", stat: "checkouts100", at: 25 },
-  { id: "checkout_50", stat: "checkouts100", at: 50 },
-  { id: "checkout_100", stat: "checkouts100", at: 100 },
-];
-
-export type MilestoneId = (typeof MILESTONES)[number]["id"];

@@ -165,8 +165,8 @@ export interface PlayerListItem {
   }
   achievements: {
     trophies: Array<string | { id?: string; type?: string; title?: string; icon?: string }>
-    careerStats: Record<string, unknown>
-    epicMoments: Record<string, unknown>
+    earnedMilestones: string[]
+    epicMoments: string[]
   }
 }
 
@@ -909,21 +909,22 @@ export const awardWalkover = makeCallable<
 /** Przyznanie walkowera jednemu graczowi w meczu ligowym (`awardWalkover`). */
 export const apiAwardWalkover = awardWalkover
 
-// ─── runArcheologAdmin (Archeolog – Osiągnięcia) ─────────────────────────────
+// ─── backfillPlayerAchievements (jednorazowa migracja Gabloty) ───────────────
 
-/** Admin przelicza i zapisuje osiągnięcia (milestones + epickie momenty). */
+/**
+ * Uzupełnia `earned_milestones` i `epic_moments` z historii meczów.
+ * To nie jest ręczne przyznawanie odznak. Puchary sezonu powstają przy archiwizacji.
+ * Konsola: `backfillPlayerAchievements({})` albo `runArcheologAdmin({})`.
+ */
 export const runArcheologAdmin = makeCallable<
-  {},
-  { success: boolean; message: string }
+  Record<string, never>,
+  { success: boolean; message: string; players?: number }
 >('runArcheologAdmin')
 
-// ─── distributeSeasonTrophiesAdmin (Ceremoniarz – Puchary Sezonowe) ──────────
-
-/** Admin rozdaje puchary sezonowe (Mistrz, Król Średniej, Król Maksów itp.). */
-export const distributeSeasonTrophiesAdmin = makeCallable<
-  {},
-  { success: boolean; message: string }
->('distributeSeasonTrophiesAdmin')
+export const backfillPlayerAchievements = makeCallable<
+  Record<string, never>,
+  { success: boolean; message: string; players?: number }
+>('backfillPlayerAchievements')
 
 // ─── manageAdminEmails (Zarządzanie Uprawnieniami Admina) ────────────────────
 

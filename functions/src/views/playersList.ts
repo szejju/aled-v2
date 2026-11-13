@@ -4,6 +4,28 @@ import { db } from '../database/connection.js';
 import { StatsEngine } from '../stats_engine/calculator';
 import { collectOfficialLeagueMatches } from '../league/table';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+/** Lista z RTDB: tablica albo mapa o kluczach 0..n. Obiekt liczników (0/1) odpada. */
+function asList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.filter((item) => item != null && item !== '');
+  const record = asRecord(value);
+  if (!record) return [];
+  return Object.keys(record)
+    .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b))
+    .map((key) => record[key])
+    .filter((item) => item != null && item !== '');
+}
+
+function asIdList(value: unknown): string[] {
+  return asList(value).filter((item): item is string => typeof item === 'string' && item.trim() !== '');
+}
+
 export const getPlayersList = functions.https.onCall(async (request) => {
   const division = request.data?.division || null; // np. "DYWIZJA 1"
   const group = request.data?.group || null;
@@ -42,7 +64,7 @@ export const getPlayersList = functions.https.onCall(async (request) => {
     // 5. Doklejamy do każdego gracza jego statystyki oraz gablotę osiągnięć
     const enrichedPlayers = divPlayers.map((p: any) => {
       const pSt = allStats[p.id] || { form: [], realAvg: 0, dpi: 0 };
-      const ach = achievements[p.id] || { trophies: [], career_stats: {}, epic_moments: {} };
+      const ach = asRecord(achievements[p.id]) ?? {};
 
       return {
         ...p,
@@ -55,9 +77,9 @@ export const getPlayersList = functions.https.onCall(async (request) => {
           losses: pSt.l || 0
         },
         achievements: {
-          trophies: ach.trophies || [],
-          careerStats: ach.career_stats || {},
-          epicMoments: ach.epic_moments || {}
+          trophies: asList(ach.trophies),
+          earnedMilestones: asIdList(ach.earned_milestones),
+          epicMoments: asIdList(ach.epic_moments),
         }
       };
     });
