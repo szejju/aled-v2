@@ -909,18 +909,29 @@ export const apiAwardWalkover = awardWalkover
 // ─── backfillPlayerAchievements (jednorazowa migracja Gabloty) ───────────────
 
 /**
- * Uzupełnia `earned_milestones` i `epic_moments` z historii meczów.
- * To nie jest ręczne przyznawanie odznak. Puchary sezonu powstają przy archiwizacji.
+ * Kopia `/achievements` → `/achievements_legacy`, potem czysta półka z historii meczów.
  * Konsola: `backfillPlayerAchievements({})` albo `runArcheologAdmin({})`.
  */
 export const runArcheologAdmin = makeCallable<
   Record<string, never>,
-  { success: boolean; message: string; players?: number }
+  {
+    success: boolean
+    message: string
+    players?: number
+    legacyCreated?: boolean
+    archivedSeasons?: number
+  }
 >('runArcheologAdmin')
 
 export const backfillPlayerAchievements = makeCallable<
   Record<string, never>,
-  { success: boolean; message: string; players?: number }
+  {
+    success: boolean
+    message: string
+    players?: number
+    legacyCreated?: boolean
+    archivedSeasons?: number
+  }
 >('backfillPlayerAchievements')
 
 // ─── manageAdminEmails (Zarządzanie Uprawnieniami Admina) ────────────────────

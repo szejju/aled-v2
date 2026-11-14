@@ -17,18 +17,29 @@ async function runBackfill(request: functions.https.CallableRequest<unknown>) {
     throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
   }
 
-  const result = await backfillAllPlayerAchievements();
-  return {
-    success: true,
-    players: result.players,
-    message: `Uzupełniono kamienie milowe i epickie momenty u ${result.players} graczy.${result.note}`,
-  };
+  try {
+    const result = await backfillAllPlayerAchievements();
+    const backup = result.legacyCreated
+      ? "Utworzono kopię /achievements_legacy."
+      : "Użyto istniejącej kopii /achievements_legacy.";
+    return {
+      success: true,
+      players: result.players,
+      legacyCreated: result.legacyCreated,
+      archivedSeasons: result.archivedSeasons,
+      message: `${backup} Zmigrowano ${result.players} graczy.${result.note}`,
+    };
+  } catch (error) {
+    console.error("[backfillPlayerAchievements]", error);
+    const message = error instanceof Error ? error.message : "Przeliczenie historii nie powiodło się.";
+    throw new functions.https.HttpsError("internal", message);
+  }
 }
 
 /**
  * Jednorazowa migracja odznak. Konsola Firebase:
  * `backfillPlayerAchievements({})` albo `runArcheologAdmin({})`.
- * Nie przyznaje niczego, czego nie ma w historii meczów.
+ * Najpierw kopia `/achievements_legacy`, potem czysty zapis nowej półki.
  */
 export const backfillPlayerAchievements = functions.https.onCall(backfillOptions, runBackfill);
 

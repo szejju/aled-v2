@@ -219,21 +219,46 @@ function playerWon(match: AchievementMatch, playerId: string): boolean {
   return side !== null && !match.isDoubleWO && side.score > side.opponent;
 }
 
+/** Mecze ligowe gracza, od najstarszego. Puchar i baraż nie wchodzą do serii. */
+function leagueMatchesOf(matches: readonly AchievementMatch[], playerId: string): AchievementMatch[] {
+  return matches
+    .filter((match) => !match.isCup && !match.isBarrage && isAwardableStatus(match.status))
+    .filter((match) => match.p1Id === playerId || match.p2Id === playerId)
+    .sort((left, right) => left.timestamp - right.timestamp
+      || left.round - right.round
+      || left.id.localeCompare(right.id));
+}
+
 /**
  * Pięć ostatnich oficjalnych meczów ligowych tego gracza, po dacie.
  * Terminarz nie ma indeksu per gracz, więc `limitToLast(5)` na całym
  * `schedule` wziąłby cudze spotkania. Bierzemy mecze gracza i obcinamy ogon.
  */
 export function lastFiveAreWins(matches: readonly AchievementMatch[], playerId: string): boolean {
-  const mine = matches
-    .filter((match) => !match.isCup && !match.isBarrage && isAwardableStatus(match.status))
-    .filter((match) => match.p1Id === playerId || match.p2Id === playerId)
-    .sort((left, right) => left.timestamp - right.timestamp
-      || left.round - right.round
-      || left.id.localeCompare(right.id));
-  const last = mine.slice(-HIGH_FIVE_LENGTH);
+  const last = leagueMatchesOf(matches, playerId).slice(-HIGH_FIVE_LENGTH);
   if (last.length < HIGH_FIVE_LENGTH) return false;
   return last.every((match) => playerWon(match, playerId));
+}
+
+/**
+ * High Five z całej historii jednego sezonu.
+ * Na żywo epik wpada w momencie piątej wygranej i już nie spada,
+ * więc backfill szuka dowolnego okna pięciu wygranych, nie tylko ogona.
+ */
+export function hasHighFiveStreak(matches: readonly AchievementMatch[], playerId: string): boolean {
+  const mine = leagueMatchesOf(matches, playerId);
+  if (mine.length < HIGH_FIVE_LENGTH) return false;
+  for (let start = 0; start <= mine.length - HIGH_FIVE_LENGTH; start += 1) {
+    let streak = true;
+    for (let step = 0; step < HIGH_FIVE_LENGTH; step += 1) {
+      if (!playerWon(mine[start + step], playerId)) {
+        streak = false;
+        break;
+      }
+    }
+    if (streak) return true;
+  }
+  return false;
 }
 
 export function withCurrentMatch(
@@ -251,6 +276,18 @@ export function readOfficialMatches(schedule: unknown): AchievementMatch[] {
   const matches: AchievementMatch[] = [];
   for (const [id, value] of Object.entries(record)) {
     const parsed = parseScheduleMatch(id, value);
+    if (parsed) matches.push(parsed);
+  }
+  return matches;
+}
+
+/** Puchar: te same protokoły co liga, ale bez kamieni milowych. Baraż tu nie wchodzi. */
+export function readCupMatches(schedule: unknown): AchievementMatch[] {
+  const record = asRecord(schedule);
+  if (!record) return [];
+  const matches: AchievementMatch[] = [];
+  for (const [id, value] of Object.entries(record)) {
+    const parsed = parseCupMatch(id, value);
     if (parsed) matches.push(parsed);
   }
   return matches;
@@ -281,6 +318,37 @@ function parseScheduleMatch(id: string, value: unknown): AchievementMatch | null
     bestOf: bestOfValue(raw.bestOf),
     isDoubleWO: raw.isDoubleWO === true,
     isCup: false,
+    isBarrage: false,
+    status,
+  };
+}
+
+function parseCupMatch(id: string, value: unknown): AchievementMatch | null {
+  const raw = asRecord(value);
+  if (!raw || isBarrageMatch(raw)) return null;
+  const p1Id = raw.p1Id;
+  const p2Id = raw.p2Id;
+  const score1 = raw.score1;
+  const score2 = raw.score2;
+  if (typeof p1Id !== "string" || typeof p2Id !== "string" || p1Id === "" || p2Id === "" || p1Id === p2Id) {
+    return null;
+  }
+  if (typeof score1 !== "number" || typeof score2 !== "number") return null;
+  const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+  if (!isAwardableStatus(status)) return null;
+  return {
+    id,
+    timestamp: typeof raw.timestamp === "number" && Number.isFinite(raw.timestamp) ? raw.timestamp : 0,
+    round: whole(raw.round),
+    p1Id,
+    p2Id,
+    score1,
+    score2,
+    p1Stats: raw.p1Stats,
+    p2Stats: raw.p2Stats,
+    bestOf: bestOfValue(raw.bestOf),
+    isDoubleWO: raw.isDoubleWO === true,
+    isCup: true,
     isBarrage: false,
     status,
   };
