@@ -28,6 +28,8 @@ async function runBackfill(request: functions.https.CallableRequest<unknown>) {
       players: result.players,
       legacyCreated: result.legacyCreated,
       archivedSeasons: result.archivedSeasons,
+      current: result.current,
+      sources: result.sources,
       message: `${backup} Zmigrowano ${result.players} graczy.${result.note}`,
     };
   } catch (error) {

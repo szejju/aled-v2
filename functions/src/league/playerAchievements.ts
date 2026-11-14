@@ -241,11 +241,25 @@ export interface MigratedShelf extends PlayerAchievements {
   seasonCredits?: Record<string, true>;
 }
 
+export interface BackfillSourceCount {
+  /** `operational` — baza ligi. `archive` — osobna instancja archiveDatabase(). */
+  database: "operational" | "archive";
+  season: number;
+  /** Wpisy w `schedule`, zanim odrzucimy nierozegrane. */
+  raw: number;
+  /** Mecze, które weszły do puli `matches_played`. */
+  counted: number;
+}
+
 export interface BackfillAchievementsResult {
   players: number;
   legacyCreated: boolean;
   archivedSeasons: number;
   note: string;
+  /** Bieżący terminarz: policzone / wszystkie wpisy. */
+  current: { raw: number; counted: number };
+  /** Każdy `archive/season_N` osobno, z podziałem na bazę. */
+  sources: BackfillSourceCount[];
 }
 
 function addTrophy(found: string[], seen: Set<string>, raw: string): void {
@@ -331,7 +345,8 @@ export function legacyEpicIds(value: unknown): EpicMomentKey[] {
 
 /**
  * Czysta półka jednego gracza.
- * Kamienie i epiki z protokołów liczone od zera.
+ * Kamienie i epiki powstają jedną sumą ze wszystkich sezonów i bieżącego terminarza.
+ * Kolejny sezon dokłada mecze (`+=`), nie zastępuje licznika.
  * Puchary pochodzą z przeliczonego archiwum, nie z kopii legacy.
  * Sezonowiec to zarchiwizowane sezony, w których gracz jest w składzie albo ma zatwierdzony mecz.
  */
@@ -414,6 +429,86 @@ function playersForEngine(playersRaw: unknown): unknown {
     map[id] = data;
   }
   return map;
+}
+
+function scoreNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function flagTrue(value: unknown): boolean {
+  if (value === true) return true;
+  return typeof value === "string" && value.trim().toLowerCase() === "true";
+}
+
+/**
+ * Sezon 2 nie zapisywał `status`. Rozegrany mecz ma `isPlayed: true` i wynik
+ * albo sam wynik liczbowy bez statusu. `p1Id` / `p2Id` są identyfikatorami
+ * z `players` tego sezonu — nick nie jest kluczem.
+ * Pusty 0:0 bez flagi to skorupa terminarza, nie mecz.
+ */
+function isHistoricallyPlayed(raw: Record<string, unknown>): boolean {
+  if (isBarrageRecord(raw)) return false;
+  const score1 = scoreNumber(raw.score1);
+  const score2 = scoreNumber(raw.score2);
+  const p1 = safePlayerId(raw.p1Id);
+  const p2 = safePlayerId(raw.p2Id);
+  if (score1 === null || score2 === null || !p1 || !p2 || p1 === p2) return false;
+  const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+  if (status === "played" || status === "approved") return true;
+  if (flagTrue(raw.isPlayed) || flagTrue(raw.played)) return true;
+  return status === "" && !(score1 === 0 && score2 === 0);
+}
+
+/**
+ * Kopia terminarza archiwum, którą czyta ten sam filtr co bieżący sezon.
+ * Historyczny wynik dostaje `status: "played"` i liczbowe wyniki.
+ * Bieżącego `schedule` ta funkcja nie dotyka.
+ */
+export function prepareArchivedSchedule(scheduleRaw: unknown): unknown {
+  const source = scheduleForEngine(scheduleRaw);
+  const normalize = (value: unknown): unknown => {
+    const raw = asRecord(value);
+    if (!raw || !isHistoricallyPlayed(raw)) return value;
+    const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+    const score1 = scoreNumber(raw.score1);
+    const score2 = scoreNumber(raw.score2);
+    if ((status === "played" || status === "approved") && typeof raw.score1 === "number" && typeof raw.score2 === "number") {
+      return value;
+    }
+    return {
+      ...raw,
+      score1,
+      score2,
+      status: status === "approved" ? "approved" : "played",
+    };
+  };
+  if (Array.isArray(source)) return source.map(normalize);
+  const record = asRecord(source);
+  if (!record) return source ?? null;
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) next[key] = normalize(value);
+  return next;
+}
+
+function scheduleRows(scheduleRaw: unknown): unknown[] {
+  const source = scheduleForEngine(scheduleRaw);
+  if (Array.isArray(source)) return source;
+  return Object.values(asRecord(source) ?? {});
+}
+
+function countHistorical(scheduleRaw: unknown): { raw: number; counted: number } {
+  const rows = scheduleRows(scheduleRaw);
+  let counted = 0;
+  for (const value of rows) {
+    const row = asRecord(value);
+    if (row && isHistoricallyPlayed(row)) counted += 1;
+  }
+  return { raw: rows.length, counted };
 }
 
 /**
@@ -544,7 +639,7 @@ function unionMatches(current: readonly AchievementMatch[], incoming: readonly A
 function sliceFromSeason(season: number, value: unknown): SeasonSlice {
   const node = asRecord(value);
   const playersRaw = playersForEngine(node?.players ?? null);
-  const scheduleRaw = scheduleForEngine(node?.schedule ?? null);
+  const scheduleRaw = prepareArchivedSchedule(node?.schedule ?? null);
   const penaltiesRaw = node?.penalties ?? null;
   return {
     season,
@@ -577,7 +672,12 @@ function mergeSlices(current: SeasonSlice, incoming: SeasonSlice): SeasonSlice {
  * Zbiera każde `archive/season_N`, także gdy siedzi poziom niżej.
  * Ten sam numer z dwóch baz jest scalany: braki się uzupełniają, dyskwalifikacja zostaje.
  */
-function absorbArchive(target: Map<number, SeasonSlice>, root: unknown): void {
+function absorbArchive(
+  target: Map<number, SeasonSlice>,
+  root: unknown,
+  database: BackfillSourceCount["database"],
+  sources: BackfillSourceCount[],
+): void {
   const visit = (node: unknown, depth: number): void => {
     const record = asRecord(node);
     if (!record || depth > 4) return;
@@ -585,6 +685,9 @@ function absorbArchive(target: Map<number, SeasonSlice>, root: unknown): void {
       const season = seasonNumber(key);
       const payload = season === null ? null : seasonPayload(value);
       if (season !== null && payload) {
+        const body = asRecord(payload);
+        const tally = countHistorical(body?.schedule ?? null);
+        sources.push({ database, season, raw: tally.raw, counted: tally.counted });
         const incoming = sliceFromSeason(season, payload);
         const current = target.get(season);
         target.set(season, current ? mergeSlices(current, incoming) : incoming);
@@ -599,14 +702,16 @@ function absorbArchive(target: Map<number, SeasonSlice>, root: unknown): void {
 interface ArchiveLoad {
   seasons: Map<number, SeasonSlice>;
   externalFailed: boolean;
+  sources: BackfillSourceCount[];
 }
 
 async function loadSeasonArchive(): Promise<ArchiveLoad> {
   const seasons = new Map<number, SeasonSlice>();
+  const sources: BackfillSourceCount[] = [];
   let externalFailed = false;
   try {
     const snap = await archiveDatabase().ref("archive").once("value");
-    absorbArchive(seasons, snap.val());
+    absorbArchive(seasons, snap.val(), "archive", sources);
   } catch (error) {
     externalFailed = true;
     console.error(
@@ -614,7 +719,7 @@ async function loadSeasonArchive(): Promise<ArchiveLoad> {
       error,
     );
   }
-  return { seasons, externalFailed };
+  return { seasons, externalFailed, sources };
 }
 
 /**
@@ -639,6 +744,23 @@ async function ensureLegacySnapshot(
   return { shelves: asRecord(legacySnap.val()) ?? {}, created: false };
 }
 
+function formatBackfillSources(
+  sources: readonly BackfillSourceCount[],
+  currentMatches: { raw: number; counted: number },
+  archiveFailed: boolean,
+): string {
+  const parts = [`bieżący sezon ${currentMatches.counted}/${currentMatches.raw}`];
+  const ordered = [...sources].sort((left, right) =>
+    left.season - right.season || (left.database === "operational" ? -1 : 1));
+  for (const row of ordered) {
+    const where = row.database === "archive" ? "archiwum" : "operacyjna";
+    parts.push(`season_${row.season} (${where}) ${row.counted}/${row.raw}`);
+  }
+  if (archiveFailed) parts.push("archiveDatabase niedostępna");
+  else if (!sources.some((row) => row.database === "archive")) parts.push("archiveDatabase bez sezonów");
+  return ` Źródła (policzone/wszystkie): ${parts.join("; ")}.`;
+}
+
 /**
  * Migracja Gabloty. Najpierw kopia legacy, potem czysty `.set()` na każdym graczu.
  * Brak archiwum przy błędzie osobnej bazy przerywa zapis, żeby nie wyzerować kariery.
@@ -656,7 +778,8 @@ export async function backfillAllPlayerAchievements(): Promise<BackfillAchieveme
   ]);
 
   const seasons = external.seasons;
-  absorbArchive(seasons, mainArchiveSnap.val());
+  const sources = [...external.sources];
+  absorbArchive(seasons, mainArchiveSnap.val(), "operational", sources);
   if (external.externalFailed && seasons.size === 0) {
     const backup = legacy.created
       ? "Kopia /achievements_legacy jest już zapisana."
@@ -721,21 +844,23 @@ export async function backfillAllPlayerAchievements(): Promise<BackfillAchieveme
     }));
   }
 
-  const note = external.externalFailed
-    ? " Osobna baza archiwum niedostępna — sezonów szukano w archive/season_N bazy operacyjnej."
-    : seasons.size === 0
-      ? " Brak zarchiwizowanych sezonów — policzono tylko bieżący terminarz."
-      : "";
+  const currentMatches = {
+    raw: scheduleRows(scheduleSnap.val()).length,
+    counted: current.league.length,
+  };
+  const note = formatBackfillSources(sources, currentMatches, external.externalFailed);
 
   await database.ref("settings/achievementsBackfill").set({
     at: admin.database.ServerValue.TIMESTAMP,
     players: ids.length,
     legacyCreated: legacy.created,
     archivedSeasons: seasons.size,
+    current: currentMatches,
+    sources,
   });
 
   console.info(
-    `[backfillPlayerAchievements] gracze ${ids.length}, sezony ${seasons.size}, kopia legacy: ${legacy.created ? "nowa" : "istniejąca"}.`,
+    `[backfillPlayerAchievements] gracze ${ids.length}, sezony ${seasons.size}, kopia legacy: ${legacy.created ? "nowa" : "istniejąca"}.${note}`,
   );
 
   return {
@@ -743,5 +868,7 @@ export async function backfillAllPlayerAchievements(): Promise<BackfillAchieveme
     legacyCreated: legacy.created,
     archivedSeasons: seasons.size,
     note,
+    current: currentMatches,
+    sources,
   };
 }
