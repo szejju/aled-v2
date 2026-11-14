@@ -1,7 +1,8 @@
 // ============================================================================
 // admin/rewardsActions.ts
 // Jednorazowe uzupełnienie Gabloty z historii (Archeolog).
-// Puchary sezonu przyznaje wyłącznie archiveCurrentSeason — stąd ich nie ma.
+// Puchary archiwum przelicza backfill z players + schedule.
+// Bieżący, niezamknięty sezon zamyka wyłącznie archiveCurrentSeason.
 // Security First: wywołanie z konsoli i tak wymaga admina.
 // ============================================================================
 

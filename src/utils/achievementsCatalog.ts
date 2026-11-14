@@ -153,8 +153,8 @@ export type EpicMomentKey = (typeof EPIC_MOMENT_DEFINITIONS)[number]['id']
 
 export type TrophyMetal = 'gold' | 'silver' | 'bronze'
 
-/** division1 — medal tylko Dywizji 1. league — puchar całej ligi. */
-export type TrophyScope = 'division1' | 'league'
+/** division1 — medal katalogu Dywizji 1. division — historyczne podium dywizji. league — puchar całej ligi. */
+export type TrophyScope = 'division1' | 'division' | 'league'
 
 export interface TrophyDefinition {
   kind: string
@@ -252,12 +252,16 @@ export interface MilestoneTrack {
 export interface ParsedTrophy {
   id: string
   season: number
-  kind: TrophyKind
+  kind: TrophyKind | 'historical_place'
   label: string
   summary: string
   metal: TrophyMetal
   scope: TrophyScope
   icon: string
+  /** Numer dywizji z historycznego `s3_div1_2`. */
+  division?: number
+  /** Litera grupy, gdy archiwum trzymało osobną tabelę. */
+  group?: string
 }
 
 function wholeCount(count: number): number {
@@ -381,16 +385,35 @@ export function trophyId(season: number, kind: TrophyKind): string {
   return `s${season}_${kind}`
 }
 
-export function parseTrophyId(id: string): ParsedTrophy | null {
-  const match = /^s(\d+)_(.+)$/.exec(id.trim())
-  if (!match) return null
-  const season = Number(match[1])
-  if (!Number.isInteger(season) || season <= 0) return null
-  const kind = match[2]
+const LEGACY_PLACE = /^s(\d+)_div(\d+)(?:[\s_]+grupa[\s_]+([a-z]+))?_([123])$/i
+const LEGACY_CUP = /^s(\d+)_(mvg|taylor|littler|humphries|smith)$/i
+
+const LEGACY_CUP_KIND: Record<string, TrophyKind> = {
+  mvg: 'cup_mvg',
+  taylor: 'cup_taylor',
+  littler: 'cup_littler',
+  humphries: 'cup_humphries',
+  smith: 'cup_smith',
+}
+
+const PLACE_FACE = [
+  null,
+  { label: 'Mistrz', summary: 'Pierwsze miejsce', metal: 'gold' as const, icon: '🏆' },
+  { label: 'Wicemistrz', summary: 'Drugie miejsce', metal: 'silver' as const, icon: '🥈' },
+  { label: 'Brąz', summary: 'Trzecie miejsce', metal: 'bronze' as const, icon: '🥉' },
+]
+
+const DIVISION_TITLE: Partial<Record<TrophyKind, string>> = {
+  div1_champion: 'Mistrz',
+  div1_runner_up: 'Wicemistrz',
+  div1_bronze: 'Brąz',
+}
+
+function catalogTrophy(id: string, season: number, kind: string): ParsedTrophy | null {
   for (const definition of TROPHY_KINDS) {
     if (definition.kind !== kind) continue
     return {
-      id: `s${season}_${definition.kind}`,
+      id,
       season,
       kind: definition.kind,
       label: definition.label,
@@ -403,8 +426,57 @@ export function parseTrophyId(id: string): ParsedTrophy | null {
   return null
 }
 
+function divisionPhrase(division: number, group?: string): string {
+  const name = group ? `Dywizji ${division}, grupa ${group}` : `Dywizji ${division}`
+  return name
+}
+
+export function parseTrophyId(id: string): ParsedTrophy | null {
+  const key = id.trim()
+  const match = /^s(\d+)_(.+)$/i.exec(key)
+  if (!match?.[1] || match[2] === undefined) return null
+  const season = Number(match[1])
+  if (!Number.isInteger(season) || season <= 0) return null
+
+  const catalog = catalogTrophy(key, season, match[2].toLowerCase())
+  if (catalog) return catalog
+
+  const cup = LEGACY_CUP.exec(key)
+  const cupKind = cup?.[2] ? LEGACY_CUP_KIND[cup[2].toLowerCase()] : undefined
+  if (cupKind) return catalogTrophy(key, season, cupKind)
+
+  const place = LEGACY_PLACE.exec(key)
+  if (!place?.[2] || !place[4]) return null
+  const division = Number(place[2])
+  const spot = Number(place[4])
+  const face = PLACE_FACE[spot]
+  if (!Number.isInteger(division) || division <= 0 || !face) return null
+  const group = place[3]?.toUpperCase()
+  return {
+    id: key,
+    season,
+    kind: 'historical_place',
+    label: face.label,
+    summary: `${face.summary} w ${divisionPhrase(division, group)}.`,
+    metal: face.metal,
+    scope: 'division',
+    icon: face.icon,
+    division,
+    group,
+  }
+}
+
 export function trophyLabel(trophy: ParsedTrophy): string {
-  return `${trophy.label} · S${trophy.season}`
+  const season = `Sezon ${trophy.season}`
+  if (trophy.division != null && trophy.division > 0) {
+    const group = trophy.group ? ` – Grupa ${trophy.group}` : ''
+    return `${trophy.label} · ${season} – Dywizja ${trophy.division}${group}`
+  }
+  if (trophy.kind !== 'historical_place') {
+    const place = DIVISION_TITLE[trophy.kind]
+    if (place) return `${place} · ${season} – Dywizja 1`
+  }
+  return `${trophy.label} · ${season}`
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

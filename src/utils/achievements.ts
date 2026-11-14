@@ -89,11 +89,11 @@ const LEGACY_PLACE = /^s(\d+)_div(\d+)(?:[\s_]+grupa[\s_]+([a-z]+))?_(\d+)$/i
 const LEGACY_CUP = /^s(\d+)_(littler|humphries|smith|mvg|taylor)$/i
 
 const LEGACY_CUP_BADGE: Record<string, Badge> = {
-  littler: { label: 'Król Maksów (Legacy)', icon: '🔥', tier: 'gold' },
-  humphries: { label: 'Snajper (Legacy)', icon: '🎪', tier: 'gold' },
-  smith: { label: 'Najszybszy leg (Legacy)', icon: '⚡', tier: 'gold' },
-  mvg: { label: 'Power Ranking (Legacy)', icon: '🟢', tier: 'gold' },
-  taylor: { label: 'Król Średniej (Legacy)', icon: '🎯', tier: 'gold' },
+  littler: { label: 'Puchar Littlera', icon: '🔥', tier: 'gold' },
+  humphries: { label: 'Puchar Humphriesa', icon: '🎪', tier: 'gold' },
+  smith: { label: 'Puchar Smitha', icon: '⚡', tier: 'gold' },
+  mvg: { label: 'Puchar MvG', icon: '🟢', tier: 'gold' },
+  taylor: { label: 'Puchar Taylora', icon: '🎯', tier: 'gold' },
 }
 
 function tierForMetal(metal: TrophyMetal): Tier {
@@ -113,11 +113,15 @@ function catalogTrophy(id: string, title?: string, icon?: string): DecodedTrophy
   }
 }
 
+function placeLine(title: string, season: string, divisionNo: string, group?: string): string {
+  const division = group ? `Dywizja ${divisionNo} – Grupa ${group}` : `Dywizja ${divisionNo}`
+  return `${title} · Sezon ${season} – ${division}`
+}
+
 /**
- * Historyczna półka.
- * `s2_div5_1` → Mistrz (Legacy).
- * `s3_div3 GRUPA A_2` i `s3_div3_GRUPA_A_2` → Wicemistrz (Legacy).
- * `s2_littler` i reszta pucharów imiennych zostają jako osobne tytuły.
+ * Historyczna półka, gdy katalog jej nie rozpozna.
+ * `s2_div5_1` → Mistrz · Sezon 2 – Dywizja 5.
+ * `s3_div1_2` → Wicemistrz · Sezon 3 – Dywizja 1.
  */
 function legacyTrophy(id: string): DecodedTrophy | null {
   const key = id.trim()
@@ -127,23 +131,23 @@ function legacyTrophy(id: string): DecodedTrophy | null {
     const divisionNo = place[2]
     const group = place[3]?.toUpperCase()
     const spot = Number(place[4])
-    const division = group ? `Div${divisionNo} Grupa ${group}` : `Div${divisionNo}`
+    if (!season || !divisionNo) return null
     if (spot === 1) {
-      return { id: key, label: `Mistrz (Legacy) · S${season} · ${division}`, icon: '🥇', tier: 'gold' }
+      return { id: key, label: placeLine('Mistrz', season, divisionNo, group), icon: '🏆', tier: 'gold' }
     }
     if (spot === 2) {
-      return { id: key, label: `Wicemistrz (Legacy) · S${season} · ${division}`, icon: '🥈', tier: 'silver' }
+      return { id: key, label: placeLine('Wicemistrz', season, divisionNo, group), icon: '🥈', tier: 'silver' }
     }
     if (spot === 3) {
-      return { id: key, label: `3. miejsce (Legacy) · S${season} · ${division}`, icon: '🥉', tier: 'bronze' }
+      return { id: key, label: placeLine('Brąz', season, divisionNo, group), icon: '🥉', tier: 'bronze' }
     }
     return null
   }
   const cup = LEGACY_CUP.exec(key)
-  if (!cup) return null
+  if (!cup?.[1] || !cup[2]) return null
   const badge = LEGACY_CUP_BADGE[cup[2].toLowerCase()]
   if (!badge) return null
-  return { id: key, label: `${badge.label} · S${cup[1]}`, icon: badge.icon, tier: badge.tier }
+  return { id: key, label: `${badge.label} · Sezon ${cup[1]}`, icon: badge.icon, tier: badge.tier }
 }
 
 /** Dekoduje puchar. Nieznany string znika z gabloty. */

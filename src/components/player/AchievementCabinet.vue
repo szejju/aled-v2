@@ -2,7 +2,7 @@
 /**
  * Gablota osiągnięć na karcie zawodnika.
  * Przyjmuje półkę `PlayerAchievements`. Progi i pasek liczy katalog,
- * puchary legacy (np. `s2_div5_1`) zostają przy dekoderze z regexem.
+ * historyczne `s2_div5_1` i puchary katalogu składa ten sam dekoder etykiet.
  */
 import { computed } from 'vue'
 import {
@@ -159,7 +159,7 @@ function presentTrophy(id: string): TrophyFace | null {
   const parsed = parseTrophyId(id)
   if (parsed) {
     const league = parsed.scope === 'league'
-    const accent = league
+    const accent = league && parsed.kind !== 'historical_place'
       ? (LEAGUE_CUP_COLOR[parsed.kind] ?? '#22d3ee')
       : METAL_COLOR[parsed.metal]
     return {

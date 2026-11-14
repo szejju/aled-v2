@@ -1,7 +1,8 @@
 // Zapis Gabloty po zatwierdzonym meczu i jednorazowa migracja kariery.
 // Pending nie dostaje odznak. Błąd Archeologa nie wraca do sędziego.
-// Migracja najpierw kopiuje /achievements do /achievements_legacy, potem
-// nadpisuje półkę czystym obiektem. Puchary biorą się z tej kopii.
+// Migracja kopiuje /achievements do /achievements_legacy raz, potem
+// nadpisuje półkę. Puchary archiwum liczy ten sam silnik co Ceremoniarz
+// z surowej pary players + schedule. Bieżący sezon nie wchodzi do Sezonowca.
 
 import * as admin from "firebase-admin";
 import { archiveDatabase, db } from "../database/connection.js";
@@ -31,6 +32,7 @@ import {
   type AchievementMatch,
   type CurrentMatchData,
 } from "./archeologist.js";
+import { awardReconstructedSeasonTrophies } from "./ceremony.js";
 
 export type { CurrentMatchData };
 
@@ -222,6 +224,17 @@ export interface SeasonSlice {
   season: number | null;
   league: readonly AchievementMatch[];
   cup: readonly AchievementMatch[];
+  /** Surowy skład archiwum. Bieżący sezon zostawia null. */
+  playersRaw: unknown;
+  /** Surowy terminarz archiwum, w kształcie, który czyta silnik tabel. */
+  scheduleRaw: unknown;
+  penaltiesRaw: unknown;
+  /**
+   * Kto dostaje ten sezon w `seasons_completed`.
+   * Skład bez dyskwalifikacji albo zatwierdzony mecz w terminarzu.
+   * Bieżący sezon ma pusty zbiór.
+   */
+  creditedIds: ReadonlySet<string>;
 }
 
 export interface MigratedShelf extends PlayerAchievements {
@@ -242,6 +255,13 @@ function addTrophy(found: string[], seen: Set<string>, raw: string): void {
   if (seen.has(fold)) return;
   seen.add(fold);
   found.push(key);
+}
+
+function uniqueTrophyIds(values: readonly string[]): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) addTrophy(found, seen, value);
+  return found;
 }
 
 function harvestTrophies(value: unknown, add: (raw: string) => void, depth: number): void {
@@ -309,19 +329,17 @@ export function legacyEpicIds(value: unknown): EpicMomentKey[] {
   return EPIC_MOMENT_DEFINITIONS.map((item) => item.id).filter((id) => found.has(id));
 }
 
-function playedHere(matches: readonly AchievementMatch[], playerId: string): boolean {
-  return matches.some((match) => match.p1Id === playerId || match.p2Id === playerId);
-}
-
 /**
  * Czysta półka jednego gracza.
- * Kamienie i epiki z protokołów liczone od zera. Puchary tylko z kopii legacy.
- * Sezonowiec to liczba zarchiwizowanych sezonów, w których gracz ma mecz ligowy.
+ * Kamienie i epiki z protokołów liczone od zera.
+ * Puchary pochodzą z przeliczonego archiwum, nie z kopii legacy.
+ * Sezonowiec to zarchiwizowane sezony, w których gracz jest w składzie albo ma zatwierdzony mecz.
  */
 export function buildMigratedShelf(
   legacyNode: unknown,
   playerId: string,
   slices: readonly SeasonSlice[],
+  trophyIds: readonly string[] = [],
 ): MigratedShelf {
   const league = slices.flatMap((slice) => slice.league);
   const cup = slices.flatMap((slice) => slice.cup);
@@ -331,7 +349,7 @@ export function buildMigratedShelf(
   const merged = unionEpics(legacyEpicIds(legacyNode), incoming);
   const epic_moments = EPIC_MOMENT_DEFINITIONS.map((item) => item.id).filter((id) => merged.includes(id));
   const completed = slices
-    .flatMap((slice) => (slice.season !== null && playedHere(slice.league, playerId) ? [slice.season] : []))
+    .flatMap((slice) => (slice.season !== null && slice.creditedIds.has(playerId) ? [slice.season] : []))
     .sort((left, right) => left - right);
 
   const shelf: MigratedShelf = {
@@ -342,7 +360,7 @@ export function buildMigratedShelf(
       total_180s: milestoneProgress(milestoneDefinition("total_180s"), hit.darts180),
       total_100_checkouts: milestoneProgress(milestoneDefinition("total_100_checkouts"), hit.checkouts100),
     },
-    trophies: legacyTrophyIds(legacyNode),
+    trophies: uniqueTrophyIds(trophyIds),
     epic_moments,
   };
   if (completed.length > 0) {
@@ -354,7 +372,7 @@ export function buildMigratedShelf(
 }
 
 function seasonNumber(key: string): number | null {
-  const match = /^season_(\d+)$/.exec(key);
+  const match = /^season_(\d+)$/i.exec(key);
   if (!match?.[1]) return null;
   const season = Number(match[1]);
   return Number.isInteger(season) && season > 0 ? season : null;
@@ -367,49 +385,215 @@ function cupMatchesOf(cup: unknown): AchievementMatch[] {
   return readCupMatches(node);
 }
 
-function sliceFromSeason(season: number, value: unknown): SeasonSlice {
+function looksLikeSeason(value: unknown): boolean {
   const node = asRecord(value);
-  return {
-    season,
-    league: readOfficialMatches(node?.schedule),
-    cup: cupMatchesOf(node?.cup),
-  };
+  if (!node) return false;
+  return "players" in node || "schedule" in node || "timestamp" in node;
 }
 
-function matchCount(slice: SeasonSlice): number {
-  return slice.league.length + slice.cup.length;
+/** Sezon bywa owinięty jednym poziomem (`snapshot`, `data`). Bierzemy węzeł ze składem i terminarzem. */
+function seasonPayload(value: unknown): unknown | null {
+  if (looksLikeSeason(value)) return value;
+  const record = asRecord(value);
+  if (!record) return null;
+  for (const child of Object.values(record)) {
+    if (looksLikeSeason(child)) return child;
+  }
+  return null;
+}
+
+/** Skład zapisany mapą albo listą obiektów z `id`. */
+function playersForEngine(playersRaw: unknown): unknown {
+  if (!Array.isArray(playersRaw)) return playersRaw ?? null;
+  const map: Record<string, unknown> = {};
+  for (const value of playersRaw) {
+    const data = asRecord(value);
+    if (!data) continue;
+    const id = safePlayerId(data.id) ?? safePlayerId(data.playerId);
+    if (!id) continue;
+    map[id] = data;
+  }
+  return map;
 }
 
 /**
- * Dokleja `archive/season_N`.
- * Pusta skorupa nie zasłania sezonu, w którym są mecze.
- * Gdy oba źródła mają mecze, zostaje to wskazane przez `preferIncoming`.
+ * Terminarz jako mapa meczów. Starsze zrzuty chowają je pod `matches` albo `league`.
+ * Silnik tabel czyta właśnie tę mapę.
  */
-function absorbArchive(
-  target: Map<number, SeasonSlice>,
-  root: unknown,
-  preferIncoming: boolean,
-): void {
-  const record = asRecord(root);
+function scheduleForEngine(scheduleRaw: unknown): unknown {
+  if (Array.isArray(scheduleRaw)) return scheduleRaw;
+  const record = asRecord(scheduleRaw);
+  if (!record) return scheduleRaw ?? null;
+  const direct = Object.values(record).some((value) => {
+    const row = asRecord(value);
+    return typeof row?.p1Id === "string" || typeof row?.p2Id === "string";
+  });
+  if (direct) return record;
+  if ("matches" in record) return record.matches ?? null;
+  if ("league" in record) return record.league ?? null;
+  return record;
+}
+
+function eachStoredPlayer(playersRaw: unknown, visit: (id: string, data: Record<string, unknown>) => void): void {
+  const source = playersForEngine(playersRaw);
+  const record = asRecord(source);
   if (!record) return;
   for (const [key, value] of Object.entries(record)) {
-    const season = seasonNumber(key);
-    if (season === null) continue;
-    const incoming = sliceFromSeason(season, value);
-    const current = target.get(season);
-    if (!current) {
-      target.set(season, incoming);
-      continue;
-    }
-    const currentMatches = matchCount(current);
-    const incomingMatches = matchCount(incoming);
-    if (currentMatches === 0 && incomingMatches > 0) {
-      target.set(season, incoming);
-      continue;
-    }
-    if (incomingMatches === 0 && currentMatches > 0) continue;
-    if (preferIncoming) target.set(season, incoming);
+    const data = asRecord(value);
+    const id = safePlayerId(key) ?? safePlayerId(data?.id);
+    if (!id || !data) continue;
+    visit(id, data);
   }
+}
+
+function eachStoredMatch(scheduleRaw: unknown, visit: (match: Record<string, unknown>) => void): void {
+  const source = scheduleForEngine(scheduleRaw);
+  if (Array.isArray(source)) {
+    for (const value of source) {
+      const row = asRecord(value);
+      if (row) visit(row);
+    }
+    return;
+  }
+  const record = asRecord(source);
+  if (!record) return;
+  for (const value of Object.values(record)) {
+    const row = asRecord(value);
+    if (row) visit(row);
+  }
+}
+
+/**
+ * Sezon zaliczony: gracz jest w `players` i nie ma dyskwalifikacji,
+ * albo grał w zatwierdzonym meczu terminarza (`played` / `approved`).
+ */
+function seasonCreditIds(playersRaw: unknown, scheduleRaw: unknown): Set<string> {
+  const ids = new Set<string>();
+  eachStoredPlayer(playersRaw, (id, data) => {
+    if (data.isDisqualified === true) return;
+    ids.add(id);
+  });
+  eachStoredMatch(scheduleRaw, (match) => {
+    const status = typeof match.status === "string" ? match.status.trim().toLowerCase() : "";
+    if (status !== "played" && status !== "approved") return;
+    const p1 = safePlayerId(match.p1Id);
+    const p2 = safePlayerId(match.p2Id);
+    if (p1) ids.add(p1);
+    if (p2) ids.add(p2);
+  });
+  return ids;
+}
+
+function richness(value: unknown): number {
+  const row = asRecord(value);
+  if (!row) return 0;
+  let score = Object.keys(row).length;
+  const status = typeof row.status === "string" ? row.status.trim().toLowerCase() : "";
+  if (status === "played" || status === "approved") score += 10;
+  if (typeof row.score1 === "number" && typeof row.score2 === "number") score += 5;
+  if (row.isDisqualified === true) score += 20;
+  return score;
+}
+
+/** Przy tym samym kluczu zostaje bogatszy rekord. Flaga dyskwalifikacji nie ginie. */
+function richer(current: unknown, incoming: unknown): unknown {
+  const left = asRecord(current);
+  const right = asRecord(incoming);
+  if (!left) return right ? incoming : current;
+  if (!right) return current;
+  if (right.isDisqualified === true && left.isDisqualified !== true) {
+    return { ...left, ...right, isDisqualified: true };
+  }
+  if (left.isDisqualified === true && right.isDisqualified !== true) {
+    return { ...right, ...left, isDisqualified: true };
+  }
+  return richness(right) > richness(left) ? incoming : current;
+}
+
+function mergeRecords(current: unknown, incoming: unknown): unknown {
+  if (Array.isArray(current) || Array.isArray(incoming)) {
+    const leftLen = Array.isArray(current) ? current.length : Object.keys(asRecord(current) ?? {}).length;
+    const rightLen = Array.isArray(incoming) ? incoming.length : Object.keys(asRecord(incoming) ?? {}).length;
+    if (rightLen > leftLen) return incoming;
+    return current ?? incoming ?? null;
+  }
+  const left = asRecord(current);
+  const right = asRecord(incoming);
+  if (!left) return right ? { ...right } : current ?? incoming ?? null;
+  if (!right) return { ...left };
+  const merged: Record<string, unknown> = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    if (!(key in merged) || merged[key] == null) {
+      merged[key] = value;
+      continue;
+    }
+    merged[key] = richer(merged[key], value);
+  }
+  return merged;
+}
+
+function unionMatches(current: readonly AchievementMatch[], incoming: readonly AchievementMatch[]): AchievementMatch[] {
+  const map = new Map<string, AchievementMatch>();
+  for (const match of current) map.set(match.id, match);
+  for (const match of incoming) {
+    if (!map.has(match.id)) map.set(match.id, match);
+  }
+  return [...map.values()];
+}
+
+function sliceFromSeason(season: number, value: unknown): SeasonSlice {
+  const node = asRecord(value);
+  const playersRaw = playersForEngine(node?.players ?? null);
+  const scheduleRaw = scheduleForEngine(node?.schedule ?? null);
+  const penaltiesRaw = node?.penalties ?? null;
+  return {
+    season,
+    playersRaw,
+    scheduleRaw,
+    penaltiesRaw,
+    league: readOfficialMatches(scheduleRaw),
+    cup: cupMatchesOf(node?.cup),
+    creditedIds: seasonCreditIds(playersRaw, scheduleRaw),
+  };
+}
+
+function mergeSlices(current: SeasonSlice, incoming: SeasonSlice): SeasonSlice {
+  const playersRaw = mergeRecords(current.playersRaw, incoming.playersRaw);
+  const scheduleRaw = mergeRecords(current.scheduleRaw, incoming.scheduleRaw);
+  const penaltiesRaw = mergeRecords(current.penaltiesRaw, incoming.penaltiesRaw);
+  const season = current.season ?? incoming.season;
+  return {
+    season,
+    playersRaw,
+    scheduleRaw,
+    penaltiesRaw,
+    league: readOfficialMatches(scheduleRaw),
+    cup: unionMatches(current.cup, incoming.cup),
+    creditedIds: season === null ? new Set<string>() : seasonCreditIds(playersRaw, scheduleRaw),
+  };
+}
+
+/**
+ * Zbiera każde `archive/season_N`, także gdy siedzi poziom niżej.
+ * Ten sam numer z dwóch baz jest scalany: braki się uzupełniają, dyskwalifikacja zostaje.
+ */
+function absorbArchive(target: Map<number, SeasonSlice>, root: unknown): void {
+  const visit = (node: unknown, depth: number): void => {
+    const record = asRecord(node);
+    if (!record || depth > 4) return;
+    for (const [key, value] of Object.entries(record)) {
+      const season = seasonNumber(key);
+      const payload = season === null ? null : seasonPayload(value);
+      if (season !== null && payload) {
+        const incoming = sliceFromSeason(season, payload);
+        const current = target.get(season);
+        target.set(season, current ? mergeSlices(current, incoming) : incoming);
+        continue;
+      }
+      visit(value, depth + 1);
+    }
+  };
+  visit(root, 0);
 }
 
 interface ArchiveLoad {
@@ -422,7 +606,7 @@ async function loadSeasonArchive(): Promise<ArchiveLoad> {
   let externalFailed = false;
   try {
     const snap = await archiveDatabase().ref("archive").once("value");
-    absorbArchive(seasons, snap.val(), true);
+    absorbArchive(seasons, snap.val());
   } catch (error) {
     externalFailed = true;
     console.error(
@@ -472,7 +656,7 @@ export async function backfillAllPlayerAchievements(): Promise<BackfillAchieveme
   ]);
 
   const seasons = external.seasons;
-  absorbArchive(seasons, mainArchiveSnap.val(), false);
+  absorbArchive(seasons, mainArchiveSnap.val());
   if (external.externalFailed && seasons.size === 0) {
     const backup = legacy.created
       ? "Kopia /achievements_legacy jest już zapisana."
@@ -491,16 +675,48 @@ export async function backfillAllPlayerAchievements(): Promise<BackfillAchieveme
     season: null,
     league: readOfficialMatches(scheduleSnap.val()).filter((match) => !archivedIds.has(match.id)),
     cup: cupMatchesOf(cupSnap.val()).filter((match) => !archivedIds.has(match.id)),
+    playersRaw: null,
+    scheduleRaw: null,
+    penaltiesRaw: null,
+    creditedIds: new Set<string>(),
   };
   const slices = [...seasons.values(), current];
 
+  const trophyBag = new Map<string, string[]>();
+  const ordered = [...seasons.values()].sort((left, right) => (left.season ?? 0) - (right.season ?? 0));
+  for (const archived of ordered) {
+    if (archived.season === null) continue;
+    const close = awardReconstructedSeasonTrophies(
+      archived.playersRaw,
+      archived.scheduleRaw,
+      archived.penaltiesRaw,
+      archived.season,
+    );
+    for (const [playerId, list] of Object.entries(close.trophies)) {
+      const bag = trophyBag.get(playerId) ?? [];
+      for (const trophy of list) {
+        if (!bag.includes(trophy)) bag.push(trophy);
+      }
+      trophyBag.set(playerId, bag);
+    }
+  }
+
   const players = asRecord(playersSnap.val()) ?? {};
-  const ids = uniqueSafeIds([...Object.keys(legacy.shelves), ...Object.keys(players)]);
+  const credited: string[] = [];
+  for (const archived of seasons.values()) {
+    for (const id of archived.creditedIds) credited.push(id);
+  }
+  const ids = uniqueSafeIds([
+    ...Object.keys(legacy.shelves),
+    ...Object.keys(players),
+    ...credited,
+    ...trophyBag.keys(),
+  ]);
 
   for (let index = 0; index < ids.length; index += WRITE_BATCH) {
     const slice = ids.slice(index, index + WRITE_BATCH);
     await Promise.all(slice.map(async (id) => {
-      const shelf = buildMigratedShelf(legacy.shelves[id], id, slices);
+      const shelf = buildMigratedShelf(legacy.shelves[id], id, slices, trophyBag.get(id) ?? []);
       await database.ref(`achievements/${id}`).set(shelf);
     }));
   }

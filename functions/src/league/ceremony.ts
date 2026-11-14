@@ -226,17 +226,23 @@ function give(bag: Map<string, string[]>, playerId: string, season: number, kind
   bag.set(id, list);
 }
 
-/**
- * Podium tylko Dywizja 1. Puchary ligi: jeden zwycięzca na całą ligę.
- * Sezonowiec: każdy z tabeli (nie poczekalnia, nie baraż) bez dyskwalifikacji.
- */
-export function awardSeasonTrophies(
-  playersRaw: unknown,
-  scheduleRaw: unknown,
-  penaltiesRaw: unknown,
-  season: number,
-): SeasonClose {
-  const safeSeason = Number.isInteger(season) && season > 0 ? season : 1;
+function giveRaw(bag: Map<string, string[]>, playerId: string, trophy: string): void {
+  const id = safePlayerId(playerId);
+  const key = trophy.trim();
+  if (!id || key === "") return;
+  const list = bag.get(id) ?? [];
+  if (!list.includes(key)) list.push(key);
+  bag.set(id, list);
+}
+
+interface RankedSeason {
+  divisions: Map<string, Contender[]>;
+  active: Contender[];
+  official: ReturnType<typeof collectOfficialLeagueMatches>;
+}
+
+/** Ta sama tabela i te same rankingi, z których Ceremoniarz bierze podium i puchary. */
+function rankSeason(playersRaw: unknown, scheduleRaw: unknown, penaltiesRaw: unknown): RankedSeason {
   const playerRows = Object.entries(asRecord(playersRaw) ?? {}).flatMap(([id, value]) => {
     const data = asRecord(value);
     const safeId = safePlayerId(id);
@@ -282,14 +288,6 @@ export function awardSeasonTrophies(
     divisions.set(div, bucket);
   }
 
-  const awarded = new Map<string, string[]>();
-  const medalRows = medalDivisionKeys([...divisions.keys()]).flatMap((div) => divisions.get(div) ?? []);
-  const podium = sortLeagueTable(medalRows, official).filter((row) => !row.isDisqualified).slice(0, 3);
-  podium.forEach((row, index) => {
-    const kind = PODIUM[index];
-    if (kind) give(awarded, row.id, safeSeason, kind);
-  });
-
   const seen = new Set<string>();
   const active: Contender[] = [];
   for (const rows of divisions.values()) {
@@ -300,16 +298,93 @@ export function awardSeasonTrophies(
     }
   }
 
+  return { divisions, active, official };
+}
+
+function awardNamedCups(awarded: Map<string, string[]>, active: readonly Contender[], season: number): void {
   for (const cup of CUPS) {
     const winner = pickContender(active, cup.score, cup.higher);
-    if (winner) give(awarded, winner.id, safeSeason, cup.kind);
+    if (winner) give(awarded, winner.id, season, cup.kind);
   }
+}
 
+function closeFrom(awarded: Map<string, string[]>, active: readonly Contender[]): SeasonClose {
   const trophies: Record<string, string[]> = {};
   for (const [playerId, list] of awarded) {
     if (list.length > 0) trophies[playerId] = list;
   }
   return { trophies, seasonPlayerIds: active.map((row) => row.id) };
+}
+
+/**
+ * Sezony 1–3: podium każdej dywizji (i grupy) jako `s{n}_div{x}_1/2/3`.
+ * Litera grupy wchodzi do identyfikatora, gdy tabela jest osobna.
+ */
+function historicalPlaceId(season: number, divKey: string, place: number): string | null {
+  const level = divisionLevel(divKey);
+  if (level === null || place < 1 || place > 3) return null;
+  const group = /GRUPA[\s_]+([A-Z])/i.exec(divKey);
+  const letter = group?.[1]?.toUpperCase();
+  if (letter) return `s${season}_div${level}_GRUPA_${letter}_${place}`;
+  return `s${season}_div${level}_${place}`;
+}
+
+function awardHistoricalDivisions(
+  awarded: Map<string, string[]>,
+  ranked: RankedSeason,
+  season: number,
+): void {
+  const keys = [...ranked.divisions.keys()].sort((left, right) => left.localeCompare(right, "pl"));
+  for (const div of keys) {
+    const rows = ranked.divisions.get(div) ?? [];
+    const podium = sortLeagueTable(rows, ranked.official).filter((row) => !row.isDisqualified).slice(0, 3);
+    podium.forEach((row, index) => {
+      const trophy = historicalPlaceId(season, div, index + 1);
+      if (trophy) giveRaw(awarded, row.id, trophy);
+    });
+  }
+}
+
+/**
+ * Podium tylko Dywizja 1. Puchary ligi: jeden zwycięzca na całą ligę.
+ * Sezonowiec: każdy z tabeli (nie poczekalnia, nie baraż) bez dyskwalifikacji.
+ */
+export function awardSeasonTrophies(
+  playersRaw: unknown,
+  scheduleRaw: unknown,
+  penaltiesRaw: unknown,
+  season: number,
+): SeasonClose {
+  const safeSeason = Number.isInteger(season) && season > 0 ? season : 1;
+  const ranked = rankSeason(playersRaw, scheduleRaw, penaltiesRaw);
+  const awarded = new Map<string, string[]>();
+  const medalRows = medalDivisionKeys([...ranked.divisions.keys()]).flatMap((div) => ranked.divisions.get(div) ?? []);
+  const podium = sortLeagueTable(medalRows, ranked.official).filter((row) => !row.isDisqualified).slice(0, 3);
+  podium.forEach((row, index) => {
+    const kind = PODIUM[index];
+    if (kind) give(awarded, row.id, safeSeason, kind);
+  });
+  awardNamedCups(awarded, ranked.active, safeSeason);
+  return closeFrom(awarded, ranked.active);
+}
+
+/**
+ * Rekonstrukcja archiwum. Sezony 1–3 trzymają historyczne miejsca każdej dywizji.
+ * Od sezonu 4 zostaje reguła Ceremoniarza: podium Dywizji 1 i puchary imienne.
+ */
+export function awardReconstructedSeasonTrophies(
+  playersRaw: unknown,
+  scheduleRaw: unknown,
+  penaltiesRaw: unknown,
+  season: number,
+): SeasonClose {
+  const safeSeason = Number.isInteger(season) && season > 0 ? season : 1;
+  if (safeSeason >= 4) return awardSeasonTrophies(playersRaw, scheduleRaw, penaltiesRaw, safeSeason);
+  const ranked = rankSeason(playersRaw, scheduleRaw, penaltiesRaw);
+  const awarded = new Map<string, string[]>();
+  awardHistoricalDivisions(awarded, ranked, safeSeason);
+  awardNamedCups(awarded, ranked.active, safeSeason);
+  return closeFrom(awarded, ranked.active);
 }
 
 /**
