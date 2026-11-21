@@ -172,8 +172,8 @@ watch(() => props.modelValue, (open) => {
     </template>
 
     <div v-if="success" class="py-6 text-center">
-      <p class="font-display text-lg font-black text-fg">Protokół czeka na sędziego</p>
-      <p class="mt-2 text-sm text-muted">Wynik nie wchodzi do tabeli, dopóki admin go nie zatwierdzi.</p>
+      <p class="font-display text-lg font-black text-fg">Protokół czeka na ocenę sędziego</p>
+      <p class="mt-2 text-sm text-muted">Wynik nie wchodzi do tabeli, dopóki Admin go nie zatwierdzi.</p>
     </div>
 
     <template v-else>

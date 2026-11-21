@@ -7,6 +7,8 @@
 
 import * as functions from "firebase-functions";
 import admin from "firebase-admin";
+import { getAuth } from "firebase-admin/auth";
+import { adminInstance, db } from "../database/connection.js";
 import { StatsEngine, type Player } from "../stats_engine/calculator.js";
 import { collectOfficialLeagueMatches, isBarrageMatch } from "../league/table.js";
 import {
@@ -17,23 +19,26 @@ import {
   type CupPlayedMatch,
   type CupTableRow,
 } from "../league/cupTable.js";
+import { countSeasonEnrollments } from "../league/signupProgress.js";
 
 export { isBarrageMatch };
 
-const getDb = () => {
-  if (!admin.apps.length) admin.initializeApp();
-  return admin.database();
-};
+/** Operacyjna RTDB (europe-west1). Pusta `initializeApp()` w Functions v2 nie zna databaseURL. */
+const getDb = () => db();
 
 const verifyAdmin = async (uid: string): Promise<boolean> => {
-  getDb();
-  const userRecord = await admin.auth().getUser(uid);
+  const userRecord = await getAuth(adminInstance()).getUser(uid);
   const email = (userRecord.email || "").toLowerCase();
-  const db = getDb();
-  const snap = await db.ref("settings/adminEmails").once("value");
-  const adminEmails: string[] = (snap.val() || []).map((e: string) =>
-    e.toLowerCase()
-  );
+  const snap = await getDb().ref("settings/adminEmails").once("value");
+  const raw = snap.val();
+  const entries = Array.isArray(raw)
+    ? raw
+    : raw && typeof raw === "object"
+      ? Object.values(raw as Record<string, unknown>)
+      : [];
+  const adminEmails = entries
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.toLowerCase());
   return adminEmails.includes(email);
 };
 
@@ -312,6 +317,19 @@ function dateField(value: unknown, name: string): string {
   return value;
 }
 
+/** 0 zostawia zapisy bez limitu. */
+function signupLimitField(value: unknown): number {
+  if (value === undefined || value === null || value === "") return 0;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 9999) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Limit zapisow musi byc liczba calkowita od 0 do 9999.",
+    );
+  }
+  return parsed;
+}
+
 // ---- updateSummerLeagueStatus -------------------------------------------
 
 export const updateSummerLeagueStatus = functions.https.onCall(async (request) => {
@@ -336,7 +354,7 @@ export const updateSocialStats = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError("invalid-argument", "Brak danych social media.");
   }
 
-  await getDb().ref("settings/socialStats").set({
+  await getDb().ref("settings/socialStats").update({
     facebook: socialField(data.facebook),
     tiktok: socialField(data.tiktok),
     discord: socialField(data.discord),
@@ -354,13 +372,40 @@ export const updateScheduleDates = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError("invalid-argument", "Brak dat harmonogramu.");
   }
 
-  await getDb().ref("settings/scheduleDates").set({
-    signupStart: dateField(data.signupStart, "signupStart"),
-    signupEnd: dateField(data.signupEnd, "signupEnd"),
-    leagueStart: dateField(data.leagueStart, "leagueStart"),
-    summerStart: dateField(data.summerStart, "summerStart"),
-  });
-  return { success: true, message: "Zapisano harmonogram!" };
+  try {
+    const database = getDb();
+    const signupLimit = signupLimitField(data.signupLimit);
+    const seasonSnap = await database.ref("settings/currentSeason").once("value");
+    const currentSeason = Number(seasonSnap.val());
+    const targetSeason = Number.isInteger(currentSeason) && currentSeason > 0 ? currentSeason + 1 : 0;
+    let enrolledCount = 0;
+    if (targetSeason > 0) {
+      const enrollSnap = await database.ref("enrollments").once("value");
+      enrolledCount = countSeasonEnrollments(enrollSnap.val(), targetSeason);
+    }
+
+    await database.ref("settings/scheduleDates").set({
+      signupStart: dateField(data.signupStart, "signupStart"),
+      signupEnd: dateField(data.signupEnd, "signupEnd"),
+      leagueStart: dateField(data.leagueStart, "leagueStart"),
+      summerStart: dateField(data.summerStart, "summerStart"),
+      signupLimit,
+      enrolledCount,
+      enrolledSeason: targetSeason,
+    });
+
+    if (targetSeason > 0) {
+      return {
+        success: true,
+        message: `Zapisano harmonogram! Zapisanych na sezon ${targetSeason}: ${enrolledCount}.`,
+      };
+    }
+    return { success: true, message: "Zapisano harmonogram!" };
+  } catch (error) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error("updateScheduleDates", error);
+    throw new functions.https.HttpsError("internal", "Nie udało się zapisać harmonogramu.");
+  }
 });
 
 // ---- generateLeagueSchedule (Round-Robin calej ligi) --------------------

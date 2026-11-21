@@ -72,6 +72,11 @@ function parseRows(value: unknown, sourcePath: ScheduleRow['sourcePath']): Sched
   }))
 }
 
+/** Gracz zapisuje `pending_result`. `pending_approval` zostaje dla starszych wpisów. */
+export function awaitsProtocolApproval(status: string | undefined): boolean {
+  return status === 'pending_result' || status === 'pending_approval'
+}
+
 /**
  * Jeden nasłuch na `schedule` i jeden na `cup/schedule`.
  * Radar, wyjątki, protokół i zaległości czytają ten sam snapshot.
@@ -85,7 +90,7 @@ export function useScheduleFeed() {
   const ready = computed(() => league.ready.value && cup.ready.value)
 
   const radar = computed(() =>
-    all.value.filter((match) => match.status === 'pending_approval' && match.pendingProtocol),
+    all.value.filter((match) => awaitsProtocolApproval(match.status) && match.pendingProtocol),
   )
 
   const exceptions = computed(() =>

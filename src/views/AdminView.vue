@@ -13,10 +13,37 @@ import AdminPuchar from '@/components/admin/AdminPuchar.vue'
 import AdminLato from '@/components/admin/AdminLato.vue'
 import AdminNewsy from '@/components/admin/AdminNewsy.vue'
 import AdminUstawienia from '@/components/admin/AdminUstawienia.vue'
+import { httpsCallable } from 'firebase/functions'
+import { getFunctionsClient } from '@/services/firebase'
+import { useToast } from '@/composables/useToast'
+import { errorText } from '@/utils/errorText'
 
 type AdminTab = 'zarzadzanie' | 'zawodnicy' | 'liga' | 'puchar' | 'lato' | 'newsy' | 'ustawienia'
 
 const activeTab = ref<AdminTab>('zarzadzanie')
+const { showToast } = useToast()
+
+/** Tymczasowy jednorazowy backfill Gabloty. Usunąć po przeliczeniu bazy. */
+const backfillRunning = ref(false)
+
+async function runTemporaryBackfill() {
+  if (backfillRunning.value) return
+  backfillRunning.value = true
+  try {
+    const backfill = httpsCallable<
+      Record<string, never>,
+      { success: boolean; message: string; players?: number }
+    >(getFunctionsClient(), 'backfillPlayerAchievements', { timeout: 300_000 })
+    const result = await backfill({})
+    console.log('[backfillPlayerAchievements]', result.data)
+    showToast(result.data.message || 'Przeliczono historię osiągnięć.', 'success', 12000)
+  } catch (error: unknown) {
+    console.log('[backfillPlayerAchievements] error', error)
+    showToast(errorText(error, 'Nie udało się przeliczyć historii osiągnięć.'), 'error', 12000)
+  } finally {
+    backfillRunning.value = false
+  }
+}
 
 const tabs: { key: AdminTab; label: string; icon: string }[] = [
   { key: 'zarzadzanie', label: 'Zarzadzanie', icon: '⚙️' },
@@ -44,6 +71,15 @@ const currentLabel = computed(() => tabs.find(t => t.key === activeTab.value)?.l
             {{ currentLabel }}
           </span>
         </div>
+        <button
+          type="button"
+          class="ml-auto shrink-0 rounded-xl px-4 py-2.5 font-display text-[11px] font-black uppercase tracking-widest text-black shadow-sm disabled:cursor-wait disabled:opacity-70"
+          style="background-color: #9BE22D"
+          :disabled="backfillRunning"
+          @click="runTemporaryBackfill"
+        >
+          {{ backfillRunning ? 'Przeliczanie historii...' : 'Tymczasowy: przelicz osiągnięcia' }}
+        </button>
       </div>
 
       <!-- Tab navigation -->

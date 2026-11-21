@@ -1200,6 +1200,37 @@ export const setDoubleWalkoverAdmin = functions.https.onCall(async (request) => 
   return { success: true, message: 'Obustronny walkower zapisany.' };
 });
 
+// ---- adminAwardCupWalkover (walkover jednego gracza w pucharze) ------------
+
+export const adminAwardCupWalkover = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid || !(await verifyAdmin(uid)))
+    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
+
+  const { matchId, walkoverPlayerId } = request.data ?? {};
+  if (typeof matchId !== 'string' || !matchId || typeof walkoverPlayerId !== 'string' || !walkoverPlayerId)
+    throw new functions.https.HttpsError('invalid-argument', 'Brak meczu albo gracza.');
+
+  const matchRef = db().ref(`cup/schedule/${matchId}`);
+  const match = (await matchRef.once('value')).val();
+  if (!match)
+    throw new functions.https.HttpsError('not-found', 'Mecz pucharu nie istnieje.');
+  if (match.p1Id !== walkoverPlayerId && match.p2Id !== walkoverPlayerId)
+    throw new functions.https.HttpsError('invalid-argument', 'Wskaż gracza z tego meczu.');
+
+  await matchRef.update({
+    isWalkover: true,
+    walkoverPlayerId,
+    isDoubleWO: false,
+    status: 'played',
+    isPlayed: true,
+    verified: true,
+    verifiedAt: Date.now(),
+  });
+
+  return { success: true, message: 'Walkover pucharu przyznany.' };
+});
+
 // ---- manageAdminEmails (Zarządzanie Uprawnieniami) ---------------------------
 
 export const manageAdminEmails = functions.https.onCall(async (request) => {

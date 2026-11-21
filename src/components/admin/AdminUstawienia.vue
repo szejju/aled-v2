@@ -10,13 +10,14 @@ import { apiArchiveCurrentSeason, manageAdminEmails, updateRules, updateSchedule
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import ArchiveSeasonModal from './shared/ArchiveSeasonModal.vue'
 import { errorText } from '@/utils/errorText'
-import { asRecord, optStr } from '@/utils/rtdb'
+import { asRecord, optNum, optStr } from '@/utils/rtdb'
 import { simpleMarkdown } from '@/utils/simpleMarkdown'
 
 const schedSignupStart = ref('')
 const schedSignupEnd = ref('')
 const schedLeagueStart = ref('')
 const schedSummerStart = ref('')
+const schedSignupLimit = ref<string | number>('')
 const schedMsg = ref('')
 const schedLoad = ref(false)
 
@@ -32,13 +33,27 @@ async function loadSched() {
     schedSignupEnd.value = optStr(data.signupEnd) ?? ''
     schedLeagueStart.value = optStr(data.leagueStart) ?? ''
     schedSummerStart.value = optStr(data.summerStart) ?? ''
+    const limit = optNum(data.signupLimit)
+    schedSignupLimit.value = limit != null && Number.isInteger(limit) && limit > 0 ? String(limit) : ''
   } catch (err: unknown) {
     schedMsg.value = errorText(err)
   }
 }
 
+function parseSignupLimit(value: string | number | null): number | null {
+  if (value == null || value === '') return 0
+  const parsed = typeof value === 'number' ? value : Number(value.trim())
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 9999) return null
+  return parsed
+}
+
 async function saveSched() {
   if (schedLoad.value) return
+  const signupLimit = parseSignupLimit(schedSignupLimit.value)
+  if (signupLimit == null) {
+    schedMsg.value = 'Blad: limit osob to liczba od 1 do 9999 albo puste pole.'
+    return
+  }
   schedLoad.value = true
   schedMsg.value = ''
   try {
@@ -47,6 +62,7 @@ async function saveSched() {
       signupEnd: schedSignupEnd.value,
       leagueStart: schedLeagueStart.value,
       summerStart: schedSummerStart.value,
+      signupLimit,
     })
     schedMsg.value = result.message
   } catch (err: unknown) {
@@ -195,6 +211,11 @@ onMounted(() => {
       <div><label class="label block text-muted mb-1">Koniec zapisow</label><input v-model="schedSignupEnd" type="date" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
       <div><label class="label block text-muted mb-1">Poczatek ligi</label><input v-model="schedLeagueStart" type="date" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
       <div><label class="label block text-muted mb-1">Poczatek ligi letniej</label><input v-model="schedSummerStart" type="date" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
+    </div>
+    <div class="mt-3 max-w-xs">
+      <label class="label block text-muted mb-1" for="signup-limit">Limit osob</label>
+      <input id="signup-limit" v-model="schedSignupLimit" type="number" min="1" max="9999" step="1" inputmode="numeric" placeholder="Bez limitu" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/>
+      <p class="mt-1 text-xs text-muted">Puste pole zostawia zapisy bez ograniczenia. Zapis przelicza licznik na stronie glownej.</p>
     </div>
     <button @click="saveSched" :disabled="schedLoad" class="mt-4 rounded-xl bg-blue-600 text-white px-6 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-blue-500 disabled:opacity-50">{{ schedLoad?'Zapisuje...':'Zapisz Daty' }}</button>
     <p v-if="schedMsg" :class="['text-sm font-bold mt-3',schedMsg.includes('Blad')?'text-red-400':'text-lime']">{{ schedMsg }}</p>

@@ -104,6 +104,16 @@
   body {
     @apply bg-ink font-sans text-fg antialiased;
   }
+  /*
+   * Native <select> popups on Windows ignore the page background and paint a
+   * light list, while options inherit `color: white` from the dark theme.
+   * An opaque option background keeps the opened list readable in both themes.
+   */
+  select option,
+  select optgroup {
+    background-color: var(--surface);
+    color: var(--fg);
+  }
   ::selection {
     background: var(--color-lime);
     color: var(--color-on-lime);

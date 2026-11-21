@@ -5,20 +5,17 @@
 // użytkownika musi znajdować się na liście `settings/adminEmails`.
 // ============================================================================
 
-import admin from "firebase-admin";
+import { getAuth } from "firebase-admin/auth";
+import { adminInstance, db } from "../database/connection.js";
 
-export const getDb = () => {
-  if (!admin.apps.length) admin.initializeApp();
-  return admin.database();
-};
+/** Baza operacyjna z `databaseURL` ustawionym w `connection.ts`. */
+export const getDb = () => db();
 
 export const verifyAdmin = async (uid: string): Promise<boolean> => {
-  getDb();
-  const userRecord = await admin.auth().getUser(uid);
+  const userRecord = await getAuth(adminInstance()).getUser(uid);
   const email = (userRecord.email || "").toLowerCase();
 
-  const db = getDb();
-  const snap = await db.ref("settings/adminEmails").once("value");
+  const snap = await db().ref("settings/adminEmails").once("value");
   const adminEmails: string[] = (snap.val() || []).map((e: string) =>
     e.toLowerCase()
   );

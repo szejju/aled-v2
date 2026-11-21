@@ -107,7 +107,13 @@ const socDiscord = ref('')
 const socTiktok = ref('')
 const socFacebook = ref('')
 const socMsg = ref('')
+const socOk = ref(false)
 const socLoad = ref(false)
+
+function socialInput(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return optStr(value) ?? ''
+}
 
 async function loadSoc() {
   try {
@@ -115,10 +121,11 @@ async function loadSoc() {
     const snap = await get(dbRef(db, 'settings/socialStats'))
     const data = asRecord(snap.val())
     if (!data) return
-    socDiscord.value = optStr(data.discord) ?? ''
-    socTiktok.value = optStr(data.tiktok) ?? ''
-    socFacebook.value = optStr(data.facebook) ?? ''
+    socDiscord.value = socialInput(data.discord)
+    socTiktok.value = socialInput(data.tiktok)
+    socFacebook.value = socialInput(data.facebook)
   } catch (err: unknown) {
+    socOk.value = false
     socMsg.value = errorText(err)
   }
 }
@@ -127,15 +134,18 @@ async function saveSoc() {
   if (socLoad.value) return
   socLoad.value = true
   socMsg.value = ''
+  socOk.value = false
   try {
     const result = await updateSocialStats({
       discord: socDiscord.value.trim() || 'Brak danych',
       tiktok: socTiktok.value.trim() || 'Brak danych',
       facebook: socFacebook.value.trim() || 'Brak danych',
     })
+    socOk.value = result.success === true
     socMsg.value = result.message
   } catch (err: unknown) {
     console.error('updateSocialStats', err)
+    socOk.value = false
     socMsg.value = errorText(err)
   } finally {
     socLoad.value = false
@@ -190,7 +200,7 @@ onMounted(() => {
       <div><label class="label block text-muted mb-1">TikTok</label><input v-model="socTiktok" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
       <div><label class="label block text-muted mb-1">Discord</label><input v-model="socDiscord" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
       <button @click="saveSoc" :disabled="socLoad" class="w-full rounded-xl bg-purple-600 text-white px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-purple-500 disabled:opacity-50">{{ socLoad?'Zapisuje...':'Zapisz Social Media' }}</button>
-      <p v-if="socMsg" :class="['text-sm font-bold text-center',socMsg.includes('Blad')?'text-red-400':'text-lime']">{{ socMsg }}</p>
+      <p v-if="socMsg" :class="['text-sm font-bold text-center', socOk ? 'text-lime' : 'text-red-400']">{{ socMsg }}</p>
     </div>
   </AdminSectionCard>
 

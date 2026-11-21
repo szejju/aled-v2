@@ -40,6 +40,17 @@ export function isBarrageDivision(div: string | undefined | null): boolean {
 }
 
 /**
+ * Dywizja, w której zawodnik realnie gra sezon.
+ * Pusta, poczekalnia i baraż nie są przypisaniem do tabeli.
+ */
+export function isPlayableDivision(div: string | undefined | null): boolean {
+  if (!div || !div.trim()) return false
+  if (div.toUpperCase().includes('POCZEKALNIA')) return false
+  if (isBarrageDivision(div)) return false
+  return extractDivisionNumber(div) !== ''
+}
+
+/**
  * Normalizuje identyfikator dywizji do porównań (usuwa prefiks "DYWIZJA",
  * spacje i podkreślniki, pozostawia sam numer lub oryginał).
  */

@@ -2,6 +2,16 @@
 import { ref, onMounted } from 'vue'
 import { getPlayersList, getDivisionTable, type DivisionTableResponse } from '@/services/api'
 
+/** Link do pełnej tabeli: numer dywizji i opcjonalna grupa, tak jak czyta je StandingsView. */
+const tableRoute = (name: string) => {
+  const div = name.match(/(\d+)/)?.[1]
+  const grupa = name.match(/GRUPA\s+([A-Z]+)/i)?.[1]?.toUpperCase()
+  const query: Record<string, string> = {}
+  if (div) query.div = div
+  if (grupa) query.grupa = grupa
+  return { name: 'standings' as const, query }
+}
+
 interface DivisionData {
   id: string
   name: string
@@ -80,10 +90,12 @@ onMounted(async () => {
       v-else-if="divisions.length"
       class="mt-5 grid grid-cols-1 gap-3 uppercase sm:grid-cols-2 xl:grid-cols-4"
     >
-      <article
+      <RouterLink
         v-for="division in divisions"
         :key="division.id"
-        class="rounded-2xl bg-surface-2 p-4"
+        :to="tableRoute(division.name)"
+        :aria-label="`Pełna tabela: ${division.name}`"
+        class="block min-w-0 rounded-2xl bg-surface-2 p-4 ring-1 ring-transparent transition hover:ring-lime/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime"
       >
         <h3 class="label text-accent">{{ division.name }}</h3>
         <ol class="mt-3 flex flex-col gap-1.5 text-sm tracking-wide">
@@ -96,7 +108,7 @@ onMounted(async () => {
             <b class="shrink-0 font-display tabular-nums">{{ leader.points }}</b>
           </li>
         </ol>
-      </article>
+      </RouterLink>
     </div>
 
     <!-- Brak danych -->

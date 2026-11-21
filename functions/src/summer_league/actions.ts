@@ -6,6 +6,7 @@
 
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+import { verifyAdmin } from "../admin/auth.js";
 import { db } from "../database/connection.js";
 import { checkoutProblem, parseAverage, shortLegMinimum } from "../matches/protocolRules.js";
 import {
@@ -440,6 +441,9 @@ function applyPlayedMatch(
   right.legsWon += legs2;
   right.legsLost += legs1;
 
+  // Obustronny walkover: mecz jest rozegrany, obie strony mają 0 punktów.
+  if (match.isDoubleWO === true) return;
+
   if (legs1 > legs2) left.points += WIN_POINTS;
   else if (legs2 > legs1) right.points += WIN_POINTS;
   else {
@@ -661,3 +665,131 @@ export const submitSummerMatchResult = onCall(
     }
   },
 );
+
+type SummerAdminAction = "result" | "walkover" | "double-walkover";
+
+/**
+ * Ręczny protokół Ligi Lato z panelu admina.
+ * Nadpisuje także mecz już rozliczony. Nie wymaga screena ani udziału admina w meczu.
+ * Zapis wyłącznie pod /summer_league, potem przeliczenie tabeli.
+ */
+export const adminSaveSummerProtocol = onCall(
+  { cors: true },
+  async (request): Promise<{ success: true; message: string }> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Brak autoryzacji.");
+    if (!(await verifyAdmin(uid))) {
+      throw new HttpsError("permission-denied", "Brak uprawnień admina.");
+    }
+
+    const data = asRecord(request.data);
+    const matchId = summerMatchKey(data?.matchId);
+    if (!matchId) {
+      throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
+    }
+    const action = data?.action;
+    if (action !== "result" && action !== "walkover" && action !== "double-walkover") {
+      throw new HttpsError("invalid-argument", "Nieznana operacja protokołu Ligi Lato.");
+    }
+
+    try {
+      const database = db();
+      const matchRef = database.ref(`${SUMMER_ROOT}/schedule/${matchId}`);
+      const [settingsSnap, matchSnap] = await Promise.all([
+        database.ref(`${SUMMER_ROOT}/settings`).once("value"),
+        matchRef.once("value"),
+      ]);
+      const match = asRecord(matchSnap.val());
+      if (!match) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+      const p1 = text(match.p1Id);
+      const p2 = text(match.p2Id);
+      if (!p1 || !p2 || p1 === p2) {
+        throw new HttpsError("failed-precondition", "Mecz Ligi Lato nie ma obu graczy.");
+      }
+
+      const patch = summerAdminPatch(action, data, match, settingsSnap.val(), uid, p1, p2);
+      await matchRef.update(patch);
+      await recalculateSummerStandings(database);
+      const message = action === "result"
+        ? "Protokół Ligi Lato zapisany."
+        : action === "walkover"
+          ? "Walkover Ligi Lato przyznany."
+          : "Obustronny walkover Ligi Lato zapisany.";
+      return { success: true, message };
+    } catch (error: unknown) {
+      rethrow(error, "Nie udało się zapisać protokołu Ligi Lato.");
+    }
+  },
+);
+
+function summerAdminPatch(
+  action: SummerAdminAction,
+  data: Record<string, unknown> | null,
+  match: Record<string, unknown>,
+  settingsRaw: unknown,
+  uid: string,
+  p1: string,
+  p2: string,
+): Record<string, unknown> {
+  const stamp = {
+    timestamp: admin.database.ServerValue.TIMESTAMP,
+    submittedBy: uid,
+    pendingProtocol: null,
+  };
+  if (action === "double-walkover") {
+    return {
+      ...stamp,
+      status: "played",
+      score1: 0,
+      score2: 0,
+      isDoubleWO: true,
+      isWalkover: false,
+      walkoverPlayerId: null,
+      p1Stats: null,
+      p2Stats: null,
+    };
+  }
+  if (action === "walkover") {
+    const winner = text(data?.walkoverPlayerId);
+    if (winner !== p1 && winner !== p2) {
+      throw new HttpsError("invalid-argument", "Wskaż gracza z tego meczu.");
+    }
+    return {
+      ...stamp,
+      status: "played",
+      isWalkover: true,
+      isDoubleWO: false,
+      walkoverPlayerId: winner,
+      score1: null,
+      score2: null,
+      p1Stats: null,
+      p2Stats: null,
+    };
+  }
+
+  const settings = asRecord(settingsRaw);
+  const format = resolveSummerMatchFormat(
+    match.matchFormat,
+    settings?.matchFormat,
+    match.bestOf,
+    settings?.bestOf,
+  );
+  const legA = wholeNumber(data?.score1, 0, 99);
+  const legB = wholeNumber(data?.score2, 0, 99);
+  if (legA === null || legB === null) {
+    throw new HttpsError("invalid-argument", "Podaj liczbę legów obu graczy (0–99).");
+  }
+  const scoreProblem = summerLegScoreProblem(legA, legB, format);
+  if (scoreProblem) throw new HttpsError("invalid-argument", scoreProblem);
+  return {
+    ...stamp,
+    status: "played",
+    score1: legA,
+    score2: legB,
+    p1Stats: readSideStats(data?.p1Stats, legA, "Pierwszy gracz"),
+    p2Stats: readSideStats(data?.p2Stats, legB, "Drugi gracz"),
+    isWalkover: false,
+    isDoubleWO: false,
+    walkoverPlayerId: null,
+  };
+}

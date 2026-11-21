@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import HeroSection from '@/components/home/HeroSection.vue'
 import MatchOfTheDay from '@/components/home/MatchOfTheDay.vue'
@@ -11,7 +11,7 @@ import NewsCarousel from '@/components/home/NewsCarousel.vue'
 import JoinCta from '@/components/home/JoinCta.vue'
 import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
 import MatchCompareModal, { type CompareMatchInput } from '@/components/home/MatchCompareModal.vue'
-import { getSocialStats, type ScheduleMatch, type SocialStats } from '@/services/api'
+import { subscribeSocialStats, type ScheduleMatch, type SocialStats } from '@/services/api'
 import type { Match } from '@/data/league'
 import { getDatabaseClient } from '@/services/firebase'
 import { buildHomeMatchLists } from '../../functions/src/league/upcoming.ts'
@@ -20,6 +20,20 @@ import { buildHomeMatchLists } from '../../functions/src/league/upcoming.ts'
 const matchesLoading = ref(false)
 const recentResults = ref<ScheduleMatch[]>([])
 const upcomingMatches = ref<ScheduleMatch[]>([])
+
+const socialLinks = {
+  discord: 'https://discord.com/invite/RU4RZUTZZU',
+  tiktok: 'https://www.tiktok.com/@aledarts4',
+  facebook: 'https://www.facebook.com/profile.php?id=61573328798869',
+}
+
+const socialStats = ref<SocialStats>({
+  discord: 'Brak danych',
+  tiktok: 'Brak danych',
+  facebook: 'Brak danych',
+})
+
+let stopSocialStats: (() => void) | undefined
 
 onMounted(async () => {
   try {
@@ -38,13 +52,14 @@ onMounted(async () => {
     matchesLoading.value = false
   }
 
-  // Pobieranie statystyk społecznościowych
-  try {
-    const stats = await getSocialStats()
+  stopSocialStats = subscribeSocialStats((stats) => {
     socialStats.value = stats
-  } catch {
-    // zostawiamy domyślne wartości
-  }
+  })
+})
+
+onUnmounted(() => {
+  stopSocialStats?.()
+  stopSocialStats = undefined
 })
 
 /* ─── Modal szczegółów meczu ───────────────────────────────────── */
@@ -86,18 +101,6 @@ const openCompare = (match: Match | ScheduleMatch) => {
   }
 }
 
-/* ─── Kafelek Społeczność ──────────────────────────────────────── */
-const socialLinks = {
-  discord: 'https://discord.com/invite/RU4RZUTZZU',
-  tiktok: 'https://www.tiktok.com/@aledarts4',
-  facebook: 'https://www.facebook.com/profile.php?id=61573328798869',
-}
-
-const socialStats = ref<SocialStats>({
-  discord: 'Brak danych',
-  tiktok: 'Brak danych',
-  facebook: 'Brak danych',
-})
 </script>
 
 <template>

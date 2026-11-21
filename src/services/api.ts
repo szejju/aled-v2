@@ -6,9 +6,10 @@
 // `functions/src/views/*.ts`. Odpowiadają one 1:1 zwracanym strukturom.
 // ============================================================================
 
+import { get, onValue, ref } from 'firebase/database'
 import { httpsCallable } from 'firebase/functions'
 import type { PlayerAchievements } from '../utils/achievementsCatalog'
-import { getFunctionsClient } from './firebase'
+import { getDatabaseClient, getFunctionsClient } from './firebase'
 
 // ─── Typy wspólne ────────────────────────────────────────────────────────────
 
@@ -881,6 +882,33 @@ export const setDoubleWalkoverAdmin = makeCallable<
   { success: boolean; message: string }
 >('setDoubleWalkoverAdmin')
 
+export interface AwardCupWalkoverPayload {
+  matchId: string
+  walkoverPlayerId: string
+}
+
+/** Walkover jednego gracza w meczu pucharowym. */
+export const adminAwardCupWalkover = makeCallable<
+  AwardCupWalkoverPayload,
+  { success: boolean; message: string }
+>('adminAwardCupWalkover')
+
+export interface AdminSummerProtocolPayload {
+  matchId: string
+  action: 'result' | 'walkover' | 'double-walkover'
+  score1?: number
+  score2?: number
+  walkoverPlayerId?: string
+  p1Stats?: Record<string, unknown>
+  p2Stats?: Record<string, unknown>
+}
+
+/** Ręczny protokół Ligi Lato. Zapis i tabela zostają w /summer_league. */
+export const adminSaveSummerProtocol = makeCallable<
+  AdminSummerProtocolPayload,
+  { success: boolean; message: string }
+>('adminSaveSummerProtocol')
+
 // ─── awardWalkover (walkower jednego gracza, terminarz ligowy) ──────────────
 
 export interface AwardWalkoverPayload {
@@ -1116,6 +1144,8 @@ export interface UpdateScheduleDatesPayload {
   signupEnd?: string
   leagueStart?: string
   summerStart?: string
+  /** 0 albo puste pole w panelu oznacza brak limitu. */
+  signupLimit?: number
 }
 
 export const updateScheduleDates = makeCallable<
@@ -1166,12 +1196,44 @@ export interface SocialStats {
   facebook: string
 }
 
+const SOCIAL_EMPTY = 'Brak danych'
+
+function socialLabel(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return SOCIAL_EMPTY
+}
+
+/** Normalizuje węzeł `settings/socialStats` do trzech etykiet na kafelku. */
+export function normalizeSocialStats(value: unknown): SocialStats {
+  const row = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  return {
+    discord: socialLabel(row.discord),
+    tiktok: socialLabel(row.tiktok),
+    facebook: socialLabel(row.facebook),
+  }
+}
+
 /**
  * Pobiera statystyki społeczności (Discord, TikTok, Facebook) z RTDB.
  * Ścieżka: settings/socialStats
  */
 export const getSocialStats = async (): Promise<SocialStats> => {
-  const { getDatabase, ref, get } = await import('firebase/database')
-  const snap = await get(ref(getDatabase(), 'settings/socialStats'))
-  return snap.val() || { discord: 'Brak danych', tiktok: 'Brak danych', facebook: 'Brak danych' }
+  const snap = await get(ref(getDatabaseClient(), 'settings/socialStats'))
+  return normalizeSocialStats(snap.val())
+}
+
+/** Nasłuch `settings/socialStats`. Zwraca funkcję zdejmującą listener. */
+export function subscribeSocialStats(
+  onData: (stats: SocialStats) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  return onValue(
+    ref(getDatabaseClient(), 'settings/socialStats'),
+    (snap) => onData(normalizeSocialStats(snap.val())),
+    (error) => onError?.(error),
+  )
 }

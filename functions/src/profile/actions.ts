@@ -7,6 +7,11 @@ import { onCall } from "firebase-functions/v2/https";
 import { db } from "../database/connection.js";
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import {
+  countSeasonEnrollments,
+  enrollmentSeason,
+  raiseSignupCount,
+} from "../league/signupProgress.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const OPEN_CUP_STATUSES = new Set(["open", "registration"]);
@@ -27,6 +32,13 @@ function warsawToday(): string {
 
 function asIsoDate(value: unknown): string {
   return typeof value === "string" && ISO_DATE.test(value) ? value : "";
+}
+
+/** 0 oznacza brak limitu. Zła wartość nie zamyka zapisów. */
+function readSignupLimit(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 9999) return 0;
+  return parsed;
 }
 
 /** Okno z `settings/scheduleDates`. Puste daty oznaczają, że admin nie otworzył zapisów. */
@@ -150,7 +162,11 @@ export const enrollForNextSeason = onCall(
         throw new functions.https.HttpsError("failed-precondition", "Nie ustawiono bieżącego sezonu.");
       }
 
-      const dates = datesSnap.val() as { signupStart?: unknown; signupEnd?: unknown } | null;
+      const dates = datesSnap.val() as {
+        signupStart?: unknown;
+        signupEnd?: unknown;
+        signupLimit?: unknown;
+      } | null;
       const signupStart = asIsoDate(dates?.signupStart);
       const signupEnd = asIsoDate(dates?.signupEnd);
       const today = warsawToday();
@@ -166,16 +182,44 @@ export const enrollForNextSeason = onCall(
       }
 
       const targetSeason = currentSeason + 1;
+      const limit = readSignupLimit(dates?.signupLimit);
       const text = (value: unknown) => (typeof value === "string" ? value : "");
-      await database.ref(`players/${player.id}`).update({ enrolledSeason: targetSeason });
-      await database.ref(`enrollments/${player.id}`).set({
+      const entry = {
         playerId: player.id,
         season: targetSeason,
         firstName: text(player.data.firstName),
         lastName: text(player.data.lastName),
         nick: text(player.data.nick),
         enrolledAt: admin.database.ServerValue.TIMESTAMP,
+      };
+
+      // Cały węzeł, bo limit i powtórny zapis muszą widzieć cudze zgłoszenia.
+      const tx = await database.ref("enrollments").transaction((current: unknown) => {
+        if (current != null && (typeof current !== "object" || Array.isArray(current))) {
+          return undefined;
+        }
+        const rows = { ...((current ?? {}) as Record<string, unknown>) };
+        if (enrollmentSeason(rows[player.id]) === targetSeason) return current;
+        const taken = countSeasonEnrollments(rows, targetSeason);
+        if (limit > 0 && taken >= limit) return undefined;
+        rows[player.id] = entry;
+        return rows;
       });
+
+      if (enrollmentSeason(tx.snapshot.child(player.id).val()) !== targetSeason) {
+        const raw = tx.snapshot.val();
+        if (raw != null && (typeof raw !== "object" || Array.isArray(raw))) {
+          throw new functions.https.HttpsError("internal", "Nie udało się zapisać na sezon.");
+        }
+        throw new functions.https.HttpsError("resource-exhausted", "Lista zapisów na kolejny sezon jest pełna.");
+      }
+
+      await raiseSignupCount(
+        database,
+        targetSeason,
+        countSeasonEnrollments(tx.snapshot.val(), targetSeason),
+      );
+      await database.ref(`players/${player.id}`).update({ enrolledSeason: targetSeason });
 
       return { ok: true, message: `Zapisano na sezon ${targetSeason}`, targetSeason };
     } catch (error: unknown) {

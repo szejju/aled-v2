@@ -39,8 +39,9 @@ export function useProtocolScreens(source: {
     else isUploading2.value = false
   }
 
-  async function upload(event: Event, screenNum: 1 | 2) {
-    const target = event.target as HTMLInputElement
+  async function upload(screenNum: 1 | 2, event: Event) {
+    const target = event.target
+    if (!(target instanceof HTMLInputElement)) return
     const file = target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) {

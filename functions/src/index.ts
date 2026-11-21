@@ -43,6 +43,7 @@ export {
   forceMatchDateAdmin,
   archiveCurrentSeason,
   setDoubleWalkoverAdmin,
+  adminAwardCupWalkover,
   // cupActions.ts
   setCupStatusAdmin,
   // rewardsActions.ts
@@ -113,5 +114,5 @@ export {
 } from "./polls/index.js";
 
 // ─── Liga Lato (izolowany węzeł /summer_league) ──────────────────────────────
-export { registerForSummerLeague, submitSummerMatchResult } from "./summer_league/actions.js";
+export { registerForSummerLeague, submitSummerMatchResult, adminSaveSummerProtocol } from "./summer_league/actions.js";
 export { getSummerPlayerStats } from "./summer_league/stats.js";

@@ -10,7 +10,8 @@ import AchievementCabinet from '@/components/player/AchievementCabinet.vue'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import ViewDartcounterModal from '@/components/profile/ViewDartcounterModal.vue'
 import { getPlayersList, type PlayerListItem } from '@/services/api'
-import { formatDivisionName } from '@/utils/divisions'
+import { flag } from '@/utils/rtdb'
+import { formatDivisionName, isPlayableDivision } from '@/utils/divisions'
 
 type FormResult = 'W' | 'D' | 'L' | 'N'
 
@@ -104,6 +105,35 @@ const isAllActive = computed(() => !selectedMainDiv.value)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const players = ref<PlayerListItem[]>([])
+const playerQuery = ref('')
+
+const POLISH_FOLDS: Record<string, string> = {
+  ą: 'a',
+  ć: 'c',
+  ę: 'e',
+  ł: 'l',
+  ń: 'n',
+  ó: 'o',
+  ś: 's',
+  ź: 'z',
+  ż: 'z',
+}
+
+/** Porównanie bez wielkości liter i polskich znaków. */
+function foldName(value: string): string {
+  return value
+    .toLocaleLowerCase('pl')
+    .replace(/[ąćęłńóśźż]/g, (char) => POLISH_FOLDS[char] ?? char)
+}
+
+/**
+ * Publiczna lista: aktywny zawodnik w grywalnej dywizji.
+ * Zdyskwalifikowani oraz osoby bez dywizji, z poczekalni i z baraży zostają poza listą.
+ */
+function staysOnRoster(player: PlayerListItem): boolean {
+  if (flag(player.isDisqualified)) return false
+  return isPlayableDivision(player.div)
+}
 
 const setDivision = (divId: string) => {
   selectedMainDiv.value = divId
@@ -124,7 +154,24 @@ const setAll = () => {
   selectedGroup.value = null
 }
 
-const filteredPlayers = computed(() => players.value)
+const filteredPlayers = computed(() => {
+  const query = foldName(playerQuery.value).replace(/\s+/g, ' ').trim()
+  return players.value.filter((player) => {
+    if (!staysOnRoster(player)) return false
+    if (!query) return true
+    const first = foldName(player.firstName ?? '')
+    const last = foldName(player.lastName ?? '')
+    const full = `${first} ${last}`
+    const reversed = `${last} ${first}`
+    return first.includes(query) || last.includes(query) || full.includes(query) || reversed.includes(query)
+  })
+})
+
+const emptyMessage = computed(() =>
+  playerQuery.value.trim()
+    ? 'Brak zawodników o takim imieniu lub nazwisku'
+    : 'Brak zawodników w tej dywizji',
+)
 
 const fetchPlayers = async () => {
   loading.value = true
@@ -289,6 +336,17 @@ function openDcModal(name: string, dartcounter: string) {
       >
         {{ div.label }}
       </button>
+      <label class="relative ml-auto min-w-48 flex-1 sm:max-w-xs">
+        <span class="sr-only">Szukaj zawodnika po imieniu lub nazwisku</span>
+        <input
+          v-model="playerQuery"
+          type="search"
+          enterkeyhint="search"
+          placeholder="SZUKAJ ZAWODNIKA"
+          autocomplete="off"
+          class="w-full rounded-full border border-line bg-surface-2 px-4 py-2 text-sm text-fg placeholder:text-muted/70 transition focus:border-lime/60 focus:outline-none focus:ring-2 focus:ring-lime/20"
+        />
+      </label>
     </nav>
 
     <!-- Drugi rząd – Grupy -->
@@ -322,7 +380,7 @@ function openDcModal(name: string, dartcounter: string) {
 
     <!-- Brak zawodników -->
     <div v-else-if="filteredPlayers.length === 0" class="bento py-20 text-center text-muted font-bold">
-      Brak zawodników w tej dywizji
+      {{ emptyMessage }}
     </div>
 
 

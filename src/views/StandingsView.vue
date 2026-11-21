@@ -10,6 +10,7 @@
  *  - config stref awansu / baraży / spadku
  */
 import { computed, ref, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import {
   getDivisionTable,
@@ -57,6 +58,22 @@ const mainDivisions = computed<{ id: string; label: string }[]>(() => {
 const selectedMainDiv = ref('')
 const selectedGroup = ref<string | null>(null)
 
+const route = useRoute()
+const router = useRouter()
+
+const queryValue = (value: unknown): string => {
+  const raw = Array.isArray(value) ? value[0] : value
+  return typeof raw === 'string' ? raw : ''
+}
+
+/** Dywizja i grupa z adresu, np. /tabela?div=2&grupa=A. */
+const queryDivision = (): { div: string; group: string | null } | null => {
+  const div = queryValue(route.query.div)
+  if (!div) return null
+  const group = queryValue(route.query.grupa).toUpperCase()
+  return { div, group: group || null }
+}
+
 /** Grupy dostępne w ramach wybranej głównej dywizji. */
 const availableGroups = computed<{ id: string; label: string }[]>(() => {
   if (!selectedMainDiv.value) return []
@@ -86,6 +103,41 @@ const resolvedDivisionId = computed<string>(() => {
   return found ? found.id : mainId
 })
 
+/** Ustawia dywizję i grupę. Nieznana grupa spada na pierwszą dostępną. */
+const pickDivision = (divId: string, groupId: string | null): boolean => {
+  if (!mainDivisions.value.some((d) => d.id === divId)) return false
+  selectedMainDiv.value = divId
+  const groups = availableGroups.value
+  if (groupId && groups.some((g) => g.id === groupId)) {
+    selectedGroup.value = groupId
+  } else if (groups.length > 0) {
+    selectedGroup.value = groups[0].id
+  } else {
+    selectedGroup.value = null
+  }
+  return true
+}
+
+/** Adres trzyma ten sam wybór, co zakładki. Bez tego powrót z kafelka nadpisuje kliknięcie. */
+const syncQuery = () => {
+  const next: Record<string, string> = {}
+  if (selectedMainDiv.value) next.div = selectedMainDiv.value
+  if (selectedGroup.value) next.grupa = selectedGroup.value
+  const currentDiv = queryValue(route.query.div)
+  const currentGroup = queryValue(route.query.grupa).toUpperCase()
+  if (currentDiv === next.div && currentGroup === (next.grupa ?? '')) return
+  router.replace({ name: 'standings', query: next })
+}
+
+const applyQueryDivision = () => {
+  const fromQuery = queryDivision()
+  if (fromQuery && pickDivision(fromQuery.div, fromQuery.group)) return
+  // Brak parametru (wejście na /tabela albo klik „Tabela” w menu) wraca do pierwszej dywizji.
+  if (mainDivisions.value.length > 0) {
+    pickDivision(mainDivisions.value[0].id, null)
+  }
+}
+
 /** Dynamicznie odkrywa wszystkie dywizje, odrzuca POCZEKALNIA i sortuje */
 onMounted(async () => {
   try {
@@ -100,12 +152,7 @@ onMounted(async () => {
       return na - nb || a.localeCompare(b)
     })
     allRawDivisions.value = uniqueDivs.map((id) => ({ id, label: id }))
-
-    // Ustaw domyślnie pierwszą główną dywizję
-    if (mainDivisions.value.length > 0) {
-      selectedMainDiv.value = mainDivisions.value[0].id
-      fetchTable()
-    }
+    applyQueryDivision()
   } catch { /* fallback */ }
 })
 
@@ -123,17 +170,13 @@ const config = ref<DivisionConfig | null>(null)
 const penalties = ref<DivisionPenalty[]>([])
 
 const setDivision = (divId: string) => {
-  selectedMainDiv.value = divId
-  // Auto-wybór pierwszej grupy, jeśli dywizja ma grupy
-  if (availableGroups.value.length > 0) {
-    selectedGroup.value = availableGroups.value[0].id
-  } else {
-    selectedGroup.value = null
-  }
+  if (!pickDivision(divId, null)) return
+  syncQuery()
 }
 
 const setGroup = (groupId: string | null) => {
   selectedGroup.value = groupId
+  syncQuery()
 }
 
 const activeDivision = computed(() => {
@@ -173,6 +216,15 @@ const fetchTable = async () => {
 
 // Pobranie przy montowaniu + reakcja na zmianę dywizji lub grupy.
 watch(resolvedDivisionId, fetchTable)
+
+// Wejście z kafelka liderów (/tabela?div=2&grupa=A) i cofanie w historii.
+watch(
+  () => [queryValue(route.query.div), queryValue(route.query.grupa)] as const,
+  () => {
+    if (!allRawDivisions.value.length) return
+    applyQueryDivision()
+  },
+)
 
 /* ------------------------------------------------------------------ *
  *  Pomocnicze renderowania
