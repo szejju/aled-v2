@@ -17,6 +17,7 @@ import {
   type CurrentMatchData,
 } from "../league/playerAchievements.js";
 import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.js";
+import { chosenWalkoverMargin, CUP_WALKOVER_SETS, scoresForWinner } from "../league/walkover.js";
 import { buildSummerStandings } from "../summer_league/actions.js";
 import { summerMatchKey } from "../summer_league/scoreRules.js";
 
@@ -178,6 +179,24 @@ export const rejectMatchResult = functions.https.onCall(async (request) => {
   }
 });
 
+/** Średnia zgłoszona przy weryfikacji: liczba z zakresu protokołu, powyżej zera. */
+function readDeclaredAverage(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const numeric = typeof value === "number"
+    ? value
+    : Number(String(value).trim().replace(",", "."));
+  if (!Number.isFinite(numeric) || numeric <= 0 || numeric > 167) {
+    throw new functions.https.HttpsError("invalid-argument", "Nieprawidłowa średnia.");
+  }
+  return Math.round(numeric * 100) / 100;
+}
+
+function staysInWaitingRoom(div: unknown): boolean {
+  if (typeof div !== "string") return true;
+  const normalized = div.trim().toUpperCase();
+  return normalized === "" || normalized.includes("POCZEKALNIA");
+}
+
 // ---- verifyPlayerFeature --------------------------------------------------
 
 export const verifyPlayerFeature = functions.https.onCall(async (request) => {
@@ -198,6 +217,12 @@ export const verifyPlayerFeature = functions.https.onCall(async (request) => {
   if (!playerId || !feature)
     throw new functions.https.HttpsError("invalid-argument", "Brakujące dane.");
 
+  const needsAverage = (feature === "avg" && action === "approve") || feature === "all" || feature === "manual";
+  const parsedAvg = needsAverage ? readDeclaredAverage(declaredAvg) : undefined;
+  if (needsAverage && parsedAvg === undefined) {
+    throw new functions.https.HttpsError("invalid-argument", "Podaj średnią zgłoszoną przez gracza.");
+  }
+
   const database = db();
 
   try {
@@ -206,11 +231,19 @@ export const verifyPlayerFeature = functions.https.onCall(async (request) => {
     if (!snap.exists())
       throw new functions.https.HttpsError("not-found", "Gracz nie istnieje.");
 
+    const player = snap.val() as { div?: unknown };
     const updates: Record<string, unknown> = {};
+    const admit = () => {
+      updates["isVerified"] = true;
+      updates["verifyAvg"] = "verified";
+      updates["verifyCam"] = "verified";
+      updates["declaredAvg"] = parsedAvg;
+      if (staysInWaitingRoom(player.div)) updates["div"] = "POCZEKALNIA";
+    };
 
     if (feature === "avg" && action === "approve") {
       updates["verifyAvg"] = "verified";
-      if (declaredAvg !== undefined) updates["declaredAvg"] = declaredAvg;
+      updates["declaredAvg"] = parsedAvg;
     } else if (feature === "avg" && action === "reject") {
       updates["verifyAvg"] = "rejected";
       updates["verifyAvgScreen"] = null;
@@ -219,20 +252,20 @@ export const verifyPlayerFeature = functions.https.onCall(async (request) => {
     } else if (feature === "cam" && action === "reject") {
       updates["verifyCam"] = "rejected";
       updates["verifyCamScreen"] = null;
-    } else if (feature === "all") {
-      updates["isVerified"] = true;
-      updates["verifyAvg"] = "verified";
-      updates["verifyCam"] = "verified";
-      if (declaredAvg !== undefined) updates["declaredAvg"] = declaredAvg;
-    } else if (feature === "manual") {
-      updates["isVerified"] = true;
-      updates["verifyAvg"] = "verified";
-      updates["verifyCam"] = "verified";
-      if (declaredAvg !== undefined) updates["declaredAvg"] = declaredAvg;
+    } else if (feature === "all" || feature === "manual") {
+      admit();
+    } else {
+      throw new functions.https.HttpsError("invalid-argument", "Nieznana operacja weryfikacji.");
     }
 
     await playerRef.update(updates);
-    return { success: true, message: "Operacja na weryfikacji zakończona sukcesem." };
+    const passed = feature === "all" || feature === "manual";
+    return {
+      success: true,
+      message: passed
+        ? "Gracz przeszedł weryfikację i jest w poczekalni."
+        : "Operacja na weryfikacji zakończona sukcesem.",
+    };
   } catch (error: any) {
     throw new functions.https.HttpsError(
       error.code || "internal",
@@ -1207,9 +1240,12 @@ export const adminAwardCupWalkover = functions.https.onCall(async (request) => {
   if (!uid || !(await verifyAdmin(uid)))
     throw new functions.https.HttpsError('permission-denied', 'Brak uprawnień.');
 
-  const { matchId, walkoverPlayerId } = request.data ?? {};
+  const { matchId, walkoverPlayerId, walkoverScore } = request.data ?? {};
   if (typeof matchId !== 'string' || !matchId || typeof walkoverPlayerId !== 'string' || !walkoverPlayerId)
     throw new functions.https.HttpsError('invalid-argument', 'Brak meczu albo gracza.');
+  const sets = chosenWalkoverMargin(walkoverScore, CUP_WALKOVER_SETS);
+  if (sets === null)
+    throw new functions.https.HttpsError('invalid-argument', 'Wybierz wynik setów: 2:0, 3:0 albo 4:0.');
 
   const matchRef = db().ref(`cup/schedule/${matchId}`);
   const match = (await matchRef.once('value')).val();
@@ -1217,6 +1253,8 @@ export const adminAwardCupWalkover = functions.https.onCall(async (request) => {
     throw new functions.https.HttpsError('not-found', 'Mecz pucharu nie istnieje.');
   if (match.p1Id !== walkoverPlayerId && match.p2Id !== walkoverPlayerId)
     throw new functions.https.HttpsError('invalid-argument', 'Wskaż gracza z tego meczu.');
+
+  const scores = scoresForWinner(match.p1Id, walkoverPlayerId, sets);
 
   await matchRef.update({
     isWalkover: true,
@@ -1226,9 +1264,22 @@ export const adminAwardCupWalkover = functions.https.onCall(async (request) => {
     isPlayed: true,
     verified: true,
     verifiedAt: Date.now(),
+    timestamp: admin.database.ServerValue.TIMESTAMP,
+    score1: scores.score1,
+    score2: scores.score2,
+    legs1: 0,
+    legs2: 0,
+    pendingProtocol: null,
+    p1Stats: null,
+    p2Stats: null,
   });
 
-  return { success: true, message: 'Walkover pucharu przyznany.' };
+  if (match.isKnockout === true) {
+    const fresh = (await matchRef.once('value')).val();
+    await processKnockoutAdvancement(db(), matchId, fresh);
+  }
+
+  return { success: true, message: `Walkover pucharu ${sets}:0 przyznany.` };
 });
 
 // ---- manageAdminEmails (Zarządzanie Uprawnieniami) ---------------------------

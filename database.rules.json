@@ -49,6 +49,13 @@
       ".read": "auth != null",
       ".write": false
     },
+    "notifications": {
+      ".indexOn": ["playerId"],
+      ".read": "auth != null && query.orderByChild == 'playerId' && query.equalTo != null && ((root.child('players').child(query.equalTo).child('uid').val() === auth.uid && root.child('players').child(query.equalTo).child('uid').val() != null) || (auth.token.email != null && root.child('players').child(query.equalTo).child('email').val() === auth.token.email))",
+      "$notifId": {
+        ".write": "auth != null && data.exists() && ((root.child('players').child(data.child('playerId').val()).child('uid').val() === auth.uid && root.child('players').child(data.child('playerId').val()).child('uid').val() != null) || (auth.token.email != null && root.child('players').child(data.child('playerId').val()).child('email').val() === auth.token.email)) && ((newData.exists() && newData.child('read').val() === true && newData.child('playerId').val() === data.child('playerId').val() && newData.child('title').val() === data.child('title').val() && newData.child('message').val() === data.child('message').val() && newData.child('createdAt').val() === data.child('createdAt').val() && newData.child('sentBy').val() === data.child('sentBy').val()) || (!newData.exists() && data.child('read').val() === true))"
+      }
+    },
 
     "settings": {
       ".write": "auth != null && auth.token.admin == true",

@@ -3,6 +3,8 @@
  * Ta sama funkcja zasila Cloud Function i widok, żeby lista nie wracała do mocka.
  */
 
+import { isSingleWalkover, listedScore } from "./walkover.js";
+
 export interface ListedMatch {
   id: string
   div?: string
@@ -15,6 +17,8 @@ export interface ListedMatch {
   score1?: number
   score2?: number
   isDoubleWO?: boolean
+  isWalkover?: boolean
+  walkoverPlayerId?: string
   isPlayoff?: boolean
   badgeState: 'finished' | 'scheduled' | 'exception' | 'in_negotiation' | 'upcoming'
   hasScore: boolean
@@ -46,9 +50,13 @@ interface RawFixture {
   score1?: number | null
   score2?: number | null
   isDoubleWO?: boolean
+  isWalkover?: boolean
+  walkoverPlayerId?: string
+  bestOf?: unknown
   isPlayoff?: boolean
   status?: string
   timestamp?: number | null
+  verifiedAt?: number | null
   proposedDate?: string | null
   proposedTime?: string | null
   date?: string | null
@@ -76,14 +84,22 @@ function polishDate(value: string): string {
 
 const OFFICIAL_RESULT_STATUSES = new Set(['played', 'approved'])
 
-/** Czas, w którym admin zamknął protokół. Inne statusy mają `timestamp` z generowania terminarza. */
+function positiveStamp(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
+}
+
+/**
+ * Czas zamknięcia protokołu. Zwykły wynik bierze `timestamp` przy statusie played/approved.
+ * Walkover jednego gracza, zapisany zanim doszedł wynik, bierze `verifiedAt`.
+ */
 function acceptanceStamp(match: RawFixture): number | undefined {
   const status = (match.status ?? '').trim().toLowerCase()
-  if (!OFFICIAL_RESULT_STATUSES.has(status)) return undefined
-  if (typeof match.timestamp !== 'number' || !Number.isFinite(match.timestamp) || match.timestamp <= 0) {
-    return undefined
-  }
-  return match.timestamp
+  const closedAt = positiveStamp(match.timestamp)
+  if (OFFICIAL_RESULT_STATUSES.has(status) && closedAt !== undefined) return closedAt
+  // Samą flagę walkowera zapisuje się na meczu ze starym `timestamp` z generatora.
+  // Do kolejności ostatnich wyników liczy się moment przyznania.
+  if (!isSingleWalkover(match)) return undefined
+  return positiveStamp(match.verifiedAt)
 }
 
 function agreedStamp(match: RawFixture): number | undefined {
@@ -102,7 +118,11 @@ function toListed(id: string, match: RawFixture, source: 'league' | 'cup'): List
   if (!match || !match.p1Id || !match.p2Id || !match.p1Name || !match.p2Name) return null
   if (match.p1Id === match.p2Id) return null
 
-  const scored = typeof match.score1 === 'number' && typeof match.score2 === 'number'
+  const scores = listedScore(match, source)
+  const singleWalkover = isSingleWalkover(match)
+  const scored = scores !== null && (
+    (typeof match.score1 === 'number' && typeof match.score2 === 'number') || singleWalkover
+  )
   let badgeState: ListedMatch['badgeState'] = 'upcoming'
   if (scored) badgeState = 'finished'
   else if (match.status === 'accepted') badgeState = 'scheduled'
@@ -123,9 +143,11 @@ function toListed(id: string, match: RawFixture, source: 'league' | 'cup'): List
     p2Name: match.p2Name,
     p1Id: match.p1Id,
     p2Id: match.p2Id,
-    score1: typeof match.score1 === 'number' ? match.score1 : undefined,
-    score2: typeof match.score2 === 'number' ? match.score2 : undefined,
+    score1: scored && scores ? scores.score1 : undefined,
+    score2: scored && scores ? scores.score2 : undefined,
     isDoubleWO: match.isDoubleWO === true,
+    isWalkover: singleWalkover,
+    walkoverPlayerId: singleWalkover ? match.walkoverPlayerId : undefined,
     isPlayoff: source === 'cup' || match.isPlayoff === true,
     badgeState,
     hasScore: scored,
@@ -157,6 +179,7 @@ export function pickUpcoming(matches: readonly ListedMatch[], now = Date.now(), 
   const open = matches.filter((match) =>
     !match.hasScore &&
     !match.isDoubleWO &&
+    !match.isWalkover &&
     typeof match.proposedTimestamp === 'number'
   )
   const future = open

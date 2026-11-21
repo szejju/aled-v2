@@ -9,6 +9,7 @@ import * as admin from "firebase-admin";
 import { verifyAdmin } from "../admin/auth.js";
 import { db } from "../database/connection.js";
 import { checkoutProblem, parseAverage, shortLegMinimum } from "../matches/protocolRules.js";
+import { chosenWalkoverMargin, LEAGUE_WALKOVER_MARGINS } from "../league/walkover.js";
 import {
   resolveSummerMatchFormat,
   summerLegScoreProblem,
@@ -421,12 +422,21 @@ function applyPlayedMatch(
   directory: Map<string, SummerPerson>,
   match: Record<string, unknown>,
 ): void {
-  if (text(match.status) !== "played") return;
+  if (text(match.status) !== "played" && match.isWalkover !== true) return;
   const p1 = text(match.p1Id);
   const p2 = text(match.p2Id);
-  const legs1 = legCount(match.score1);
-  const legs2 = legCount(match.score2);
-  if (!p1 || !p2 || legs1 === null || legs2 === null) return;
+  if (!p1 || !p2) return;
+  let legs1 = legCount(match.score1);
+  let legs2 = legCount(match.score2);
+  if (legs1 === null || legs2 === null) {
+    const winner = text(match.walkoverPlayerId);
+    const single = match.isDoubleWO !== true && (match.isWalkover === true || winner !== "") && (winner === p1 || winner === p2);
+    if (!single) return;
+    const format = resolveSummerMatchFormat(match.matchFormat, undefined, match.bestOf, undefined);
+    const target = format.kind === "firstTo" ? format.target : format.legs;
+    legs1 = winner === p1 ? target : 0;
+    legs2 = winner === p1 ? 0 : target;
+  }
 
   const leftId = directory.get(p1)?.ids[0] ?? p1;
   const rightId = directory.get(p2)?.ids[0] ?? p2;
@@ -754,14 +764,19 @@ function summerAdminPatch(
     if (winner !== p1 && winner !== p2) {
       throw new HttpsError("invalid-argument", "Wskaż gracza z tego meczu.");
     }
+    const margin = chosenWalkoverMargin(data?.walkoverScore, LEAGUE_WALKOVER_MARGINS);
+    if (margin === null) {
+      throw new HttpsError("invalid-argument", "Wybierz wynik walkovera: 6:0 albo 5:0.");
+    }
+    const homeWins = winner === p1;
     return {
       ...stamp,
       status: "played",
       isWalkover: true,
       isDoubleWO: false,
       walkoverPlayerId: winner,
-      score1: null,
-      score2: null,
+      score1: homeWins ? margin : 0,
+      score2: homeWins ? 0 : margin,
       p1Stats: null,
       p2Stats: null,
     };

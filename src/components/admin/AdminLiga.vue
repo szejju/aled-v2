@@ -3,15 +3,28 @@
  * AdminLiga – Tab 3: Zarzadzanie Sezonem Ligi.
  * Sekcje: Struktura Ligi, Przydzial Graczy, Licznik zapisanych, Generator Terminarza, Generator Barazy.
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { apiGenerateLeagueSchedule, deleteLeagueLevel, generatePlayoffsAdmin, massAssignPlayers, saveLeagueLevel } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import LeagueStructureMap from './LeagueStructureMap.vue'
 import { useBusyIds } from '@/composables/useBusyIds'
 import { useRtdbValue } from '@/composables/useRtdbValue'
 import { useVerifiedPlayers } from '@/composables/usePlayerDirectory'
 import { errorText } from '@/utils/errorText'
+import {
+  SOURCE_ALL,
+  SOURCE_ENROLLED,
+  TARGET_WAITING,
+  currentDivisionFilterOptions,
+  currentDivisionLabel,
+  enrolledPlayerIds,
+  massSourceOptions,
+  massTargetOptions,
+  matchesCurrentDivision,
+  matchesMassSource,
+} from '@/utils/massAssign'
 import { playerFullName } from '@/utils/playerName'
 import { asRecord } from '@/utils/rtdb'
 
@@ -75,24 +88,54 @@ const { ids: strDelLoad, run: runDeleteLevel } = useBusyIds()
 const verified = useVerifiedPlayers()
 const allPlayers = verified.data
 const playersError = verified.error
+const playersReady = verified.ready
+
+const currentSeason = useRtdbValue(
+  'settings/currentSeason',
+  (snapshot) => {
+    const parsed = Number(snapshot.val())
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0
+  },
+  0,
+)
+const enrollments = useRtdbValue('enrollments', (snapshot) => snapshot.val(), null as unknown)
+const seasonError = currentSeason.error
+const enrollError = enrollments.error
+const seasonReady = currentSeason.ready
 
 const selectedIds = ref<Set<string>>(new Set())
-const massSource = ref('Wszyscy')
-const massTarget = ref('POCZEKALNIA')
+const massSource = ref(SOURCE_ALL)
+const massTarget = ref(TARGET_WAITING)
+const massDivFilter = ref('')
 const massLoad = ref(false)
 const massMsg = ref('')
 
 const strLevels = computed(() => Object.keys(leagueStructure.value).sort((a, b) => +a - +b))
-const massSrcOpts = computed(() => ['Wszyscy', 'Poczekalnia', ...strLevels.value.map((level) => 'Dywizja ' + level)])
-const massTgtOpts = computed(() => ['POCZEKALNIA', ...strLevels.value.map((level) => 'Dywizja ' + level)])
-const filtMass = computed(() => {
+const nextSeason = computed(() => (currentSeason.data.value > 0 ? currentSeason.data.value + 1 : 0))
+const enrolledIds = computed(() => enrolledPlayerIds(enrollments.data.value, nextSeason.value))
+const massSrcOpts = computed(() =>
+  massSourceOptions({
+    players: allPlayers.value,
+    levels: strLevels.value,
+    enrolledIds: enrolledIds.value,
+    nextSeason: nextSeason.value,
+  }),
+)
+const massTgtOpts = computed(() => massTargetOptions(leagueStructure.value, allPlayers.value))
+const sourcePlayers = computed(() => {
   const source = massSource.value
-  return allPlayers.value.filter((player) => {
-    if (source === 'Wszyscy') return true
-    if (source === 'Poczekalnia') return !player.div
-    const match = source.match(/^Dywizja (\d+)$/)
-    return match ? player.div === 'Dywizja ' + match[1] : true
-  })
+  const enrolled = enrolledIds.value
+  return allPlayers.value.filter((player) => matchesMassSource(player.div, source, enrolled.has(player.id)))
+})
+const massDivOpts = computed(() => currentDivisionFilterOptions(sourcePlayers.value))
+const filtMass = computed(() =>
+  sourcePlayers.value.filter((player) => matchesCurrentDivision(player.div, massDivFilter.value)),
+)
+
+watch(massDivOpts, (options) => {
+  if (massDivFilter.value && !options.some((option) => option.value === massDivFilter.value)) {
+    massDivFilter.value = ''
+  }
 })
 const isAllSel = computed(() => {
   const visible = filtMass.value
@@ -114,6 +157,34 @@ function togP(id: string) {
   else next.add(id)
   selectedIds.value = next
 }
+
+function countOr(value: unknown, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+/** Klik w piętro piramidy wczytuje parametry do formularza nad mapą. */
+function editLvl(level: string) {
+  const cfg = leagueStructure.value[level]
+  if (!cfg) return
+  newLevel.value = {
+    level,
+    groups: countOr(cfg.groups, 1),
+    promo: countOr(cfg.promo, 0),
+    playoffs: countOr(cfg.playoffs, 0),
+    releg: countOr(cfg.releg, 0),
+    playersLimit: countOr(cfg.playersLimit, 8),
+  }
+}
+
+function clearLvl() {
+  newLevel.value = emptyLevel()
+}
+
+const editingExisting = computed(() => {
+  const level = newLevel.value.level.trim()
+  return level !== '' && Object.prototype.hasOwnProperty.call(leagueStructure.value, level)
+})
 
 async function saveLvl() {
   if (!newLevel.value.level || !newLevel.value.groups) {
@@ -317,6 +388,8 @@ async function doGenFin() {
 onMounted(() => {
   structure.start()
   verified.start()
+  currentSeason.start()
+  enrollments.start()
   fEnroll()
 })
 </script>
@@ -327,39 +400,66 @@ onMounted(() => {
   <!-- STRUKTURA LIGI -->
   <AdminSectionCard title="Struktura Ligi" dot-color="bg-indigo-500" class="xl:col-span-2">
     <div class="bg-surface-2 border border-line rounded-2xl p-5 mb-6">
-      <h4 class="font-display font-extrabold text-sm uppercase text-fg mb-4">Dodaj / Edytuj Poziom</h4>
+      <h4 class="font-display font-extrabold text-sm uppercase text-fg mb-1">{{ editingExisting ? `Edytujesz dywizję ${newLevel.level.trim()}` : 'Dodaj / Edytuj Poziom' }}</h4>
+      <p class="mb-4 text-xs text-muted">Kliknij piętro na piramidzie, żeby wczytać jego parametry.</p>
       <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 mb-4">
         <div><label class="label block text-muted mb-1">Poziom</label><input v-model="newLevel.level" placeholder="1" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
         <div><label class="label block text-muted mb-1">Grupy</label><input v-model.number="newLevel.groups" type="number" min="1" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
         <div><label class="label block text-muted mb-1">Awans</label><input v-model.number="newLevel.promo" type="number" min="0" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
-        <div><label class="label block text-muted mb-1">Baraze</label><input v-model.number="newLevel.playoffs" type="number" min="0" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
+        <div><label class="label block text-muted mb-1">Baraże</label><input v-model.number="newLevel.playoffs" type="number" min="0" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
         <div><label class="label block text-muted mb-1">Spadek</label><input v-model.number="newLevel.releg" type="number" min="0" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
         <div><label class="label block text-muted mb-1">Limit graczy</label><input v-model.number="newLevel.playersLimit" type="number" min="2" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
       </div>
-      <button @click="saveLvl" :disabled="strSaveLoad" class="rounded-xl bg-indigo-600 text-white px-6 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-indigo-500 disabled:opacity-50">{{ strSaveLoad?'Zapisuje...':'Zapisz Poziom' }}</button>
-    </div>
-    <div class="space-y-2">
-      <div v-for="(cfg,lvl) in leagueStructure" :key="lvl" class="flex items-center justify-between rounded-xl border border-line bg-surface-2 px-4 py-3">
-        <div><span class="font-bold text-fg">Dywizja {{ lvl }}</span><span class="text-xs text-muted ml-3">{{ cfg.groups }} grup, Awans: {{ cfg.promo }}, Baraze: {{ cfg.playoffs }}, Spadek: {{ cfg.releg }}, Limit: {{ cfg.playersLimit }}</span></div>
-        <button @click="delLvl(lvl)" :disabled="strDelLoad.has(lvl)" class="text-red-400 hover:text-red-300 text-xs font-bold uppercase">Usun</button>
+      <div class="flex flex-wrap items-center gap-3">
+        <button @click="saveLvl" :disabled="strSaveLoad" class="rounded-xl bg-indigo-600 text-white px-6 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-indigo-500 disabled:opacity-50">{{ strSaveLoad?'Zapisuje...':'Zapisz Poziom' }}</button>
+        <button v-if="editingExisting" type="button" @click="clearLvl" class="rounded-xl border border-line px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-muted hover:text-fg">Wyczyść</button>
       </div>
-      <p v-if="structureError" class="text-sm font-bold text-red-400">{{ structureError }}</p>
-      <p v-else-if="!structureReady" class="text-xs text-muted italic">Wczytywanie struktury...</p>
-      <p v-else-if="Object.keys(leagueStructure).length===0" class="text-xs text-muted italic">Brak zdefiniowanych poziomow.</p>
     </div>
+    <LeagueStructureMap
+      :levels="leagueStructure"
+      :ready="structureReady"
+      :error="structureError"
+      :active-level="newLevel.level"
+      :deleting="strDelLoad"
+      @edit="editLvl"
+      @remove="delLvl"
+    />
   </AdminSectionCard>
   <!-- PRZYDZIAL GRACZY -->
   <AdminSectionCard title="Przydzial Graczy (Masowy)" dot-color="bg-teal-500" class="xl:col-span-2">
-    <div class="flex flex-wrap gap-3 items-end mb-4">
-      <div><label class="label block text-muted mb-1">Zrodlo</label><select v-model="massSource" class="rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg"><option v-for="o in massSrcOpts" :key="o" :value="o">{{ o }}</option></select></div>
-      <div><label class="label block text-muted mb-1">Cel</label><select v-model="massTarget" class="rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg"><option v-for="o in massTgtOpts" :key="o" :value="o">{{ o }}</option></select></div>
-      <button @click="doMass" :disabled="massLoad" class="rounded-xl bg-teal-600 text-white px-6 py-2 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-teal-500 disabled:opacity-50">{{ massLoad?'Przypisuje...':'Przypisz Wybranych ('+selectedIds.size+')' }}</button>
+    <p class="mb-4 text-xs text-muted">Poczekalnia obejmuje pustą dywizję i wpis POCZEKALNIA. Cel to konkretna grupa, którą potem czyta terminarz.</p>
+    <div class="mb-4 flex flex-wrap items-end gap-3">
+      <div>
+        <label class="label mb-1 block text-muted">Źródło</label>
+        <select v-model="massSource" class="rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg">
+          <option v-for="option in massSrcOpts" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </div>
+      <div>
+        <label class="label mb-1 block text-muted">Cel</label>
+        <select v-model="massTarget" class="max-w-full rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg">
+          <option v-for="option in massTgtOpts" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </div>
+      <div>
+        <label class="label mb-1 block text-muted">Obecna dywizja</label>
+        <select v-model="massDivFilter" class="max-w-full rounded-xl border border-line bg-surface-2 px-3 py-2 text-sm text-fg">
+          <option v-for="option in massDivOpts" :key="option.value || 'all'" :value="option.value">{{ option.label }}</option>
+        </select>
+      </div>
+      <button @click="doMass" :disabled="massLoad" class="rounded-xl bg-teal-600 px-6 py-2 font-display text-[10px] font-extrabold uppercase tracking-widest text-white hover:bg-teal-500 disabled:opacity-50">{{ massLoad ? 'Przypisuje...' : 'Przypisz Wybranych (' + selectedIds.size + ')' }}</button>
     </div>
-    <p v-if="playersError" class="text-sm font-bold text-red-400 mb-3">{{ playersError }}</p>
-    <p v-if="massMsg" class="text-xs text-lime font-bold mb-3">{{ massMsg }}</p>
-    <div class="max-h-[400px] overflow-y-auto">
+    <p v-if="playersError" class="mb-3 text-sm font-bold text-red-400">{{ playersError }}</p>
+    <p v-if="seasonError" class="mb-3 text-sm font-bold text-red-400">{{ seasonError }}</p>
+    <p v-if="enrollError" class="mb-3 text-sm font-bold text-red-400">{{ enrollError }}</p>
+    <p v-if="massSource === SOURCE_ENROLLED && seasonReady && !nextSeason" class="mb-3 text-xs font-bold text-red-400">Nie ustawiono bieżącego sezonu, więc lista zapisów na kolejny sezon jest pusta.</p>
+    <p v-if="massMsg" class="mb-3 text-xs font-bold text-lime">{{ massMsg }}</p>
+    <p v-if="!playersReady && !playersError" class="mb-3 text-xs text-muted">Wczytuję graczy…</p>
+    <p v-else-if="filtMass.length === 0" class="mb-3 text-xs text-muted">Brak graczy dla wybranego źródła i filtra.</p>
+    <p v-else class="mb-3 text-xs text-muted">Widocznych: {{ filtMass.length }}</p>
+    <div v-if="filtMass.length" class="max-h-[400px] overflow-y-auto">
       <table class="w-full text-xs"><thead class="sticky top-0 bg-surface z-10"><tr class="border-b border-line text-muted uppercase tracking-widest text-[10px]"><th class="text-left py-2 px-2"><input type="checkbox" :checked="isAllSel" @change="togAll" class="rounded"/></th><th class="text-left py-2 px-2">Gracz</th><th class="text-left py-2 px-2">Obecna Dywizja</th></tr></thead>
-        <tbody><tr v-for="p in filtMass" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2"><input type="checkbox" :checked="selectedIds.has(p.id)" @change="togP(p.id)" class="rounded"/></td><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }} {{ p.lastName }}</td><td class="py-2 px-2 text-muted">{{ p.div||'Poczekalnia' }}</td></tr></tbody></table>
+        <tbody><tr v-for="p in filtMass" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2"><input type="checkbox" :checked="selectedIds.has(p.id)" @change="togP(p.id)" class="rounded"/></td><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }} {{ p.lastName }}</td><td class="py-2 px-2 text-muted">{{ currentDivisionLabel(p.div) }}</td></tr></tbody></table>
     </div>
   </AdminSectionCard>
 

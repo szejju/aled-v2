@@ -6,13 +6,16 @@ import { apiApproveMatch, apiRejectMatch, forceMatchDateAdmin, handleExceptionRe
 import AdminManualProtocol from './AdminManualProtocol.vue'
 import AdminPendingReview from './AdminPendingReview.vue'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import AdminSectionJump from './shared/AdminSectionJump.vue'
 import { useBusyIds } from '@/composables/useBusyIds'
 import { readPlayerIndex } from '@/composables/usePlayerDirectory'
+import { useRtdbValue } from '@/composables/useRtdbValue'
 import { awaitsProtocolApproval, useScheduleFeed, type ScheduleRow } from '@/composables/useScheduleFeed'
 import { errorText } from '@/utils/errorText'
+import { listOverdue, readSeasonStart } from '@/utils/overdue'
 import { playerFullName } from '@/utils/playerName'
 import { extractDivisionNumber, isBarrageDivision } from '@/utils/divisions'
-import { asRecord, flag, optNum } from '@/utils/rtdb'
+import { asRecord, flag, optNum, optStr } from '@/utils/rtdb'
 
 const feed = useScheduleFeed()
 const hiddenRadar = ref<Set<string>>(new Set())
@@ -187,28 +190,31 @@ async function doExRej(match: ScheduleRow) {
 }
 
 const nowTick = ref(Date.now())
-const ovdLd = computed(() => !feed.ready.value)
-const ovd = computed(() => {
-  const now = nowTick.value
-  const rows: { id: string; div?: string; round?: string | number; p1Name?: string; p2Name?: string; status?: string }[] = []
-  for (const match of feed.all.value) {
-    const status = match.status || ''
-    if (status === 'played' || awaitsProtocolApproval(status) || status === 'pending_exception' || status === 'walkover') continue
-    if (!match.date) continue
-    if (!(new Date(match.date).getTime() < now)) continue
-    if (!match.score1 && match.score1 !== 0) {
-      rows.push({
-        id: match.sourcePath + ':' + match.id,
-        div: match.div,
-        round: match.round,
-        p1Name: match.p1Name,
-        p2Name: match.p2Name,
-        status,
-      })
-    }
-  }
-  return rows
+const scheduleDates = useRtdbValue(
+  'settings/scheduleDates',
+  (snapshot) => asRecord(snapshot.val()),
+  null as Record<string, unknown> | null,
+)
+const legacyLeagueStart = useRtdbValue('settings/leagueStartDate', (snapshot) => snapshot.val(), null as unknown)
+const legacyStartDate = useRtdbValue('settings/startDate', (snapshot) => snapshot.val(), null as unknown)
+const leagueStartReady = computed(
+  () => scheduleDates.ready.value && legacyLeagueStart.ready.value && legacyStartDate.ready.value,
+)
+const leagueStart = computed(() =>
+  readSeasonStart(
+    scheduleDates.data.value?.leagueStart,
+    legacyLeagueStart.data.value,
+    legacyStartDate.data.value,
+  ),
+)
+const ovdLd = computed(() => !feed.ready.value || !leagueStartReady.value)
+const ovdErr = computed(() => {
+  if (ovdLd.value) return ''
+  if (feed.error.value) return feed.error.value
+  if (!leagueStart.value) return 'Brak daty startu sezonu. Radar nie policzy terminow kolejek.'
+  return ''
 })
+const ovd = computed(() => listOverdue(feed.all.value, leagueStart.value, nowTick.value))
 
 function fOvd() {
   nowTick.value = Date.now()
@@ -225,38 +231,66 @@ const bl = ref<BlacklistEntry[]>([])
 const blLd = ref(false)
 const blErr = ref('')
 
+function storedPlayerId(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number') return ''
+  return String(value).trim()
+}
+
+/**
+ * Gracz, który przegrał walkowerem.
+ * Zapis trzyma zwycięzcę w `walkoverPlayerId`. `walkoverFor` zostaje dla starych meczów.
+ */
+function forfeitedWalkoverId(match: Record<string, unknown>): string {
+  if (flag(match.isDoubleWO) || !flag(match.isWalkover)) return ''
+  const home = storedPlayerId(match.p1Id)
+  const away = storedPlayerId(match.p2Id)
+  const winner = storedPlayerId(match.walkoverPlayerId)
+  if (winner && winner === home) return away
+  if (winner && winner === away) return home
+  const legacy = storedPlayerId(match.walkoverFor)
+  if (legacy && legacy === home) return away
+  if (legacy && legacy === away) return home
+  return legacy
+}
+
+function countForfeitedWalkovers(
+  schedule: Record<string, unknown> | null,
+  index: ReturnType<typeof readPlayerIndex>,
+  counts: Map<string, { count: number; name: string; div: string }>,
+) {
+  if (!schedule) return
+  for (const row of Object.values(schedule)) {
+    const match = asRecord(row)
+    if (!match) continue
+    const playerId = forfeitedWalkoverId(match)
+    if (!playerId) continue
+    const current = counts.get(playerId)
+    if (current) current.count += 1
+    else {
+      const person = index[playerId]
+      counts.set(playerId, {
+        count: 1,
+        name: playerFullName(person, playerId),
+        div: person?.div || '-',
+      })
+    }
+  }
+}
+
 async function fBl() {
   blLd.value = true
   blErr.value = ''
   try {
     const db = getDatabaseClient()
-    const [playersSnap, scheduleSnap] = await Promise.all([
+    const [playersSnap, scheduleSnap, cupSnap] = await Promise.all([
       get(dbRef(db, 'players')),
       get(dbRef(db, 'schedule')),
+      get(dbRef(db, 'cup/schedule')),
     ])
     const index = readPlayerIndex(playersSnap.val())
     const counts = new Map<string, { count: number; name: string; div: string }>()
-    const schedule = asRecord(scheduleSnap.val())
-    if (schedule) {
-      for (const row of Object.values(schedule)) {
-        const match = asRecord(row)
-        if (!match || !flag(match.isWalkover)) continue
-        const rawId = match.walkoverFor
-        if (typeof rawId !== 'string' && typeof rawId !== 'number') continue
-        const playerId = String(rawId)
-        if (!playerId) continue
-        const current = counts.get(playerId)
-        if (current) current.count += 1
-        else {
-          const person = index[playerId]
-          counts.set(playerId, {
-            count: 1,
-            name: playerFullName(person, playerId),
-            div: person?.div || '-',
-          })
-        }
-      }
-    }
+    countForfeitedWalkovers(asRecord(scheduleSnap.val()), index, counts)
+    countForfeitedWalkovers(asRecord(cupSnap.val()), index, counts)
     bl.value = [...counts.entries()]
       .map(([playerId, data]) => ({
         playerId,
@@ -272,21 +306,64 @@ async function fBl() {
   }
 }
 
+type VacationStatus = 'active' | 'upcoming'
+
 interface VacationRow {
   playerId: string
   playerName: string
-  start?: string | number
-  end?: string | number
-  div?: string
+  start: string
+  end: string
+  div: string
+  status: VacationStatus
 }
 
 const vac = ref<VacationRow[]>([])
 const vacLd = ref(false)
 const vacErr = ref('')
 
-function dateLike(value: unknown): string | number | undefined {
-  if (typeof value === 'string' || typeof value === 'number') return value
+const jumpSections = computed(() => [
+  { id: 'admin-wyniki', label: 'Zgloszone Wyniki', dot: 'bg-amber-500', count: radar.value.length },
+  { id: 'admin-protokol', label: 'Protokół ręczny', dot: 'bg-blue-500' },
+  { id: 'admin-terminy', label: 'Zmiana Terminow', dot: 'bg-purple-500' },
+  { id: 'admin-wyjatki', label: 'Wyjątki', dot: 'bg-orange-500', count: excs.value.length },
+  { id: 'admin-urlopy', label: 'Urlopy', dot: 'bg-teal-500', count: vac.value.length },
+  { id: 'admin-zaleglosci', label: 'Radar Zaleglosci', dot: 'bg-red-500', count: ovd.value.length },
+  { id: 'admin-czarna-lista', label: 'Czarna Lista', dot: 'bg-red-600', count: bl.value.length },
+])
+
+function localDayKey(date = new Date()): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/** Dzien kalendarzowy z pola urlopu: `YYYY-MM-DD` albo znacznik czasu. */
+function calendarDay(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const match = /^(\d{4}-\d{2}-\d{2})/.exec(value.trim())
+    if (match) return match[1]
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return localDayKey(new Date(parsed))
+    return undefined
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return localDayKey(new Date(value))
   return undefined
+}
+
+function vacationStatus(start: string, end: string, today: string): VacationStatus | null {
+  if (end < today) return null
+  if (start > today) return 'upcoming'
+  return 'active'
+}
+
+function formatVacationDay(iso: string): string {
+  const [year, month, day] = iso.split('-')
+  if (!year || !month || !day) return iso
+  return `${day}.${month}.${year}`
+}
+
+function vacationLabel(status: VacationStatus): string {
+  return status === 'active' ? 'Aktywny' : 'Nadchodzacy'
 }
 
 async function fVac() {
@@ -294,27 +371,37 @@ async function fVac() {
   vacErr.value = ''
   try {
     const db = getDatabaseClient()
-    const [playersSnap, vacSnap] = await Promise.all([
-      get(dbRef(db, 'players')),
-      get(dbRef(db, 'vacations')),
-    ])
-    const index = readPlayerIndex(playersSnap.val())
+    const playersSnap = await get(dbRef(db, 'players'))
+    const today = localDayKey()
     const rows: VacationRow[] = []
-    const raw = asRecord(vacSnap.val())
+    const raw = asRecord(playersSnap.val())
     if (raw) {
       for (const [playerId, value] of Object.entries(raw)) {
-        const vacation = asRecord(value)
-        const person = index[playerId]
+        const person = asRecord(value)
+        const leave = asRecord(person?.leave)
+        if (!person || !leave) continue
+        const start = calendarDay(leave.start)
+        const end = calendarDay(leave.end)
+        if (!start || !end || start > end) continue
+        const status = vacationStatus(start, end, today)
+        if (!status) continue
         rows.push({
           playerId,
-          playerName: playerFullName(person, playerId),
-          start: dateLike(vacation?.start),
-          end: dateLike(vacation?.end),
-          div: person?.div || '-',
+          playerName: playerFullName(
+            { firstName: optStr(person.firstName), lastName: optStr(person.lastName) },
+            playerId,
+          ),
+          start,
+          end,
+          div: optStr(person.div) || '-',
+          status,
         })
       }
     }
-    vac.value = rows.sort((a, b) => a.playerName.localeCompare(b.playerName))
+    vac.value = rows.sort((a, b) => {
+      if (a.status !== b.status) return a.status === 'active' ? -1 : 1
+      return a.start.localeCompare(b.start) || a.playerName.localeCompare(b.playerName, 'pl')
+    })
   } catch (err: unknown) {
     vacErr.value = errorText(err)
   } finally {
@@ -510,15 +597,19 @@ async function doFrc() {
 
 onMounted(() => {
   feed.start()
+  scheduleDates.start()
+  legacyLeagueStart.start()
+  legacyStartDate.start()
   fBl()
   fVac()
 })
 </script>
 <template>
-<div class="flex flex-col gap-6">
+<div class="flex flex-col gap-6" style="--admin-jump-offset: 11rem">
+  <AdminSectionJump :sections="jumpSections" />
 
   <!-- 1. ZGLOSZONE WYNIKI (full width) -->
-  <AdminSectionCard title="Zgloszone Wyniki" dot-color="bg-amber-500 animate-pulse">
+  <AdminSectionCard id="admin-wyniki" class="admin-jump-target" title="Zgloszone Wyniki" dot-color="bg-amber-500 animate-pulse">
     <template #actions>
       <span class="label rounded-full bg-amber-500/10 text-amber-400 px-2.5 py-1 text-[10px]">{{ radar.length }} oczekujacych</span>
     </template>
@@ -541,10 +632,12 @@ onMounted(() => {
 
   <!-- Row 1: Protokol + Zmiana Terminow -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-<AdminManualProtocol :matches="pAll" :loading="pLoad" :error="feedError" @reload="feed.start()" />
+<div id="admin-protokol" class="admin-jump-target h-full min-w-0">
+  <AdminManualProtocol :matches="pAll" :loading="pLoad" :error="feedError" @reload="feed.start()" />
+</div>
 
 <!-- 7. RECZNA ZMIANA TERMINOW -->
-  <AdminSectionCard title="Reczna Zmiana Terminow" dot-color="bg-purple-500">
+  <AdminSectionCard id="admin-terminy" class="admin-jump-target h-full" title="Reczna Zmiana Terminow" dot-color="bg-purple-500">
     <p class="text-xs text-muted mb-4">Nadpisz termin meczu ligowego. Wybierz dywizje, grupe, kolejke i mecz, potem ustaw nowa date i godzine.</p>
     <p v-if="feedError" class="text-sm font-bold text-red-400 mb-3">{{ feedError }}</p>
     <p v-else-if="pLoad" class="text-xs text-muted italic">Wczytywanie terminarza...</p>
@@ -599,7 +692,7 @@ onMounted(() => {
   <!-- Row 2: Wyjatki + Urlopy -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 <!-- 3. WYJATKI -->
-  <AdminSectionCard title="Wyjątki" dot-color="bg-orange-500">
+  <AdminSectionCard id="admin-wyjatki" class="admin-jump-target h-full" title="Wyjątki" dot-color="bg-orange-500">
     <template #actions><span class="label rounded-full bg-orange-500/10 text-orange-400 px-2.5 py-1 text-[10px]">{{ excs.length }} oczekujacych</span></template>
     <div v-if="excs.length===0" class="text-center py-8 text-xs text-muted italic">Brak oczekujacych wyjatkow.</div>
     <div v-else class="space-y-4 max-h-[600px] overflow-y-auto pr-1">
@@ -623,14 +716,17 @@ onMounted(() => {
   </AdminSectionCard>
 
 <!-- 6. URLOPY -->
-  <AdminSectionCard title="Urlopy" dot-color="bg-teal-500">
+  <AdminSectionCard id="admin-urlopy" class="admin-jump-target h-full" title="Urlopy" dot-color="bg-teal-500">
     <template #actions><button @click="fVac" :disabled="vacLd" class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Odswiez</button></template>
     <p v-if="vacErr" class="text-sm font-bold text-red-400">{{ vacErr }}</p>
-    <div v-else-if="vac.length===0" class="text-center py-4 text-xs text-muted italic">Brak aktywnych urlopow.</div>
+    <div v-else-if="vac.length===0" class="text-center py-4 text-xs text-muted italic">{{ vacLd ? 'Ladowanie urlopow...' : 'Brak aktywnych i nadchodzacych urlopow.' }}</div>
     <div v-else class="space-y-2 max-h-[400px] overflow-y-auto pr-1">
       <div v-for="v in vac" :key="v.playerId" class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
         <div class="min-w-0"><p class="text-sm font-bold text-fg">{{ v.playerName }}</p><p class="text-[10px] text-muted">{{ v.div }}</p></div>
-        <div class="text-right shrink-0"><p class="text-xs text-teal-400 font-bold">{{ v.start?new Date(v.start).toLocaleDateString('pl-PL'):'--' }} &mdash; {{ v.end?new Date(v.end).toLocaleDateString('pl-PL'):'--' }}</p></div>
+        <div class="text-right shrink-0">
+          <p :class="['text-[10px] font-bold uppercase tracking-widest', v.status==='active' ? 'text-teal-400' : 'text-sky-400']">{{ vacationLabel(v.status) }}</p>
+          <p class="text-xs font-bold text-fg">{{ formatVacationDay(v.start) }} &mdash; {{ formatVacationDay(v.end) }}</p>
+        </div>
       </div>
     </div>
   </AdminSectionCard>
@@ -640,22 +736,27 @@ onMounted(() => {
   <!-- Row 3: Radar Zaleglosci + Czarna Lista -->
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 <!-- 4. RADAR ZALEGLOSCI -->
-  <AdminSectionCard title="Radar Zaleglosci" dot-color="bg-red-500">
-    <template #actions><button @click="fOvd" :disabled="ovdLd" class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Odswiez</button></template>
-    <div v-if="ovd.length===0" class="text-center py-4 text-xs text-muted italic">Brak zaleglych meczow!</div>
+  <AdminSectionCard id="admin-zaleglosci" class="admin-jump-target h-full" title="Radar Zaleglosci" dot-color="bg-red-500">
+    <template #actions>
+      <span v-if="!ovdLd && !ovdErr" class="label rounded-full bg-red-500/10 text-red-400 px-2.5 py-1 text-[10px]">{{ ovd.length }}</span>
+      <button @click="fOvd" :disabled="ovdLd" class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Odswiez</button>
+    </template>
+    <p v-if="ovdErr" class="text-sm font-bold text-red-400">{{ ovdErr }}</p>
+    <div v-else-if="ovdLd" class="text-center py-4 text-xs text-muted italic">Ladowanie zaleglosci...</div>
+    <div v-else-if="ovd.length===0" class="text-center py-4 text-xs text-muted italic">Brak zaleglych meczow!</div>
     <div v-else class="space-y-2 max-h-[400px] overflow-y-auto pr-1">
       <div v-for="m in ovd" :key="m.id" class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3">
-        <div class="min-w-0"><p class="text-sm font-bold text-fg">{{ m.p1Name }} vs {{ m.p2Name }}</p><p class="text-[10px] text-muted font-bold uppercase">{{ m.div?m.div+' &middot; ':'' }}Runda {{ m.round }} <span class="text-red-400 ml-1">(minal termin)</span></p></div>
+        <div class="min-w-0"><p class="text-sm font-bold text-fg">{{ m.p1Name }} vs {{ m.p2Name }}</p><p class="text-[10px] text-muted font-bold uppercase">{{ m.div?m.div+' &middot; ':'' }}Runda {{ m.round }} <span v-if="m.deadline" class="text-red-400 ml-1">do {{ m.deadline }}</span></p></div>
         <span class="label rounded-full bg-red-500/10 text-red-400 px-2.5 py-1 text-[10px] shrink-0">Zalegly</span>
       </div>
     </div>
   </AdminSectionCard>
 
 <!-- 5. CZARNA LISTA -->
-  <AdminSectionCard title="Czarna Lista" dot-color="bg-red-600">
+  <AdminSectionCard id="admin-czarna-lista" class="admin-jump-target h-full" title="Czarna Lista" dot-color="bg-red-600">
     <template #actions><button @click="fBl" :disabled="blLd" class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Odswiez</button></template>
     <p v-if="blErr" class="text-sm font-bold text-red-400">{{ blErr }}</p>
-    <div v-else-if="bl.length===0" class="text-center py-4 text-xs text-muted italic">Brak graczy z walkowerami.</div>
+    <div v-else-if="bl.length===0" class="text-center py-4 text-xs text-muted italic">{{ blLd ? 'Ładowanie walkowerów…' : 'Brak graczy z walkowerami.' }}</div>
     <table v-else class="w-full text-xs"><thead><tr class="border-b border-line text-muted uppercase tracking-widest text-[10px]"><th class="text-left py-2 pr-2">Gracz</th><th class="text-left py-2 pr-2">Dywizja</th><th class="text-right py-2">Walkowery</th></tr></thead><tbody><tr v-for="e in bl" :key="e.playerId" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 pr-2 font-bold text-fg">{{ e.playerName }}</td><td class="py-2 pr-2 text-muted">{{ e.div }}</td><td class="py-2 text-right"><span :class="['font-extrabold',e.walkoverCount>=3?'text-red-400':e.walkoverCount>=1?'text-amber-400':'text-muted']">{{ e.walkoverCount }}</span></td></tr></tbody></table>
   </AdminSectionCard>
 

@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 import { Plus, X } from 'lucide-vue-next'
 import { sendPlayerNotification } from '@/services/api'
 import type { VerifiedPlayer } from '@/composables/usePlayerDirectory'
+import { useToast } from '@/composables/useToast'
 import { errorText } from '@/utils/errorText'
 
 const RECIPIENT_LIMIT = 200
@@ -27,6 +28,13 @@ const message = ref('')
 const loading = ref(false)
 const result = ref('')
 const ok = ref(true)
+const { showToast } = useToast()
+
+function report(message: string, success: boolean) {
+  ok.value = success
+  result.value = message
+  showToast(message, success ? 'success' : 'error', success ? 7000 : 6000)
+}
 
 const divisions = computed(() => {
   const names = new Set<string>()
@@ -56,8 +64,7 @@ function playerName(player: { firstName?: string; lastName?: string; nick?: stri
 function addPlayer(player: VerifiedPlayer) {
   if (selectedIds.value.has(player.id)) return
   if (recipients.value.length >= RECIPIENT_LIMIT) {
-    ok.value = false
-    result.value = `Maksymalnie ${RECIPIENT_LIMIT} odbiorcow naraz.`
+    report(`Maksymalnie ${RECIPIENT_LIMIT} odbiorcow naraz.`, false)
     return
   }
   recipients.value.push({ id: player.id, name: playerName(player) })
@@ -80,8 +87,7 @@ function clearRecipients() {
 async function send() {
   if (loading.value) return
   if (recipients.value.length === 0 || !title.value.trim() || !message.value.trim()) {
-    ok.value = false
-    result.value = 'Uzupelnij: odbiorcy, tytul, tresc.'
+    report('Uzupelnij: odbiorcy, tytul, tresc.', false)
     return
   }
   loading.value = true
@@ -92,17 +98,20 @@ async function send() {
       title: title.value,
       message: message.value,
     })
-    ok.value = response.success
-    result.value = response.message
+    const raw = response.message || (response.success ? 'Powiadomienie wyslane.' : 'Nie udalo sie wyslac powiadomienia.')
+    const messageText = response.success && !raw.toLowerCase().includes('profil')
+      ? `${raw} Gracz zobaczy je na swoim profilu.`
+      : raw
+    report(messageText, response.success)
     if (!response.success) {
-      console.error(response.message)
+      console.error(messageText)
       return
     }
     title.value = ''
     message.value = ''
   } catch (err: unknown) {
-    ok.value = false
-    result.value = errorText(err)
+    const messageText = errorText(err, 'Nie udalo sie wyslac powiadomienia.')
+    report(messageText, false)
     console.error(err)
   } finally {
     loading.value = false

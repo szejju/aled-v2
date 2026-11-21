@@ -2,6 +2,7 @@
 import * as functions from 'firebase-functions';
 import { db } from '../database/connection.js';
 import { playerDirectory } from '../players/publicName.js';
+import { isSingleWalkover, listedScore } from '../league/walkover.js';
 
 export const getSchedule = functions.https.onCall(async (request) => {
   const division = request.data?.division; // <--- Używamy request.data
@@ -51,8 +52,13 @@ export const getSchedule = functions.https.onCall(async (request) => {
         formattedTime = localD.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
       }
 
-      // Wyznaczenie statusu meczu dla frontendu
-      const hasScore = typeof m.score1 === 'number' && typeof m.score2 === 'number';
+      // Wyznaczenie statusu meczu dla frontendu.
+      // Walkover jednego gracza bez wyniku liczbowego dostaje shutout, żeby był w terminarzu.
+      const scores = listedScore(m, 'league');
+      const singleWalkover = isSingleWalkover(m);
+      const hasScore = scores !== null && (
+        (typeof m.score1 === 'number' && typeof m.score2 === 'number') || singleWalkover
+      );
       let badgeState = 'upcoming'; // domyślnie do rozegrania
 
       if (hasScore) badgeState = 'finished';
@@ -65,6 +71,9 @@ export const getSchedule = functions.https.onCall(async (request) => {
 
       groupedByRound[r].push({
         ...m,
+        score1: hasScore && scores ? scores.score1 : m.score1,
+        score2: hasScore && scores ? scores.score2 : m.score2,
+        isWalkover: singleWalkover || m.isWalkover === true,
         p1FirstName: p1.firstName,
         p1LastName: p1.lastName,
         p2FirstName: p2.firstName,

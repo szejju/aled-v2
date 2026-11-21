@@ -125,30 +125,40 @@ export const sendPlayerNotification = functions.https.onCall(async (request) => 
   if (!(await verifyAdmin(uid)))
     throw new functions.https.HttpsError("permission-denied", "Brak uprawnien admina.");
 
-  const data = (request.data ?? {}) as { playerId?: unknown; playerIds?: unknown; title?: unknown; message?: unknown };
-  const title = typeof data.title === "string" ? data.title.trim() : "";
-  const message = typeof data.message === "string" ? data.message.trim() : "";
+  const payload = (request.data ?? {}) as { playerId?: unknown; playerIds?: unknown; title?: unknown; message?: unknown };
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const message = typeof payload.message === "string" ? payload.message.trim() : "";
   if (!title || !message)
     throw new functions.https.HttpsError("invalid-argument", "Brakujace dane: tytul i tresc.");
   if (title.length > NOTIF_TITLE_LIMIT || message.length > NOTIF_MESSAGE_LIMIT)
     throw new functions.https.HttpsError("invalid-argument", "Tytul lub tresc sa za dlugie.");
 
-  const playerIds = collectNotificationRecipients(data);
-  const db = getDb();
+  const playerIds = collectNotificationRecipients(payload);
+  const database = getDb();
+  const profiles = await Promise.all(
+    playerIds.map((playerId) => database.ref(`players/${playerId}`).once("value")),
+  );
+  if (profiles.some((snap) => !snap.exists()))
+    throw new functions.https.HttpsError("not-found", "Nie znaleziono wybranego gracza.");
+
   const updates: Record<string, unknown> = {};
   for (const playerId of playerIds) {
-    const notifId = db.ref("notifications").push().key;
+    const notifId = database.ref("notifications").push().key;
     if (!notifId) throw new functions.https.HttpsError("internal", "Nie udalo sie przygotowac powiadomienia.");
     updates[`notifications/${notifId}`] = {
-      playerId, title, message, read: false,
-      createdAt: admin.database.ServerValue.TIMESTAMP, sentBy: uid,
+      playerId,
+      title,
+      message,
+      read: false,
+      createdAt: admin.database.ServerValue.TIMESTAMP,
+      sentBy: uid,
     };
   }
 
-  await db.ref().update(updates);
+  await database.ref().update(updates);
   const sent = playerIds.length === 1
-    ? "Powiadomienie wyslane."
-    : `Wyslano powiadomienie do ${playerIds.length} graczy.`;
+    ? "Powiadomienie wyslane. Gracz zobaczy je na profilu."
+    : `Wyslano powiadomienie do ${playerIds.length} graczy. Kazdy zobaczy je na profilu.`;
   return { success: true, message: sent, count: playerIds.length };
 });
 // ---- generateSummerGroups (legacy: węzeł /summer, nie /summer_league) ------

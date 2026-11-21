@@ -15,6 +15,7 @@ globs:
 
 ## GŁÓWNE ŚCIEŻKI
 - `players/{playerId}` – dane zawodnika, weryfikacje, statystyki, kary.
+- `notifications/{notifId}` – wiadomość od admina (`playerId`, `title`, `message`, `read`, `createdAt`, `sentBy`). Zapis tylko z Cloud Functions. Gracz czyta własne wpisy zapytaniem `orderByChild('playerId')`, może ustawić `read: true` i usunąć wpis dopiero gdy jest przeczytany.
 - `schedule/{matchKey}` – mecze ligowe (p1Id, p2Id, score1, score2, legs1, legs2, status, p1Stats, p2Stats, pendingProtocol).
 - `cup/` – `participants/`, `groups/`, `schedule/`, `bracket/`, `settings/`.
 - `settings/` – `adminEmails`, `leagueStructure/`, `rules/`, `socialStats/`, `scheduleDates` (`signupStart`, `signupEnd`, `signupLimit` gdzie 0 = bez limitu, `enrolledCount`, `enrolledSeason` — publiczny licznik zapisów na kolejny sezon).

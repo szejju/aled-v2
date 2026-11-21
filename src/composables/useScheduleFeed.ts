@@ -17,6 +17,7 @@ export interface ScheduleRow {
   date?: string | number
   proposedDate?: string
   proposedTime?: string
+  proposedTimestamp?: number
   score1?: number
   score2?: number
   legs1?: number
@@ -59,6 +60,7 @@ function parseRows(value: unknown, sourcePath: ScheduleRow['sourcePath']): Sched
     date: optDate(row.date),
     proposedDate: optStr(row.proposedDate),
     proposedTime: optStr(row.proposedTime),
+    proposedTimestamp: optNum(row.proposedTimestamp),
     score1: optNum(row.score1),
     score2: optNum(row.score2),
     legs1: optNum(row.legs1),

@@ -885,6 +885,8 @@ export const setDoubleWalkoverAdmin = makeCallable<
 export interface AwardCupWalkoverPayload {
   matchId: string
   walkoverPlayerId: string
+  /** Wygrane sety przy 0 dla rywala: 2, 3 albo 4. */
+  walkoverScore: number
 }
 
 /** Walkover jednego gracza w meczu pucharowym. */
@@ -899,6 +901,8 @@ export interface AdminSummerProtocolPayload {
   score1?: number
   score2?: number
   walkoverPlayerId?: string
+  /** Legi zwycięzcy przy walkoverze: 5 albo 6. */
+  walkoverScore?: number
   p1Stats?: Record<string, unknown>
   p2Stats?: Record<string, unknown>
 }
@@ -914,6 +918,8 @@ export const adminSaveSummerProtocol = makeCallable<
 export interface AwardWalkoverPayload {
   matchKey: string
   walkoverPlayerId: string
+  /** Legi zwycięzcy: 5 albo 6. Rywal dostaje 0. */
+  walkoverScore: number
 }
 
 export interface AwardWalkoverResponse {
@@ -924,7 +930,7 @@ export interface AwardWalkoverResponse {
 
 /**
  * Przyznaje walkover wskazanemu graczowi (`awardWalkover`).
- * Backend zapisuje wyłącznie `schedule/{matchKey}` i nie ustawia wyniku setów.
+ * Backend zamyka mecz w `schedule/{matchKey}` wybranym wynikiem 6:0 albo 5:0 i statusem `played`.
  */
 export const awardWalkover = makeCallable<
   AwardWalkoverPayload,

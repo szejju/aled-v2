@@ -5,6 +5,7 @@
 // Przy identycznym DPI kolejność domyka nazwisko, potem id.
 
 import type { MatchPlayerStats } from "../stats_engine/calculator.js";
+import { listedScore } from "./walkover.js";
 
 export interface CupGroupMatchRef {
   id: string;
@@ -65,11 +66,12 @@ function statsOf(value: unknown): MatchPlayerStats | undefined {
   return value as MatchPlayerStats;
 }
 
-/** Mecz z wpisanym wynikiem setów. Brak wyniku albo puste id zwraca null. */
+/** Mecz z wynikiem setów. Walkover jednego gracza bez wyniku dostaje 2:0. */
 export function readCupPlayedMatch(raw: Record<string, unknown>): CupPlayedMatch | null {
-  const sets1 = finite(raw.score1);
-  const sets2 = finite(raw.score2);
-  if (sets1 === null || sets2 === null) return null;
+  const listed = listedScore(raw, "cup");
+  if (!listed) return null;
+  const sets1 = listed.score1;
+  const sets2 = listed.score2;
   const p1Id = typeof raw.p1Id === "string" ? raw.p1Id : "";
   const p2Id = typeof raw.p2Id === "string" ? raw.p2Id : "";
   if (!p1Id || !p2Id || p1Id === p2Id) return null;

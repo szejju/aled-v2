@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { getSchedule, getPlayersList, type ScheduleMatch, type PlayerListItem } from '@/services/api'
+import { listedScore } from '../../../functions/src/league/walkover.ts'
 import { fetchCupData } from '@/services/api'
 
 // ─── Dane refs ────────────────────────────────────────────────
@@ -20,7 +21,17 @@ onMounted(async () => {
       try {
         const res = await getSchedule({ division: div })
         for (const r of res.schedule ?? []) {
-          matches.push(...r.matches)
+          for (const match of r.matches) {
+            const stored = typeof match.score1 === 'number' && typeof match.score2 === 'number'
+            if (stored) {
+              matches.push(match)
+              continue
+            }
+            const scores = listedScore(match, 'league')
+            matches.push(scores
+              ? { ...match, score1: scores.score1, score2: scores.score2, hasScore: true, badgeState: 'finished', isWalkover: true }
+              : match)
+          }
         }
       } catch { /* pojedyncza dywizja może nie istnieć */ }
     }

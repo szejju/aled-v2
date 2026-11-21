@@ -2,6 +2,7 @@
 // rozstrzygane są remisy. Archiwum sezonu korzysta z tego samego porządku.
 
 import type { Match, MatchPlayerStats } from "../stats_engine/calculator.js";
+import { isSingleWalkover, listedScore } from "./walkover.js";
 
 /** Statusy, po których sędzia oficjalnie zamknął mecz. `played` zapisuje radar i panel. */
 const OFFICIAL_STATUSES = new Set(["played", "approved"]);
@@ -31,11 +32,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
   }
-  return null;
-}
-
-function finiteScore(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
   return null;
 }
 
@@ -69,9 +65,9 @@ export function isBarrageMatch(match: unknown): boolean {
 export function isOfficialLeagueMatch(match: unknown): boolean {
   const raw = asRecord(match);
   if (!raw || isBarrageMatch(raw)) return false;
+  if (!listedScore(raw, "league")) return false;
   const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
-  if (!OFFICIAL_STATUSES.has(status)) return false;
-  if (finiteScore(raw.score1) === null || finiteScore(raw.score2) === null) return false;
+  if (!OFFICIAL_STATUSES.has(status) && !isSingleWalkover(raw)) return false;
   const p1Id = typeof raw.p1Id === "string" ? raw.p1Id : "";
   const p2Id = typeof raw.p2Id === "string" ? raw.p2Id : "";
   return p1Id !== "" && p2Id !== "" && p1Id !== p2Id;
@@ -87,28 +83,28 @@ export function collectOfficialLeagueMatches(schedule: unknown): Match[] {
   for (const value of rows) {
     const raw = asRecord(value);
     if (!raw || !isOfficialLeagueMatch(raw)) continue;
-    const score1 = finiteScore(raw.score1);
-    const score2 = finiteScore(raw.score2);
+    const scores = listedScore(raw, "league");
     const p1Id = raw.p1Id;
     const p2Id = raw.p2Id;
-    if (score1 === null || score2 === null || typeof p1Id !== "string" || typeof p2Id !== "string") {
-      continue;
-    }
+    if (!scores || typeof p1Id !== "string" || typeof p2Id !== "string") continue;
+    const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+    const closed = OFFICIAL_STATUSES.has(status);
+    const verifiedAt = typeof raw.verifiedAt === "number" ? raw.verifiedAt : undefined;
     official.push({
       p1Id,
       p2Id,
       p1Name: typeof raw.p1Name === "string" ? raw.p1Name : undefined,
       p2Name: typeof raw.p2Name === "string" ? raw.p2Name : undefined,
-      score1,
-      score2,
-      p1Stats: statsOf(raw.p1Stats),
-      p2Stats: statsOf(raw.p2Stats),
+      score1: scores.score1,
+      score2: scores.score2,
+      p1Stats: closed ? statsOf(raw.p1Stats) : undefined,
+      p2Stats: closed ? statsOf(raw.p2Stats) : undefined,
       isDoubleWO: raw.isDoubleWO === true,
       isPlayoff: false,
       div: typeof raw.div === "string" ? raw.div : undefined,
-      status: typeof raw.status === "string" ? raw.status.trim().toLowerCase() : undefined,
+      status: closed ? status : "played",
       round: matchRound(raw.round),
-      timestamp: typeof raw.timestamp === "number" ? raw.timestamp : undefined,
+      timestamp: typeof raw.timestamp === "number" ? raw.timestamp : verifiedAt,
     });
   }
 

@@ -25,6 +25,7 @@ import { type ProfileStatsSet, type StatsRow } from '@/components/profile/Profil
 import ProfilePenalties from '@/components/profile/ProfilePenalties.vue'
 import { type PenaltyJournalEntry } from '@/components/profile/ProfilePenalties.vue'
 import ProfileEnrollment from '@/components/profile/ProfileEnrollment.vue'
+import ProfileNotifications from '@/components/profile/ProfileNotifications.vue'
 import { type EnrollmentData } from '@/components/profile/ProfileEnrollment.vue'
 import { type StandingEntry } from '@/components/profile/ProfileMiniTable.vue'
 import ProfileMatches from '@/components/profile/ProfileMatches.vue'
@@ -877,6 +878,7 @@ async function handleDecision(data: {
           @enroll="handleEnroll"
           @join-cup="handleJoinCup"
         />
+        <ProfileNotifications v-if="playerId" :player-id="playerId" />
       </div>
 
       <!-- ŚRODKOWA: KARTA GRACZA + DZIENNIK KAR -->

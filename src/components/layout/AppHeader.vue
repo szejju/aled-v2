@@ -5,13 +5,15 @@ import { Sun, Moon, LogIn, UserPlus } from 'lucide-vue-next'
 import { navLinks } from '@/data/league'
 import LiveTicker from '@/components/home/LiveTicker.vue'
 import { useAuth } from '@/composables/useAuth'
+import { usePlayerNotifications } from '@/composables/usePlayerNotifications'
 
 const route = useRoute()
 const isLightMode = ref(false)
 const mobileMenu = ref<HTMLDetailsElement | null>(null)
 
 // ── Auth (reaktywne flagi) ────────────────────────────────────────
-const { isLoggedIn, isAdmin, logout } = useAuth()
+const { isLoggedIn, isAdmin, logout, playerId } = useAuth()
+const { unread: unreadNotices } = usePlayerNotifications(playerId)
 
 function closeMobileMenu() {
   if (mobileMenu.value) mobileMenu.value.open = false
@@ -138,6 +140,12 @@ async function handleLogout() {
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
               <span class="hidden md:inline">Profil</span>
+              <span
+                v-if="unreadNotices > 0"
+                class="grid min-w-5 place-items-center rounded-full bg-amber-500 px-1.5 text-[10px] font-black leading-5 text-ink"
+              >
+                {{ unreadNotices > 9 ? '9+' : unreadNotices }}
+              </span>
             </RouterLink>
 
             <span

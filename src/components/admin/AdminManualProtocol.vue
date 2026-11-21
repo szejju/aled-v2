@@ -5,6 +5,7 @@ import type { ScheduleRow } from '@/composables/useScheduleFeed'
 import { adminAwardCupWalkover, adminSaveSummerProtocol, apiAdminSaveMatch, apiAwardWalkover, setDoubleWalkoverAdmin } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { errorText } from '@/utils/errorText'
+import { CUP_WALKOVER_SETS, LEAGUE_WALKOVER_MARGINS } from '../../../functions/src/league/walkover.ts'
 import { asRecord, mapEntries, optNum, optStr } from '@/utils/rtdb'
 
 const props = defineProps<{
@@ -86,6 +87,7 @@ const confirmStep = ref<1 | 2>(1)
 const confirmKind = ref<ConfirmKind | null>(null)
 const confirmPlayerId = ref('')
 const confirmPlayerName = ref('')
+const confirmMargin = ref(6)
 const confirmError = ref('')
 const confirmBusy = ref(false)
 
@@ -172,13 +174,17 @@ const confirmTitle = computed(() => {
   return confirmKind.value === 'walkover' ? 'Przyznać walkover?' : 'Obustronny walkover 0:0?'
 })
 
+const walkoverChoices = computed(() => (scope.value === 'cup' ? CUP_WALKOVER_SETS : LEAGUE_WALKOVER_MARGINS))
+const walkoverUnit = computed(() => (scope.value === 'cup' ? 'sety' : 'legi'))
+
 const confirmBody = computed(() => {
   const match = current.value
   const names = match ? `${match.p1Name} vs ${match.p2Name}` : 'ten mecz'
+  const line = `${confirmMargin.value}:0`
   if (confirmKind.value === 'walkover') {
     return confirmStep.value === 1
-      ? `Przyznać walkover graczowi ${confirmPlayerName.value || 'wybranemu'} w meczu ${names}?`
-      : 'Ostateczne potwierdzenie. Mecz zostanie oznaczony jako walkover tego gracza.'
+      ? `Przyznać walkover ${line} graczowi ${confirmPlayerName.value || 'wybranemu'} w meczu ${names}?`
+      : `Ostateczne potwierdzenie. Mecz dostanie wynik ${line}. Przegrany ma 0 ${walkoverUnit.value}.`
   }
   return confirmStep.value === 1
     ? `Zapisać obustronny walkover 0:0 w meczu ${names}? Dotychczasowy wynik zostanie nadpisany.`
@@ -414,6 +420,7 @@ function dismissConfirm() {
   confirmKind.value = null
   confirmPlayerId.value = ''
   confirmPlayerName.value = ''
+  confirmMargin.value = 6
   confirmError.value = ''
   confirmStep.value = 1
 }
@@ -423,6 +430,7 @@ function askWalkover(playerId: string | undefined, playerName: string) {
   confirmKind.value = 'walkover'
   confirmPlayerId.value = playerId
   confirmPlayerName.value = playerName
+  confirmMargin.value = scope.value === 'cup' ? CUP_WALKOVER_SETS[0] : LEAGUE_WALKOVER_MARGINS[0]
   confirmError.value = ''
   confirmStep.value = 1
   confirmOpen.value = true
@@ -460,6 +468,7 @@ async function executeConfirm() {
           matchId: match.id,
           action: 'walkover',
           walkoverPlayerId: confirmPlayerId.value,
+          walkoverScore: confirmMargin.value,
         })
         if (!result.success) throw new Error(result.message || 'Nie udało się przyznać walkowera.')
         notice.value = result.message
@@ -467,6 +476,7 @@ async function executeConfirm() {
         const result = await adminAwardCupWalkover({
           matchId: match.id,
           walkoverPlayerId: confirmPlayerId.value,
+          walkoverScore: confirmMargin.value,
         })
         if (!result.success) throw new Error(result.message || 'Nie udało się przyznać walkowera.')
         notice.value = result.message
@@ -474,9 +484,10 @@ async function executeConfirm() {
         const result = await apiAwardWalkover({
           matchKey: match.id,
           walkoverPlayerId: confirmPlayerId.value,
+          walkoverScore: confirmMargin.value,
         })
         if (!result.ok) throw new Error('Nie udało się przyznać walkowera.')
-        notice.value = `Walkover przyznany graczowi ${confirmPlayerName.value}.`
+        notice.value = `Walkover ${confirmMargin.value}:0 przyznany graczowi ${confirmPlayerName.value}.`
       }
     } else if (scope.value === 'summer') {
       const result = await adminSaveSummerProtocol({ matchId: match.id, action: 'double-walkover' })
@@ -501,7 +512,7 @@ async function executeConfirm() {
 </script>
 
 <template>
-  <AdminSectionCard title="Protokół ręczny" dot-color="bg-blue-500">
+  <AdminSectionCard class="h-full w-full" title="Protokół ręczny" dot-color="bg-blue-500">
     <template #actions>
       <button
         type="button"
@@ -692,6 +703,23 @@ async function executeConfirm() {
         <h3 id="manual-protocol-confirm-title" class="font-display text-xl font-extrabold uppercase text-fg">{{ confirmTitle }}</h3>
         <p class="text-sm text-muted">{{ confirmBody }}</p>
         <p v-if="current" class="text-sm font-bold text-fg">{{ current.p1Name }} vs {{ current.p2Name }}</p>
+        <div v-if="confirmKind === 'walkover'" class="space-y-2">
+          <p class="text-[10px] font-extrabold uppercase tracking-widest text-muted">Wynik · {{ walkoverUnit }}</p>
+          <div class="grid gap-2" :class="walkoverChoices.length === 3 ? 'grid-cols-3' : 'grid-cols-2'">
+            <button
+              v-for="margin in walkoverChoices"
+              :key="margin"
+              type="button"
+              class="rounded-xl px-3 py-3 font-display text-sm font-extrabold uppercase tracking-widest disabled:opacity-50"
+              :class="confirmMargin === margin ? 'bg-amber-600 text-white' : 'border border-line bg-fg/5 text-fg hover:bg-fg/10'"
+              :aria-pressed="confirmMargin === margin"
+              :disabled="confirmBusy"
+              @click="confirmMargin = margin"
+            >
+              {{ margin }}:0
+            </button>
+          </div>
+        </div>
         <p v-if="confirmError" class="text-sm font-bold text-red-400">{{ confirmError }}</p>
         <div class="flex gap-3">
           <button type="button" class="flex-1 rounded-xl border border-line bg-fg/5 px-4 py-3 text-[10px] font-extrabold uppercase text-fg/70 hover:bg-fg/10 disabled:opacity-50" :disabled="confirmBusy" @click="dismissConfirm">Anuluj</button>

@@ -10,6 +10,7 @@ import { ChevronDown } from 'lucide-vue-next'
 import { get, ref as dbRef } from 'firebase/database'
 import MatchDetailsModal from '@/components/schedule/MatchDetailsModal.vue'
 import { getSchedule, getPlayersList, type ScheduleMatch, type ScheduleRound } from '@/services/api'
+import { listedScore } from '../../functions/src/league/walkover.ts'
 import { getDatabaseClient } from '@/services/firebase'
 import { formatWarsawDate, isoToEuropean, roundWindowFromStart } from '@/utils/roundWindow'
 
@@ -143,6 +144,29 @@ const error = ref<string | null>(null)
 const rounds = ref<ScheduleRound[]>([])            // dane dla dywizji ligowych
 const allBarrageRounds = ref<ScheduleRound[]>([])  // wszystkie mecze barażowe (oba typy)
 
+/** Walkover jednego gracza bez wyniku w odpowiedzi API dostaje shutout i status zakończony. */
+function withWalkoverScore(match: ScheduleMatch): ScheduleMatch {
+  const stored = typeof match.score1 === 'number' && typeof match.score2 === 'number'
+  if (stored) return match
+  const scores = listedScore(match, 'league')
+  if (!scores) return match
+  return {
+    ...match,
+    score1: scores.score1,
+    score2: scores.score2,
+    hasScore: true,
+    badgeState: 'finished',
+    isWalkover: true,
+  }
+}
+
+function presentRounds(rounds: ScheduleRound[]): ScheduleRound[] {
+  return rounds.map((round) => ({
+    ...round,
+    matches: round.matches.map(withWalkoverScore),
+  }))
+}
+
 /** Czy jesteśmy w trybie Baraży (przycisk BARAŻE w pierwszym rzędzie). */
 const isBarrageMode = computed(() => selectedMainDiv.value === 'BARAŻE')
 
@@ -191,7 +215,7 @@ const fetchAllBarrages = async () => {
       getSchedule({ division: 'BARAŻE MISTRZOSTWA' }),
       getSchedule({ division: 'BARAŻE SPADEK' }),
     ])
-    allBarrageRounds.value = [...(res1.schedule ?? []), ...(res2.schedule ?? [])]
+    allBarrageRounds.value = presentRounds([...(res1.schedule ?? []), ...(res2.schedule ?? [])])
     // Auto-wybór pierwszego celu barażowego
     if (barrageTargets.value.length > 0) {
       selectedGroup.value = barrageTargets.value[0].id
@@ -224,7 +248,7 @@ const fetchSchedule = async () => {
   error.value = null
   try {
     const res = await getSchedule({ division: divId })
-    rounds.value = res.schedule ?? []
+    rounds.value = presentRounds(res.schedule ?? [])
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Nie udało się pobrać terminarza'
     rounds.value = []
