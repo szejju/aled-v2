@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Protokół Ligi Lato.
- * Same legi, zapis od razu jako played przez submitSummerMatchResult.
+ * Same legi. Zapis czeka na akceptację admina i nie wchodzi od razu do tabeli.
  * Nie woła głównego submitMatchResult i nie rusza tabeli sezonu.
  */
 import { computed, onUnmounted, ref, watch } from 'vue'
@@ -170,8 +170,17 @@ async function loadMatch() {
       match.bestOf,
       settings?.bestOf,
     )
+    const status = text(match.status).toLowerCase()
+    if (status === 'pending_result' || status === 'pending_approval') {
+      unavailable.value = 'Wynik czeka na akceptację admina.'
+      return
+    }
     if (summerMatchClosed(match)) {
       unavailable.value = 'Ten mecz Ligi Lato jest już rozliczony.'
+      return
+    }
+    if (status !== 'accepted') {
+      unavailable.value = 'Wynik można wpisać dopiero po zaakceptowanym terminie.'
       return
     }
     loadedP1Id.value = text(match.p1Id)
@@ -309,8 +318,8 @@ onUnmounted(() => {
     </div>
 
     <div v-else-if="success" class="py-6 text-center">
-      <p class="font-display text-lg font-black text-fg">Wynik Ligi Lato jest zapisany</p>
-      <p class="mt-2 text-sm text-muted">Nie liczy się do DPI ani do tabeli sezonu zasadniczego.</p>
+      <p class="font-display text-lg font-black text-fg">Czeka na akceptację Admina</p>
+      <p class="mt-2 text-sm text-muted">Do tabeli Ligi Lato i ostatnich wyników trafi po akceptacji protokołu.</p>
     </div>
 
     <div v-else-if="unavailable" class="py-6 text-center">

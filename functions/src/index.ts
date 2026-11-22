@@ -115,5 +115,5 @@ export {
 } from "./polls/index.js";
 
 // ─── Liga Lato (izolowany węzeł /summer_league) ──────────────────────────────
-export { registerForSummerLeague, submitSummerMatchResult, adminSaveSummerProtocol } from "./summer_league/actions.js";
+export { registerForSummerLeague, proposeSummerMatchDate, respondToSummerMatchDate, submitSummerMatchResult, approveSummerMatchResult, rejectSummerMatchResult, adminSaveSummerProtocol } from "./summer_league/actions.js";
 export { getSummerPlayerStats } from "./summer_league/stats.js";

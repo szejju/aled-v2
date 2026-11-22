@@ -47,7 +47,10 @@
     },
     "summer_league": {
       ".read": "auth != null",
-      ".write": false
+      ".write": false,
+      "schedule": {
+        ".read": true
+      }
     },
     "notifications": {
       ".indexOn": ["playerId"],

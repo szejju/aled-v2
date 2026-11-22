@@ -92,7 +92,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section v-if="signupOpen" id="dolacz" aria-labelledby="join-title" class="col-span-full">
+  <section v-if="signupOpen" id="dolacz" aria-labelledby="join-title" class="col-span-full scroll-mt-28">
     <div class="relative overflow-hidden rounded-[2rem] bg-lime px-6 py-14 text-on-lime sm:px-12 lg:py-20">
       <Target class="pointer-events-none absolute -right-16 -bottom-16 size-80 text-on-lime opacity-15 sm:size-[26rem]" :stroke-width="1.25" aria-hidden="true" />
       <div class="relative max-w-2xl">

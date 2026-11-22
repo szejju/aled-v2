@@ -6,6 +6,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { generateSummerSchedule, manageSummerLeagueSettings, type ManageSummerLeagueSettingsPayload } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
+import AdminSummerProtocols from './AdminSummerProtocols.vue'
 import { useRtdbValue } from '@/composables/useRtdbValue'
 import { useVerifiedPlayers } from '@/composables/usePlayerDirectory'
 import { useSummerLeagueRoster, type SummerRosterRow } from '@/composables/useSummerLeagueRoster'
@@ -187,6 +188,8 @@ onMounted(() => {
     <p v-if="summerSettings.error" class="mt-3 text-sm font-bold text-red-400">{{ summerSettings.error }}</p>
     <p v-if="sumStatusMsg" :class="['text-sm font-bold mt-3', sumStatusOk ? 'text-lime' : 'text-red-400']">{{ sumStatusMsg }}</p>
   </AdminSectionCard>
+
+  <AdminSummerProtocols />
 
 <!-- GENERATOR GRUP LETNICH -->
   <AdminSectionCard title="Generator Grup (Liga Letnia)" dot-color="bg-teal-500">

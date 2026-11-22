@@ -48,6 +48,7 @@ const props = withDefaults(defineProps<{
   match: ScheduleMatch | Record<string, any> | null
   /**
    * Puste: liga, a puchar wychodzi z flag meczu.
+   * Wyjątek: dywizja „Liga Lato” ma grupę, ale nie jest pucharem.
    * `summer` to Liga Lato (imię przed nazwiskiem).
    */
   competition?: 'league' | 'cup' | 'summer'
@@ -111,16 +112,27 @@ const walkoverNote = computed(() => {
   return 'Ten walkower ma flagę w bazie, ale nie ma zapisanego wyniku liczbowego.'
 })
 
+/** Strona główna oznacza Ligę Lato w `div`, bez osobnej flagi rozgrywek. */
+function isSummerDivision(div: unknown): boolean {
+  const value = text(div).toLocaleLowerCase('pl')
+  return value === 'liga lato' || value.startsWith('liga lato ')
+}
+
+const isSummer = computed(() => {
+  if (props.competition === 'summer') return true
+  if (props.competition === 'league' || props.competition === 'cup') return false
+  return isSummerDivision(props.match?.div)
+})
+
 const isCupMatch = computed(() => {
   if (props.competition === 'cup') return true
   if (props.competition === 'league' || props.competition === 'summer') return false
+  if (isSummer.value) return false
   const match = props.match
   if (!match) return false
   if (match.isPlayoff === true || match.isKnockout === true) return true
   return text(match.group) !== ''
 })
-
-const isSummer = computed(() => props.competition === 'summer')
 
 const nameOrder = computed<'last-first' | 'first-last'>(() => (isSummer.value ? 'first-last' : 'last-first'))
 
@@ -134,23 +146,32 @@ const { p1: face1, p2: face2 } = useProtocolFaces({
   nameOrder: () => nameOrder.value,
 })
 
+function roundCaption(round: unknown): { text: string; composed: boolean } {
+  const raw = round === null || round === undefined || round === '' ? '' : String(round).trim()
+  if (raw === '') return { text: '', composed: false }
+  const composed = /[^\d]/.test(raw)
+  return { text: composed ? raw : `Kolejka ${raw}`, composed }
+}
+
 const contextLabel = computed(() => {
   const match = props.match
   if (!match) return ''
-  if (isSummer.value) return 'Liga Lato'
-  const round = match.round
-  const roundText = round === null || round === undefined || round === '' ? '' : String(round)
-  const roundLabel = roundText === ''
-    ? ''
-    : /[^\d]/.test(roundText)
-      ? roundText
-      : `Kolejka ${roundText}`
+  const round = roundCaption(match.round)
+  if (isSummer.value) {
+    const group = text(match.group)
+    // Lista główna wkłada „Grupa A · Kolejka 1” w round. Surowy terminarz ma numer i osobną grupę.
+    return [
+      'Liga Lato',
+      group && !round.composed ? `Grupa ${group}` : '',
+      round.text,
+    ].filter(Boolean).join(' · ')
+  }
   if (isCupMatch.value) {
     const group = text(match.group)
-    return ['Puchar', group ? `Grupa ${group}` : '', roundLabel].filter(Boolean).join(' · ')
+    return ['Puchar', group ? `Grupa ${group}` : '', round.text].filter(Boolean).join(' · ')
   }
   const div = text(match.div)
-  return ['Liga', div ? `Dywizja ${div}` : '', roundLabel].filter(Boolean).join(' · ')
+  return ['Liga', div ? `Dywizja ${div}` : '', round.text].filter(Boolean).join(' · ')
 })
 
 const whenLabel = computed(() => {

@@ -47,7 +47,9 @@ const headline = computed(() => {
   return `${left.trim()}:${right.trim()}`
 })
 const meta = computed(() => {
-  const parts = [cup.value ? 'Puchar' : 'Liga']
+  const parts = [
+    props.match.sourcePath === 'summer_league/schedule' ? 'Liga Lato' : cup.value ? 'Puchar' : 'Liga',
+  ]
   if (props.match.div) parts.push(props.match.div)
   if (props.match.group) parts.push(props.match.group)
   if (props.match.round !== undefined && props.match.round !== '') parts.push(`Runda ${props.match.round}`)

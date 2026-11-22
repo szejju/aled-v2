@@ -138,92 +138,170 @@ const divBests = computed<DivBest[]>(() => {
 })
 
 const currentDivIndex = ref(0)
-let _carouselTimer: ReturnType<typeof setInterval> | null = null
 
 const currentDivBest = computed(() => {
   if (divBests.value.length === 0) return null
   return divBests.value[currentDivIndex.value % divBests.value.length]
 })
 
+// ─── Jeden kafelek: cztery statystyki na zmianę ─────────────────────────
+
+interface StatSlide {
+  id: string
+  key: string
+  label: string
+  value: string
+  detail: string
+  valueClass: string
+  detailClass: string
+}
+
+const SLIDE_MS = 2500
+const slideIndex = ref(0)
+let _carouselTimer: ReturnType<typeof setInterval> | null = null
+
+const slides = computed<StatSlide[]>(() => [
+  {
+    id: 'players',
+    key: 'players',
+    label: 'Zawodnicy',
+    value: String(playersCount.value),
+    detail: trendLabel.value,
+    valueClass: 'text-fg',
+    detailClass: trendColorClass.value,
+  },
+  {
+    id: 'matches',
+    key: 'matches',
+    label: 'Rozegrane mecze',
+    value: String(playedMatches.value),
+    detail: 'W obecnym sezonie',
+    valueClass: 'text-fg',
+    detailClass: 'text-muted',
+  },
+  {
+    id: 'max',
+    key: 'max',
+    label: 'Maks 180',
+    value: String(total180s.value),
+    detail: 'Suma w sezonie',
+    valueClass: 'text-lime',
+    detailClass: 'text-muted',
+  },
+  {
+    id: 'avg',
+    key: `avg-${currentDivBest.value?.div ?? 'empty'}`,
+    label: 'Najlepsza średnia',
+    value: currentDivBest.value ? currentDivBest.value.avg.toFixed(1) : '\u2013',
+    detail: currentDivBest.value
+      ? `Dywizja ${currentDivBest.value.div}: ${currentDivBest.value.name}`
+      : 'Brak danych',
+    valueClass: 'text-fg',
+    detailClass: 'text-muted',
+  },
+])
+
+const currentSlide = computed(() => slides.value[slideIndex.value] ?? slides.value[0]!)
+
+function advanceSlide() {
+  if (slideIndex.value === 3 && divBests.value.length > 1) {
+    currentDivIndex.value = (currentDivIndex.value + 1) % divBests.value.length
+  }
+  slideIndex.value = (slideIndex.value + 1) % slides.value.length
+}
+
+function goToSlide(index: number) {
+  slideIndex.value = index
+}
+
+function startCarousel() {
+  stopCarousel()
+  _carouselTimer = setInterval(advanceSlide, SLIDE_MS)
+}
+
+function stopCarousel() {
+  if (_carouselTimer) {
+    clearInterval(_carouselTimer)
+    _carouselTimer = null
+  }
+}
+
 // ─── Lifecycle ──────────────────────────────────────────────────────────
 
 onMounted(() => {
   loadData()
   startScheduleListener()
-
-  _carouselTimer = setInterval(() => {
-    if (divBests.value.length > 1) {
-      currentDivIndex.value = (currentDivIndex.value + 1) % divBests.value.length
-    }
-  }, 3500)
+  startCarousel()
 })
 
 onUnmounted(() => {
   _unsubSchedule?.()
-  if (_carouselTimer) clearInterval(_carouselTimer)
+  stopCarousel()
 })
 </script>
 
 <template>
   <section
-    aria-label="Statystyki sezonu"
-    class="grid grid-cols-2 gap-4 md:col-span-6 lg:col-span-4"
+    aria-label="Statystyki sezonu i partnerzy"
+    class="grid grid-cols-1 gap-4 md:col-span-6 md:grid-cols-2 lg:col-span-4 lg:grid-cols-1"
   >
-    <!-- Kafelek 1: Zawodnicy -->
-    <div class="bento p-5">
-      <p class="label text-muted">Zawodnicy</p>
-      <p class="mt-2 font-display text-4xl font-black">{{ playersCount }}</p>
-      <p class="label mt-1" :class="trendColorClass">
-        {{ trendLabel }}
+    <div
+      class="bento flex h-full flex-col p-5"
+      @mouseenter="stopCarousel"
+      @mouseleave="startCarousel"
+    >
+      <div :key="currentSlide.key" class="stat-in min-h-[6.75rem] flex-1">
+        <h2 class="font-display text-2xl font-black uppercase italic">{{ currentSlide.label }}</h2>
+        <p
+          class="mt-2 font-display text-4xl font-black tabular-nums leading-none"
+          :class="currentSlide.valueClass"
+        >
+          {{ currentSlide.value }}
+        </p>
+        <p class="label mt-2 line-clamp-2" :class="currentSlide.detailClass">
+          {{ currentSlide.detail }}
+        </p>
+      </div>
+
+      <div class="mt-3 flex gap-1.5">
+        <button
+          v-for="(slide, i) in slides"
+          :key="slide.id"
+          type="button"
+          class="h-1 flex-1 rounded-full transition-colors"
+          :class="i === slideIndex ? 'bg-lime' : 'bg-line hover:bg-muted/40'"
+          :aria-label="slide.label"
+          :aria-current="i === slideIndex ? 'true' : undefined"
+          @click="goToSlide(i)"
+        />
+      </div>
+    </div>
+
+    <div class="bento force-dark flex h-full flex-col p-5">
+      <h2 class="font-display text-2xl font-black uppercase italic">Partnerzy</h2>
+      <div class="flex flex-1 items-center justify-center py-3">
+        <img
+          src="/images/bestdarts.png"
+          alt="BestDarts"
+          class="max-h-24 w-full object-contain lg:max-h-28"
+          width="393"
+          height="338"
+        />
+      </div>
+      <p class="text-center font-sans text-[11px] font-semibold uppercase leading-snug tracking-[0.12em] text-muted">
+        6% rabatu z kodem:
+        <span class="font-display text-sm font-black normal-case tracking-normal text-lime">aled6</span>
       </p>
-    </div>
-
-    <!-- Kafelek 2: Rozegrane mecze -->
-    <div class="bento p-5">
-      <p class="label text-muted">Rozegrane mecze</p>
-      <p class="mt-2 font-display text-4xl font-black">{{ playedMatches }}</p>
-      <p class="label mt-1 text-muted">W obecnym sezonie</p>
-    </div>
-
-    <!-- Kafelek 3: Maks 180 -->
-    <div class="rounded-3xl bg-lime p-5 text-on-lime">
-      <p class="label text-on-lime/70">Maks 180</p>
-      <p class="mt-2 font-display text-4xl font-black">{{ total180s }}</p>
-      <p class="label mt-1 text-on-lime/70">Suma w sezonie</p>
-    </div>
-
-    <!-- Kafelek 4: Najlepsza średnia (karuzela) -->
-    <div class="bento p-5">
-      <p class="label text-muted">Najlepsza średnia</p>
-
-      <template v-if="currentDivBest">
-        <Transition name="fade" mode="out-in">
-          <div :key="currentDivBest.div">
-            <p class="mt-2 font-display text-4xl font-black tabular-nums">
-              {{ currentDivBest.avg.toFixed(1) }}
-            </p>
-            <p class="label mt-1 text-muted">
-              Dywizja {{ currentDivBest.div }}: {{ currentDivBest.name }}
-            </p>
-          </div>
-        </Transition>
-      </template>
-
-      <template v-else>
-        <p class="mt-2 font-display text-4xl font-black">&ndash;</p>
-        <p class="label mt-1 text-muted">Brak danych</p>
-      </template>
     </div>
   </section>
 </template>
 
 <style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.5s ease;
+.stat-in {
+  animation: stat-in 0.45s ease;
 }
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
+@keyframes stat-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 </style>

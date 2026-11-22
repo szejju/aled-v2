@@ -69,7 +69,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section aria-labelledby="div-title" class="bento p-6 col-span-full">
+  <section aria-labelledby="div-title" class="bento h-full p-6">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h2 id="div-title" class="font-display text-2xl font-black uppercase italic">Liderzy <span class="text-accent">dywizji</span></h2>
       <span class="label text-muted">{{ divisions.length }} dywizje</span>
@@ -88,7 +88,7 @@ onMounted(async () => {
     <!-- Kafelki dywizji -->
     <div
       v-else-if="divisions.length"
-      class="mt-5 grid grid-cols-1 gap-3 uppercase sm:grid-cols-2 xl:grid-cols-4"
+      class="mt-5 grid grid-cols-1 gap-3 uppercase sm:grid-cols-2 xl:grid-cols-3"
     >
       <RouterLink
         v-for="division in divisions"

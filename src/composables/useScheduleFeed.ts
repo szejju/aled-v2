@@ -4,7 +4,7 @@ import { asRecord, flag, mapEntries, optNum, optStr } from '@/utils/rtdb'
 
 export interface ScheduleRow {
   id: string
-  sourcePath: 'schedule' | 'cup/schedule'
+  sourcePath: 'schedule' | 'cup/schedule' | 'summer_league/schedule'
   p1Name?: string
   p2Name?: string
   p1Id?: string
@@ -80,19 +80,28 @@ export function awaitsProtocolApproval(status: string | undefined): boolean {
 }
 
 /**
- * Jeden nasłuch na `schedule` i jeden na `cup/schedule`.
- * Radar, wyjątki, protokół i zaległości czytają ten sam snapshot.
+ * Nasłuch `schedule`, `cup/schedule` i `summer_league/schedule`.
+ * Liga i puchar zasilają protokół ręczny oraz zaległości.
+ * Radar dokłada protokoły Ligi Lato, ale nie wrzuca ich do `all`,
+ * żeby nie liczyły się jak zaległy mecz sezonu.
  */
 export function useScheduleFeed() {
   const league = useRtdbValue('schedule', (snapshot) => parseRows(snapshot.val(), 'schedule'), [] as ScheduleRow[])
   const cup = useRtdbValue('cup/schedule', (snapshot) => parseRows(snapshot.val(), 'cup/schedule'), [] as ScheduleRow[])
+  const summer = useRtdbValue(
+    'summer_league/schedule',
+    (snapshot) => parseRows(snapshot.val(), 'summer_league/schedule'),
+    [] as ScheduleRow[],
+  )
 
   const all = computed(() => [...league.data.value, ...cup.data.value])
-  const error = computed(() => league.error.value || cup.error.value)
-  const ready = computed(() => league.ready.value && cup.ready.value)
+  const error = computed(() => league.error.value || cup.error.value || summer.error.value)
+  const ready = computed(() => league.ready.value && cup.ready.value && summer.ready.value)
 
   const radar = computed(() =>
-    all.value.filter((match) => awaitsProtocolApproval(match.status) && match.pendingProtocol),
+    [...all.value, ...summer.data.value].filter(
+      (match) => awaitsProtocolApproval(match.status) && match.pendingProtocol,
+    ),
   )
 
   const exceptions = computed(() =>
@@ -102,6 +111,7 @@ export function useScheduleFeed() {
   function start() {
     league.start()
     cup.start()
+    summer.start()
   }
 
   return { all, radar, exceptions, error, ready, start }

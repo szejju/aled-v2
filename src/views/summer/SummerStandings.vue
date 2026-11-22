@@ -1,22 +1,21 @@
 <script setup lang="ts">
 /**
  * Tabela Ligi Lato.
- * Odczyt wyłącznie z `/summer_league/standings` (listener zdejmowany przy odmontowaniu).
- * Kolejność wierszy ustala serwer: punkty, różnica legów, zdobyte legi.
+ * Skład i kolejność liczy ten sam `buildSummerStandings`, który zapisuje serwer.
+ * Nasłuch terminarza i uczestników schodzi przy odmontowaniu.
+ * Kolejność jak w lidze głównej: punkty, różnica legów, wygrane legi,
+ * pojedynek bezpośredni w grupie remisowej, na końcu średnia.
  */
 import { computed, onMounted, watch } from 'vue'
 import { Sun } from 'lucide-vue-next'
 import { useRtdbValue } from '@/composables/useRtdbValue'
 import { useToast } from '@/composables/useToast'
-
-interface SummerStandingRow {
-  uid: string
-  name: string
-  matchesPlayed: number
-  points: number
-  legsWon: number
-  legsLost: number
-}
+import {
+  buildSummerStandings,
+  type SummerForm,
+  type SummerStandingRow,
+} from '../../../functions/src/summer_league/standings.ts'
+import SummerSectionNav from '@/components/summer/SummerSectionNav.vue'
 
 interface SummerTable {
   id: string
@@ -24,44 +23,9 @@ interface SummerTable {
   rows: SummerStandingRow[]
 }
 
+type FormDot = SummerForm | 'N'
+
 const { showToast } = useToast()
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  return value as Record<string, unknown>
-}
-
-function whole(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
-}
-
-function rowFrom(value: unknown, fallbackId: string): SummerStandingRow | null {
-  const record = asRecord(value)
-  if (!record) return null
-  const matchesPlayed = whole(record.matchesPlayed)
-  const points = whole(record.points)
-  const legsWon = whole(record.legsWon)
-  const legsLost = whole(record.legsLost)
-  if (matchesPlayed === null || points === null || legsWon === null || legsLost === null) return null
-  const uid = typeof record.uid === 'string' && record.uid.trim() ? record.uid.trim() : fallbackId
-  const written = typeof record.name === 'string' ? record.name.trim() : ''
-  return {
-    uid,
-    name: written || uid,
-    matchesPlayed,
-    points,
-    legsWon,
-    legsLost,
-  }
-}
-
-function parseRows(value: unknown): SummerStandingRow[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item, index) => {
-    const row = rowFrom(item, String(index))
-    return row ? [row] : []
-  })
-}
 
 function groupTitle(key: string): string {
   if (key === '—') return 'Bez grupy'
@@ -69,107 +33,92 @@ function groupTitle(key: string): string {
   return `Grupa ${key}`
 }
 
-/** Płaska lista albo mapa grup ze specyfikacji (`standings.A = [...]`). */
-function parseSummerStandings(value: unknown): SummerTable[] {
+function presentTables(value: ReturnType<typeof buildSummerStandings>): SummerTable[] {
   if (Array.isArray(value)) {
-    const rows = parseRows(value)
-    return rows.length ? [{ id: 'all', title: null, rows }] : []
+    return value.length ? [{ id: 'all', title: null, rows: value }] : []
   }
-  const record = asRecord(value)
-  if (!record) return []
-
-  const grouped = Object.entries(record).flatMap(([key, item]) => {
-    const rows = parseRows(item)
+  return Object.entries(value).flatMap(([key, rows]) => {
     if (!rows.length) return []
     return [{ id: key, title: groupTitle(key), rows }]
   })
-  if (grouped.length) {
-    return grouped.sort((a, b) => (a.title ?? '').localeCompare(b.title ?? '', 'pl'))
-  }
-
-  const rows = Object.entries(record).flatMap(([key, item]) => {
-    const row = rowFrom(item, key)
-    return row ? [row] : []
-  })
-  return rows.length ? [{ id: 'all', title: null, rows }] : []
 }
 
-const {
-  data: standingTables,
-  error: standingsError,
-  ready: standingsReady,
-  start: startStandings,
-} = useRtdbValue('summer_league/standings', (snapshot) => parseSummerStandings(snapshot.val()), [] as SummerTable[])
+const scheduleNode = useRtdbValue(
+  'summer_league/schedule',
+  (snapshot) => snapshot.val(),
+  null as unknown,
+)
+const participantsNode = useRtdbValue(
+  'summer_league/participants',
+  (snapshot) => snapshot.val(),
+  null as unknown,
+)
 
-const tables = computed(() => standingTables.value)
-const loading = computed(() => !standingsReady.value)
+const tables = computed(() => presentTables(buildSummerStandings(scheduleNode.data.value, participantsNode.data.value)))
+const loading = computed(() => !scheduleNode.ready.value || !participantsNode.ready.value)
 
 function standingsProblem(message: string): string {
   if (/permission/i.test(message)) return 'Brak dostępu do tabeli Ligi Lato.'
   return message
 }
 
-const problem = computed(() => (standingsError.value ? standingsProblem(standingsError.value) : ''))
-const empty = computed(() => standingsReady.value && !problem.value && tables.value.length === 0)
+const problem = computed(() => {
+  const message = scheduleNode.error.value || participantsNode.error.value
+  return message ? standingsProblem(message) : ''
+})
+const empty = computed(() => scheduleNode.ready.value && participantsNode.ready.value && !problem.value && tables.value.length === 0)
 
 watch(problem, (message) => {
   if (message) showToast(message, 'error')
 })
 
 onMounted(() => {
-  startStandings()
+  scheduleNode.start()
+  participantsNode.start()
 })
 
-function legDiff(row: SummerStandingRow): number {
-  return row.legsWon - row.legsLost
+/** Ostatnie 5 rozstrzygnięć, dopełnione brakami meczu do pełnych 5 kropek. */
+function lastFive(form: readonly SummerForm[]): FormDot[] {
+  const dots: FormDot[] = form.slice(-5)
+  while (dots.length < 5) dots.unshift('N')
+  return dots
 }
 
-function formatDiff(row: SummerStandingRow): string {
-  const diff = legDiff(row)
-  return diff > 0 ? `+${diff}` : String(diff)
+const dotClass: Record<FormDot, string> = {
+  W: 'bg-lime shadow-[0_0_10px_rgb(155_226_45/0.5)]',
+  D: 'bg-yellow-400',
+  L: 'bg-danger',
+  N: 'bg-line',
 }
 
-function diffClass(row: SummerStandingRow): string {
-  const diff = legDiff(row)
-  if (diff > 0) return 'text-amber-700 dark:text-amber-300'
-  if (diff < 0) return 'text-red-500'
-  return 'text-muted'
+const dotTitle: Record<FormDot, string> = {
+  W: 'Wygrana',
+  D: 'Remis',
+  L: 'Przegrana',
+  N: 'Brak meczu',
+}
+
+function formatAvg(value: number): string {
+  return value.toFixed(2)
 }
 </script>
 
 <template>
-  <section class="mx-auto max-w-3xl" aria-labelledby="summer-standings-title">
+  <section class="w-full" aria-labelledby="summer-standings-title">
     <div class="overflow-hidden rounded-[2rem] border border-amber-500/40 bg-amber-500/10">
       <div class="flex items-center gap-3 bg-amber-500 px-6 py-4 text-stone-950">
         <Sun class="size-6 shrink-0" :stroke-width="2.25" aria-hidden="true" />
         <p class="font-display text-sm font-black uppercase tracking-[0.18em]">
-          Liga Lato — osobna tabela
+          Liga Lato
         </p>
       </div>
 
       <div class="p-6 sm:p-8">
         <h1 id="summer-standings-title" class="font-display text-4xl font-black uppercase italic tracking-tight">
-          Tabela
+          Tabela Lato
         </h1>
-        <p class="mt-3 text-sm leading-relaxed text-muted">
-          Punkty tylko z meczów Ligi Lato. Wygrana 3, remis 1. Ta tabela nie zmienia DPI ani tabeli sezonu.
-        </p>
 
-        <nav aria-label="Sekcje Ligi Lato" class="mt-6 flex flex-wrap gap-2">
-          <RouterLink
-            to="/lato"
-            class="rounded-full bg-stone-950/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-fg hover:bg-amber-500/20"
-          >
-            Zapisy
-          </RouterLink>
-          <RouterLink
-            to="/lato/tabela"
-            aria-current="page"
-            class="rounded-full bg-amber-500 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-stone-950"
-          >
-            Tabela
-          </RouterLink>
-        </nav>
+        <SummerSectionNav current="tabela" />
 
         <div v-if="loading" class="mt-8 h-40 animate-pulse rounded-2xl bg-fg/10" aria-hidden="true" />
 
@@ -189,19 +138,27 @@ function diffClass(row: SummerStandingRow): string {
           >
             <h2 v-if="table.title" class="border-b border-line px-4 py-3 font-display text-xl font-black uppercase italic">
               {{ table.title }}
+              <span class="ml-2 font-sans text-xs font-bold not-italic tracking-[0.14em] text-muted">
+                {{ table.rows.length }} zawodników
+              </span>
             </h2>
             <div class="overflow-x-auto">
-              <table class="w-full min-w-[36rem] border-collapse text-left">
+              <table class="w-full min-w-[40rem] border-collapse text-left">
                 <caption class="sr-only">
-                  Tabela Ligi Lato{{ table.title ? `, ${table.title}` : '' }}: pozycja, imię, mecze, punkty i legi.
+                  Tabela Ligi Lato{{ table.title ? `, ${table.title}` : '' }}: pozycja, zawodnik, mecze, zwycięstwa, remisy, porażki, legi, forma, średnia i punkty.
                 </caption>
                 <thead>
                   <tr class="border-b border-line bg-amber-500/10 text-xs uppercase tracking-[0.14em] text-muted">
-                    <th scope="col" class="px-4 py-3 text-center font-bold">Pozycja</th>
-                    <th scope="col" class="px-4 py-3 font-bold">Imię</th>
-                    <th scope="col" class="px-4 py-3 text-center font-bold">Mecze</th>
-                    <th scope="col" class="px-4 py-3 text-center font-bold">Punkty</th>
-                    <th scope="col" class="px-4 py-3 text-center font-bold">Legi +/-</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold">#</th>
+                    <th scope="col" class="px-3 py-3 font-bold">Zawodnik</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Rozegrane mecze">M</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Zwycięstwa">W</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Remisy">D</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Porażki">L</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Legi: wygrane : przegrane">Legi</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold">Forma</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold" title="Średnia ligowa">Śr.</th>
+                    <th scope="col" class="px-3 py-3 text-center font-bold">Pkt</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -210,27 +167,53 @@ function diffClass(row: SummerStandingRow): string {
                     :key="row.uid"
                     class="border-b border-line/70 last:border-b-0"
                   >
-                    <td class="px-4 py-3 text-center font-display text-lg font-black tabular-nums text-amber-700 dark:text-amber-300">
+                    <td class="px-3 py-3 text-center font-display text-lg font-black tabular-nums text-amber-700 dark:text-amber-300">
                       {{ index + 1 }}
                     </td>
-                    <th scope="row" class="px-4 py-3 font-semibold text-fg">
+                    <th scope="row" class="px-3 py-3 font-semibold text-fg">
                       {{ row.name }}
                     </th>
-                    <td class="px-4 py-3 text-center tabular-nums text-muted">
+                    <td class="px-3 py-3 text-center font-display text-base font-bold tabular-nums text-fg/80">
                       {{ row.matchesPlayed }}
                     </td>
-                    <td class="px-4 py-3 text-center font-display text-xl font-black tabular-nums">
-                      {{ row.points }}
+                    <td class="px-3 py-3 text-center font-display text-base font-bold tabular-nums text-lime">
+                      {{ row.wins }}
                     </td>
-                    <td class="px-4 py-3 text-center tabular-nums">
-                      <span :class="diffClass(row)">{{ formatDiff(row) }}</span>
-                      <span class="ml-2 text-xs text-muted">{{ row.legsWon }}:{{ row.legsLost }}</span>
+                    <td class="px-3 py-3 text-center font-display text-base font-bold tabular-nums text-muted">
+                      {{ row.draws }}
+                    </td>
+                    <td class="px-3 py-3 text-center font-display text-base font-bold tabular-nums text-danger">
+                      {{ row.losses }}
+                    </td>
+                    <td class="px-3 py-3 text-center font-display text-sm font-bold tabular-nums text-muted">
+                      {{ row.legsWon }}:{{ row.legsLost }}
+                    </td>
+                    <td class="px-3 py-3">
+                      <div class="flex items-center justify-center gap-1">
+                        <span
+                          v-for="(result, dotIndex) in lastFive(row.form)"
+                          :key="`${row.uid}-${dotIndex}`"
+                          class="size-2.5 rounded-full"
+                          :class="dotClass[result]"
+                          :title="dotTitle[result]"
+                        />
+                      </div>
+                    </td>
+                    <td class="px-3 py-3 text-center font-display text-base font-extrabold tabular-nums text-fg">
+                      {{ formatAvg(row.realAvg) }}
+                    </td>
+                    <td class="bg-amber-500/10 px-3 py-3 text-center font-display text-lg font-black tabular-nums text-amber-700 dark:text-amber-300">
+                      {{ row.points }}
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </article>
+
+          <p class="text-xs text-muted">
+            Kolejność: punkty, różnica legów, wygrane legi, bilans meczów bezpośrednich, średnia.
+          </p>
         </div>
       </div>
     </div>

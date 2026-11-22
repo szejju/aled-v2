@@ -330,13 +330,52 @@ export interface SubmitSummerMatchResultResponse {
 
 /**
  * Wynik Ligi Lato. score1/score2 to legi.
- * Zapis idzie do /summer_league/schedule, a serwer odświeża /summer_league/standings.
- * Bez DPI i bez tabeli sezonu.
+ * Zapis dostaje status `pending_result` i czeka na akceptację admina.
+ * Tabela i ostatnie wyniki dostają go dopiero po zatwierdzeniu. Bez DPI.
  */
 export const submitSummerMatchResult = makeCallable<
   SubmitSummerMatchResultPayload,
   SubmitSummerMatchResultResponse
 >('submitSummerMatchResult')
+
+export interface SummerDatePayload {
+  matchId: string
+  date: string
+  time: string
+  timestamp: number
+}
+
+export const proposeSummerMatchDate = makeCallable<
+  SummerDatePayload,
+  { success: true; message: string }
+>('proposeSummerMatchDate')
+
+export const respondToSummerMatchDate = makeCallable<
+  {
+    matchId: string
+    action: 'accept' | 'reject' | 'counter'
+    date?: string
+    time?: string
+    timestamp?: number
+  },
+  { success: true; message: string }
+>('respondToSummerMatchDate')
+
+export const approveSummerMatchResult = makeCallable<
+  {
+    matchId: string
+    score1: number
+    score2: number
+    p1Stats: Record<string, unknown>
+    p2Stats: Record<string, unknown>
+  },
+  { success: true; message: string }
+>('approveSummerMatchResult')
+
+export const rejectSummerMatchResult = makeCallable<
+  { matchId: string },
+  { success: true; message: string }
+>('rejectSummerMatchResult')
 
 export interface SummerPlayerStatsResponse {
   realAvg: number

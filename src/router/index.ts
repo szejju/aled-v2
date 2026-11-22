@@ -123,6 +123,13 @@ const router = createRouter({
       meta: { title: 'Tabela Ligi Lato', requiresAuth: true },
     },
     {
+      // Terminarz jest publiczny: węzeł schedule ma odczyt bez logowania.
+      path: '/lato/terminarz',
+      name: 'SummerSchedule',
+      component: () => import('@/views/summer/SummerSchedule.vue'),
+      meta: { title: 'Terminarz Ligi Lato' },
+    },
+    {
       path: '/lato/protokol/:matchId',
       name: 'SummerMatchModal',
       component: () => import('@/components/summer/SummerMatchModal.vue'),

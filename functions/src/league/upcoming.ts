@@ -114,11 +114,20 @@ function agreedStamp(match: RawFixture): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed
 }
 
-function toListed(id: string, match: RawFixture, source: 'league' | 'cup'): ListedMatch | null {
+function summerRoundLabel(match: RawFixture): string {
+  const group = typeof match.group === 'string' ? match.group.trim() : ''
+  const parts = [
+    group ? `Grupa ${group}` : '',
+    match.round != null && match.round !== '' ? `Kolejka ${match.round}` : '',
+  ]
+  return parts.filter(Boolean).join(' · ')
+}
+
+function toListed(id: string, match: RawFixture, source: 'league' | 'cup' | 'summer'): ListedMatch | null {
   if (!match || !match.p1Id || !match.p2Id || !match.p1Name || !match.p2Name) return null
   if (match.p1Id === match.p2Id) return null
 
-  const scores = listedScore(match, source)
+  const scores = listedScore(match, source === 'cup' ? 'cup' : 'league')
   const singleWalkover = isSingleWalkover(match)
   const scored = scores !== null && (
     (typeof match.score1 === 'number' && typeof match.score2 === 'number') || singleWalkover
@@ -136,9 +145,13 @@ function toListed(id: string, match: RawFixture, source: 'league' | 'cup'): List
 
   return {
     id,
-    div: source === 'cup' ? 'Puchar Ligi' : (match.div || 'Liga'),
+    div: source === 'cup' ? 'Puchar Ligi' : source === 'summer' ? 'Liga Lato' : (match.div || 'Liga'),
     group: group || undefined,
-    round: source === 'cup' ? (group ? `Grupa ${group}` : (match.round ?? '')) : (match.round ?? ''),
+    round: source === 'summer'
+      ? summerRoundLabel(match)
+      : source === 'cup'
+        ? (group ? `Grupa ${group}` : (match.round ?? ''))
+        : (match.round ?? ''),
     p1Name: match.p1Name,
     p2Name: match.p2Name,
     p1Id: match.p1Id,
@@ -168,7 +181,7 @@ function toListed(id: string, match: RawFixture, source: 'league' | 'cup'): List
   }
 }
 
-function rowsOf(value: unknown, source: 'league' | 'cup'): ListedMatch[] {
+function rowsOf(value: unknown, source: 'league' | 'cup' | 'summer'): ListedMatch[] {
   return Object.entries(asRecord(value))
     .map(([id, match]) => toListed(id, match, source))
     .filter((match): match is ListedMatch => match !== null)
@@ -207,10 +220,12 @@ export function buildHomeMatchLists(
   cupSchedule: unknown,
   now = Date.now(),
   recentLimit = 5,
+  summerSchedule: unknown = null,
 ) {
   const league = rowsOf(schedule, 'league')
   const cup = rowsOf(cupSchedule, 'cup')
-  const all = [...league, ...cup]
+  const summer = rowsOf(summerSchedule, 'summer')
+  const all = [...league, ...cup, ...summer]
   return {
     league,
     cup,

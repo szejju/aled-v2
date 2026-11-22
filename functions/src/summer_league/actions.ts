@@ -9,6 +9,7 @@ import * as admin from "firebase-admin";
 import { verifyAdmin } from "../admin/auth.js";
 import { db } from "../database/connection.js";
 import { checkoutProblem, parseAverage, shortLegMinimum } from "../matches/protocolRules.js";
+import { plausibleLocalTimestamp } from "../league/roundWindow.js";
 import { chosenWalkoverMargin, LEAGUE_WALKOVER_MARGINS } from "../league/walkover.js";
 import {
   resolveSummerMatchFormat,
@@ -16,6 +17,10 @@ import {
   summerMatchClosed,
   summerMatchKey,
 } from "./scoreRules.js";
+import { buildSummerStandings } from "./standings.js";
+
+export { buildSummerStandings };
+export type { SummerStandingRow } from "./standings.js";
 
 const SUMMER_ROOT = "summer_league";
 
@@ -174,6 +179,200 @@ export const registerForSummerLeague = onCall(
   },
 );
 
+const OPENABLE_SUMMER_STATUSES = new Set(["", "pending", "scheduled", "upcoming", "unscheduled"]);
+
+interface SummerDateInput {
+  matchId: string;
+  date: string;
+  time: string;
+  timestamp: number;
+}
+
+function summerStatus(match: Record<string, unknown>): string {
+  return text(match.status).toLowerCase();
+}
+
+function readDateInput(data: unknown): SummerDateInput {
+  const record = asRecord(data);
+  const matchId = summerMatchKey(record?.matchId);
+  const date = text(record?.date);
+  const time = text(record?.time);
+  const timestamp = typeof record?.timestamp === "number" ? record.timestamp : Number.NaN;
+  if (!matchId) {
+    throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    throw new HttpsError("invalid-argument", "Podaj datę i godzinę.");
+  }
+  if (!plausibleLocalTimestamp(date, time, timestamp)) {
+    throw new HttpsError("invalid-argument", "Godzina musi być lokalnym czasem gracza.");
+  }
+  if (timestamp <= Date.now()) {
+    throw new HttpsError("failed-precondition", "Termin nie może być w przeszłości.");
+  }
+  return { matchId, date, time, timestamp };
+}
+
+function assertSummerSide(match: Record<string, unknown>, keys: Set<string>): void {
+  const p1 = text(match.p1Id);
+  const p2 = text(match.p2Id);
+  if (!p1 || !p2 || p1 === p2) {
+    throw new HttpsError("failed-precondition", "Mecz Ligi Lato nie ma obu graczy.");
+  }
+  if (!keys.has(p1) && !keys.has(p2)) {
+    throw new HttpsError("permission-denied", "To nie jest Twój mecz Ligi Lato.");
+  }
+  if (match.isWalkover === true || match.isDoubleWO === true || text(match.walkoverPlayerId)) {
+    throw new HttpsError("failed-precondition", "To jest walkover. Terminu nie umawiasz.");
+  }
+}
+
+/**
+ * Propozycja terminu meczu Ligi Lato.
+ * Bez okna kolejki sezonu zasadniczego: data ma być w przyszłości.
+ * Zapis wyłącznie w /summer_league/schedule. Rywal akceptuje osobno.
+ */
+export const proposeSummerMatchDate = onCall(
+  { cors: true },
+  async (request): Promise<{ success: true; message: string }> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Musisz być zalogowany, aby zaproponować termin.");
+
+    const input = readDateInput(request.data);
+    try {
+      const database = db();
+      const [settingsSnap, participantSnap, matchSnap, keys] = await Promise.all([
+        database.ref(`${SUMMER_ROOT}/settings`).once("value"),
+        database.ref(`${SUMMER_ROOT}/participants/${uid}`).once("value"),
+        database.ref(`${SUMMER_ROOT}/schedule/${input.matchId}`).once("value"),
+        callerKeys(uid, authEmail(request)),
+      ]);
+      const settings = asRecord(settingsSnap.val());
+      if (!settings || settings.isActive !== true) {
+        throw new HttpsError("failed-precondition", "Liga Lato jest wyłączona.");
+      }
+      if (!participantSnap.exists()) {
+        throw new HttpsError("permission-denied", "Termin może zaproponować tylko uczestnik Ligi Lato.");
+      }
+      const match = asRecord(matchSnap.val());
+      if (!match) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+      assertSummerSide(match, keys);
+      if (summerMatchClosed(match)) {
+        throw new HttpsError("failed-precondition", "Ten mecz Ligi Lato został już rozliczony.");
+      }
+      if (!OPENABLE_SUMMER_STATUSES.has(summerStatus(match))) {
+        throw new HttpsError("failed-precondition", "Ten mecz nie przyjmuje nowej propozycji terminu.");
+      }
+
+      await database.ref(`${SUMMER_ROOT}/schedule/${input.matchId}`).update({
+        proposedDate: input.date,
+        proposedTime: input.time,
+        proposedTimestamp: input.timestamp,
+        proposerId: uid,
+        proposedBy: uid,
+        status: "proposed",
+        updatedAt: admin.database.ServerValue.TIMESTAMP,
+      });
+      return { success: true, message: "Propozycja wysłana do rywala." };
+    } catch (error: unknown) {
+      rethrow(error, "Nie udało się zapisać terminu Ligi Lato.");
+    }
+  },
+);
+
+/**
+ * Akceptacja, odrzucenie albo kontrpropozycja terminu Ligi Lato.
+ * Własnej propozycji nie da się zaakceptować.
+ */
+export const respondToSummerMatchDate = onCall(
+  { cors: true },
+  async (request): Promise<{ success: true; message: string }> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Musisz być zalogowany, aby odpowiedzieć na termin.");
+
+    const record = asRecord(request.data);
+    const action = record?.action;
+    if (action !== "accept" && action !== "reject" && action !== "counter") {
+      throw new HttpsError("invalid-argument", "Nieprawidłowa decyzja.");
+    }
+    const matchId = summerMatchKey(record?.matchId);
+    if (!matchId) {
+      throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
+    }
+
+    try {
+      const database = db();
+      const matchRef = database.ref(`${SUMMER_ROOT}/schedule/${matchId}`);
+      const [settingsSnap, participantSnap, matchSnap, keys] = await Promise.all([
+        database.ref(`${SUMMER_ROOT}/settings`).once("value"),
+        database.ref(`${SUMMER_ROOT}/participants/${uid}`).once("value"),
+        matchRef.once("value"),
+        callerKeys(uid, authEmail(request)),
+      ]);
+      const settings = asRecord(settingsSnap.val());
+      if (!settings || settings.isActive !== true) {
+        throw new HttpsError("failed-precondition", "Liga Lato jest wyłączona.");
+      }
+      if (!participantSnap.exists()) {
+        throw new HttpsError("permission-denied", "Na termin może odpowiedzieć tylko uczestnik Ligi Lato.");
+      }
+      const match = asRecord(matchSnap.val());
+      if (!match) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+      assertSummerSide(match, keys);
+      if (summerStatus(match) !== "proposed") {
+        throw new HttpsError("failed-precondition", "Ta propozycja nie jest już aktywna.");
+      }
+      const proposerId = text(match.proposerId) || text(match.proposedBy);
+      if (!proposerId || keys.has(proposerId)) {
+        throw new HttpsError("permission-denied", "Nie możesz akceptować własnej propozycji.");
+      }
+
+      if (action === "accept") {
+        await matchRef.update({
+          status: "accepted",
+          updatedAt: admin.database.ServerValue.TIMESTAMP,
+        });
+        return { success: true, message: "Termin zaakceptowany." };
+      }
+
+      if (action === "reject") {
+        await matchRef.update({
+          status: "pending",
+          proposedDate: null,
+          proposedTime: null,
+          proposedTimestamp: null,
+          proposerId: null,
+          proposedBy: null,
+          updatedAt: admin.database.ServerValue.TIMESTAMP,
+        });
+        return { success: true, message: "Propozycja odrzucona." };
+      }
+
+      const input = readDateInput({ ...record, matchId });
+      const currentDate = text(match.proposedDate);
+      const currentTime = text(match.proposedTime).slice(0, 5);
+      const currentStamp = typeof match.proposedTimestamp === "number" ? match.proposedTimestamp : Number.NaN;
+      const sameInstant = Number.isFinite(currentStamp) && Math.abs(input.timestamp - currentStamp) < 60_000;
+      const sameClock = input.date === currentDate && input.time === currentTime;
+      if (sameInstant || sameClock) {
+        throw new HttpsError("invalid-argument", "Kontrpropozycja musi mieć inny termin.");
+      }
+      await matchRef.update({
+        proposedDate: input.date,
+        proposedTime: input.time,
+        proposedTimestamp: input.timestamp,
+        proposerId: uid,
+        proposedBy: uid,
+        status: "proposed",
+        updatedAt: admin.database.ServerValue.TIMESTAMP,
+      });
+      return { success: true, message: "Kontrpropozycja wysłana do rywala." };
+    } catch (error: unknown) {
+      rethrow(error, "Nie udało się zapisać decyzji o terminie Ligi Lato.");
+    }
+  },
+);
+
 interface SummerSideStats {
   da: number;
   max: number;
@@ -313,222 +512,6 @@ function readScreen(value: unknown): string | null {
   return trimmed;
 }
 
-/** Wiersz tabeli Ligi Lato. Różnica legów jest liczona przy sortowaniu, nie trzymana osobno. */
-export interface SummerStandingRow {
-  uid: string;
-  name: string;
-  matchesPlayed: number;
-  points: number;
-  legsWon: number;
-  legsLost: number;
-}
-
-const WIN_POINTS = 3;
-const DRAW_POINTS = 1;
-const UNGROUPED_KEY = "—";
-
-interface SummerPerson {
-  ids: string[];
-  name: string;
-  group: string | null;
-}
-
-interface StandingBucket {
-  uid: string;
-  name: string;
-  group: string | null;
-  matchesPlayed: number;
-  points: number;
-  legsWon: number;
-  legsLost: number;
-}
-
-/** Klucz grupy z zapisu uczestnika. Znaki zabronione w RTDB odpadają. */
-function standingGroup(value: unknown): string | null {
-  const raw = text(value);
-  if (!raw || raw.length > 16) return null;
-  if ([...".#$/[]"].some((symbol) => raw.includes(symbol))) return null;
-  return raw;
-}
-
-function legCount(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 99) return null;
-  return value;
-}
-
-function readPeople(value: unknown): { directory: Map<string, SummerPerson>; people: SummerPerson[] } {
-  const directory = new Map<string, SummerPerson>();
-  const people: SummerPerson[] = [];
-  const record = asRecord(value);
-  if (!record) return { directory, people };
-
-  for (const [key, raw] of Object.entries(record)) {
-    const row = asRecord(raw);
-    if (!row) continue;
-    const ids = [...new Set([key, text(row.uid)].filter(Boolean))];
-    const person: SummerPerson = {
-      ids,
-      name: text(row.name).slice(0, 80) || key,
-      group: standingGroup(row.group),
-    };
-    people.push(person);
-    for (const id of ids) {
-      if (!directory.has(id)) directory.set(id, person);
-    }
-  }
-  return { directory, people };
-}
-
-function compareStandings(a: SummerStandingRow, b: SummerStandingRow): number {
-  if (b.points !== a.points) return b.points - a.points;
-  const legDiff = (b.legsWon - b.legsLost) - (a.legsWon - a.legsLost);
-  if (legDiff !== 0) return legDiff;
-  if (b.legsWon !== a.legsWon) return b.legsWon - a.legsWon;
-  const byName = a.name.localeCompare(b.name, "pl");
-  if (byName !== 0) return byName;
-  return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
-}
-
-function ensurePlayer(
-  players: Map<string, StandingBucket>,
-  id: string,
-  directory: Map<string, SummerPerson>,
-  inlineName: unknown,
-): StandingBucket {
-  const known = directory.get(id);
-  const existing = players.get(id);
-  const fallback = text(inlineName).slice(0, 80);
-  if (existing) {
-    if (known?.name) existing.name = known.name;
-    else if (fallback && existing.name === existing.uid) existing.name = fallback;
-    if (known?.group) existing.group = known.group;
-    return existing;
-  }
-  const bucket: StandingBucket = {
-    uid: id,
-    name: known?.name || fallback || id,
-    group: known?.group ?? null,
-    matchesPlayed: 0,
-    points: 0,
-    legsWon: 0,
-    legsLost: 0,
-  };
-  players.set(id, bucket);
-  return bucket;
-}
-
-function applyPlayedMatch(
-  players: Map<string, StandingBucket>,
-  directory: Map<string, SummerPerson>,
-  match: Record<string, unknown>,
-): void {
-  if (text(match.status) !== "played" && match.isWalkover !== true) return;
-  const p1 = text(match.p1Id);
-  const p2 = text(match.p2Id);
-  if (!p1 || !p2) return;
-  let legs1 = legCount(match.score1);
-  let legs2 = legCount(match.score2);
-  if (legs1 === null || legs2 === null) {
-    const winner = text(match.walkoverPlayerId);
-    const single = match.isDoubleWO !== true && (match.isWalkover === true || winner !== "") && (winner === p1 || winner === p2);
-    if (!single) return;
-    const format = resolveSummerMatchFormat(match.matchFormat, undefined, match.bestOf, undefined);
-    const target = format.kind === "firstTo" ? format.target : format.legs;
-    legs1 = winner === p1 ? target : 0;
-    legs2 = winner === p1 ? 0 : target;
-  }
-
-  const leftId = directory.get(p1)?.ids[0] ?? p1;
-  const rightId = directory.get(p2)?.ids[0] ?? p2;
-  if (leftId === rightId) return;
-
-  const left = ensurePlayer(players, leftId, directory, match.p1Name);
-  const right = ensurePlayer(players, rightId, directory, match.p2Name);
-  left.matchesPlayed += 1;
-  right.matchesPlayed += 1;
-  left.legsWon += legs1;
-  left.legsLost += legs2;
-  right.legsWon += legs2;
-  right.legsLost += legs1;
-
-  // Obustronny walkover: mecz jest rozegrany, obie strony mają 0 punktów.
-  if (match.isDoubleWO === true) return;
-
-  if (legs1 > legs2) left.points += WIN_POINTS;
-  else if (legs2 > legs1) right.points += WIN_POINTS;
-  else {
-    left.points += DRAW_POINTS;
-    right.points += DRAW_POINTS;
-  }
-}
-
-/**
- * Składa tabelę z meczów `played` i listy uczestników.
- * Wygrana to więcej legów (3 pkt), remis to równe legi (po 1 pkt), także 5:5.
- * Sortowanie: punkty, różnica legów, zdobyte legi.
- * Bez grup zapis jest płaską listą. Z grupami — mapa jak w specyfikacji (`A`, `B`, …).
- */
-export function buildSummerStandings(
-  schedule: unknown,
-  participants: unknown,
-): SummerStandingRow[] | Record<string, SummerStandingRow[]> {
-  const { directory, people } = readPeople(participants);
-  const players = new Map<string, StandingBucket>();
-
-  for (const person of people) {
-    const uid = person.ids[0];
-    if (!uid || players.has(uid)) continue;
-    players.set(uid, {
-      uid,
-      name: person.name,
-      group: person.group,
-      matchesPlayed: 0,
-      points: 0,
-      legsWon: 0,
-      legsLost: 0,
-    });
-  }
-
-  const scheduleRecord = asRecord(schedule);
-  const matches = Array.isArray(schedule)
-    ? schedule
-    : scheduleRecord
-      ? Object.values(scheduleRecord)
-      : [];
-  for (const raw of matches) {
-    const match = asRecord(raw);
-    if (match) applyPlayedMatch(players, directory, match);
-  }
-
-  const groups = new Map<string, SummerStandingRow[]>();
-  let namedGroups = false;
-  for (const bucket of players.values()) {
-    if (bucket.group) namedGroups = true;
-    const row: SummerStandingRow = {
-      uid: bucket.uid,
-      name: bucket.name,
-      matchesPlayed: bucket.matchesPlayed,
-      points: bucket.points,
-      legsWon: bucket.legsWon,
-      legsLost: bucket.legsLost,
-    };
-    const key = bucket.group ?? "";
-    const list = groups.get(key);
-    if (list) list.push(row);
-    else groups.set(key, [row]);
-  }
-  for (const list of groups.values()) list.sort(compareStandings);
-  if (!namedGroups) return groups.get("") ?? [];
-
-  const payload: Record<string, SummerStandingRow[]> = {};
-  const keys = [...groups.keys()].sort((a, b) => {
-    if (!a) return 1;
-    if (!b) return -1;
-    return a.localeCompare(b, "pl");
-  });
-  for (const key of keys) payload[key || UNGROUPED_KEY] = groups.get(key) ?? [];
-  return payload;
-}
 
 /**
  * Przelicza `/summer_league/standings` wyłącznie z meczów `played`.
@@ -554,9 +537,9 @@ export async function recalculateSummerStandings(db: admin.database.Database): P
 }
 
 /**
- * Zapisuje rozegrany protokół Ligi Lato.
- * Węzeł: /summer_league/schedule/{matchId}, status `played`.
- * Po udanym zapisie przelicza /summer_league/standings.
+ * Zgłoszenie protokołu Ligi Lato.
+ * Wymaga statusu `accepted`. Zapisuje `pending_result` i nie rusza tabeli.
+ * Do tabeli i ostatnich wyników wynik wchodzi dopiero po approveSummerMatchResult.
  * Nie zapisuje /schedule, /players ani niczego, co czyta StatsEngine.
  */
 export const submitSummerMatchResult = onCall(
@@ -604,7 +587,10 @@ export const submitSummerMatchResult = onCall(
         throw new HttpsError("permission-denied", "Możesz wpisać wynik tylko swojego meczu Ligi Lato.");
       }
       if (summerMatchClosed(match)) {
-        throw new HttpsError("failed-precondition", "Ten mecz Ligi Lato został już rozliczony.");
+        throw new HttpsError("failed-precondition", "Ten mecz Ligi Lato został już rozliczony albo czeka na admina.");
+      }
+      if (summerStatus(match) !== "accepted") {
+        throw new HttpsError("failed-precondition", "Wynik można zgłosić dopiero po zaakceptowanym terminie.");
       }
 
       const format = resolveSummerMatchFormat(match.matchFormat, settings.matchFormat, match.bestOf, settings.bestOf);
@@ -627,13 +613,112 @@ export const submitSummerMatchResult = onCall(
         throw new HttpsError("invalid-argument", "Przy 180 wymagany jest drugi screen.");
       }
 
-      // Transakcja scala wynik z istniejącym meczem. p1Id, p2Id i grupa zostają.
-      // Tabela letnia liczy się dopiero po udanym zapisie, z całego terminarza.
+      // Wynik ląduje w pendingProtocol. Tabela liczy wyłącznie status `played`.
+      // Pierwsze wywołanie transakcji na Cloud Functions dostaje null, bo proces
+      // nie ma lokalnego cache. `undefined` wtedy ucina zapis i klient widzi 404,
+      // choć mecz jest w bazie. `null` wymusza odczyt z serwera i drugie wywołanie.
+      const submittedAt = Date.now();
       const tx = await matchRef.transaction((current: unknown) => {
+        if (current == null) return null;
         const node = asRecord(current);
-        if (!node) return undefined;
-        if (text(node.p1Id) !== p1 || text(node.p2Id) !== p2) return undefined;
-        if (summerMatchClosed(node)) return undefined;
+        if (!node) return;
+        if (text(node.p1Id) !== p1 || text(node.p2Id) !== p2) return;
+        if (summerStatus(node) !== "accepted" || summerMatchClosed(node)) return;
+        return {
+          ...node,
+          status: "pending_result",
+          pendingProtocol: {
+            submittedBy: uid,
+            timestamp: submittedAt,
+            score1: legA,
+            score2: legB,
+            legs1: legA,
+            legs2: legB,
+            p1Stats: left,
+            p2Stats: right,
+            screen1,
+            screen2,
+          },
+        };
+      });
+
+      const saved = asRecord(tx.snapshot.val());
+      if (!tx.committed || !saved || summerStatus(saved) !== "pending_result") {
+        if (!saved) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+        if (summerMatchClosed(saved)) {
+          throw new HttpsError("failed-precondition", "Ten mecz Ligi Lato został już rozliczony albo czeka na admina.");
+        }
+        throw new HttpsError("aborted", "Wynik nie został zapisany. Spróbuj ponownie.");
+      }
+
+      return { ok: true, message: "Wynik przesłany. Czeka na akceptację admina." };
+    } catch (error: unknown) {
+      rethrow(error, "Nie udało się zapisać wyniku Ligi Lato.");
+    }
+  },
+);
+
+function wholeStats(raw: unknown, legsWon: number, who: string): SummerSideStats {
+  return readSideStats(raw, legsWon, who);
+}
+
+/**
+ * Akceptacja protokołu Ligi Lato.
+ * Jedyna ścieżka, którą zgłoszony wynik dostaje status `played` i wchodzi do tabeli.
+ * Nie woła osiągnięć ani StatsEngine.
+ */
+export const approveSummerMatchResult = onCall(
+  { cors: true },
+  async (request): Promise<{ success: true; message: string }> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Brak autoryzacji.");
+    if (!(await verifyAdmin(uid))) {
+      throw new HttpsError("permission-denied", "Brak uprawnień admina.");
+    }
+
+    const data = asRecord(request.data);
+    const matchId = summerMatchKey(data?.matchId);
+    if (!matchId) {
+      throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
+    }
+
+    try {
+      const database = db();
+      const matchRef = database.ref(`${SUMMER_ROOT}/schedule/${matchId}`);
+      const [settingsSnap, matchSnap] = await Promise.all([
+        database.ref(`${SUMMER_ROOT}/settings`).once("value"),
+        matchRef.once("value"),
+      ]);
+      const match = asRecord(matchSnap.val());
+      if (!match) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+      if (summerStatus(match) !== "pending_result" || !asRecord(match.pendingProtocol)) {
+        throw new HttpsError("failed-precondition", "Ten mecz nie ma protokołu do akceptacji.");
+      }
+      const protocol = asRecord(match.pendingProtocol);
+      const settings = asRecord(settingsSnap.val());
+      const format = resolveSummerMatchFormat(
+        match.matchFormat,
+        settings?.matchFormat,
+        match.bestOf,
+        settings?.bestOf,
+      );
+      const legA = wholeNumber(data?.score1 ?? data?.finalScore1 ?? protocol?.score1, 0, 99);
+      const legB = wholeNumber(data?.score2 ?? data?.finalScore2 ?? protocol?.score2, 0, 99);
+      if (legA === null || legB === null) {
+        throw new HttpsError("invalid-argument", "Podaj liczbę legów obu graczy (0–99).");
+      }
+      const scoreProblem = summerLegScoreProblem(legA, legB, format);
+      if (scoreProblem) throw new HttpsError("invalid-argument", scoreProblem);
+      const left = wholeStats(data?.p1Stats ?? protocol?.p1Stats, legA, "Pierwszy gracz");
+      const right = wholeStats(data?.p2Stats ?? protocol?.p2Stats, legB, "Drugi gracz");
+      const screen1 = readScreen(protocol?.screen1);
+      const screen2 = readScreen(protocol?.screen2);
+      const approvedAt = Date.now();
+
+      const tx = await matchRef.transaction((current: unknown) => {
+        if (current == null) return null;
+        const node = asRecord(current);
+        if (!node || summerStatus(node) !== "pending_result" || !asRecord(node.pendingProtocol)) return;
         return {
           ...node,
           status: "played",
@@ -643,35 +728,63 @@ export const submitSummerMatchResult = onCall(
           p2Stats: right,
           screen1,
           screen2,
-          timestamp: admin.database.ServerValue.TIMESTAMP,
-          submittedBy: uid,
+          proofUrl1: screen1,
+          proofUrl2: screen2,
+          timestamp: approvedAt,
           pendingProtocol: null,
+          approvedBy: uid,
         };
       });
-
-      if (!tx.committed) {
-        const fresh = asRecord(tx.snapshot.val());
-        if (!fresh) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
-        if (summerMatchClosed(fresh)) {
-          throw new HttpsError("failed-precondition", "Ten mecz Ligi Lato został już rozliczony.");
-        }
-        throw new HttpsError("aborted", "Wynik nie został zapisany. Spróbuj ponownie.");
+      const approved = asRecord(tx.snapshot.val());
+      if (!tx.committed || !approved || summerStatus(approved) !== "played") {
+        throw new HttpsError("aborted", "Protokół nie został zaakceptowany. Odśwież kolejkę.");
       }
-
-      try {
-        await recalculateSummerStandings(database);
-      } catch (error: unknown) {
-        if (error instanceof HttpsError) throw error;
-        console.error("Tabela Ligi Lato nie została przeliczona.", error);
-        throw new HttpsError(
-          "internal",
-          "Wynik zapisany, ale tabela Ligi Lato nie została odświeżona.",
-        );
-      }
-
-      return { ok: true, message: "Wynik Ligi Lato zapisany." };
+      await recalculateSummerStandings(database);
+      return { success: true, message: "Protokół Ligi Lato zaakceptowany." };
     } catch (error: unknown) {
-      rethrow(error, "Nie udało się zapisać wyniku Ligi Lato.");
+      rethrow(error, "Nie udało się zaakceptować protokołu Ligi Lato.");
+    }
+  },
+);
+
+/**
+ * Odsyła protokół do graczy. Mecz wraca do zaakceptowanego terminu, tabela się nie zmienia.
+ */
+export const rejectSummerMatchResult = onCall(
+  { cors: true },
+  async (request): Promise<{ success: true; message: string }> => {
+    const uid = request.auth?.uid;
+    if (!uid) throw new HttpsError("unauthenticated", "Brak autoryzacji.");
+    if (!(await verifyAdmin(uid))) {
+      throw new HttpsError("permission-denied", "Brak uprawnień admina.");
+    }
+    const matchId = summerMatchKey(asRecord(request.data)?.matchId);
+    if (!matchId) {
+      throw new HttpsError("invalid-argument", "Nieprawidłowy identyfikator meczu Ligi Lato.");
+    }
+
+    try {
+      const matchRef = db().ref(`${SUMMER_ROOT}/schedule/${matchId}`);
+      const match = asRecord((await matchRef.once("value")).val());
+      if (!match) throw new HttpsError("not-found", "Mecz Ligi Lato nie istnieje.");
+      if (summerStatus(match) !== "pending_result") {
+        throw new HttpsError("failed-precondition", "Ten mecz nie czeka na akceptację.");
+      }
+      await matchRef.update({
+        status: "accepted",
+        score1: null,
+        score2: null,
+        p1Stats: null,
+        p2Stats: null,
+        pendingProtocol: {
+          isRejected: true,
+          timestamp: Date.now(),
+        },
+        updatedAt: admin.database.ServerValue.TIMESTAMP,
+      });
+      return { success: true, message: "Protokół odesłany do poprawy." };
+    } catch (error: unknown) {
+      rethrow(error, "Nie udało się odrzucić protokołu Ligi Lato.");
     }
   },
 );

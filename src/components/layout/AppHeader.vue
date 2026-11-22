@@ -31,11 +31,23 @@ const splitTarget = (to: string) => {
  * głównej świeciłoby się od razu pół menu (wszystkie linki miałyby path '/').
  * `findIndex` zwraca tylko pierwszy pasujący link, więc duplikaty celów
  * ('Mecze' i 'Terminarz' -> '/#mecze') nigdy nie są aktywne jednocześnie.
+ * Gość z „Liga Lato” idzie na publiczny terminarz, nie na ekran logowania.
+ * Zalogowany zostaje na zapisach; podświetlenie obejmuje też tabelę i terminarz.
  */
+const menuLinks = computed(() =>
+  navLinks.map((link) =>
+    link.to === '/lato' && !isLoggedIn.value ? { ...link, to: '/lato/terminarz' } : link,
+  ),
+)
+
 const activeIndex = computed(() =>
-  navLinks.findIndex((link) => {
+  menuLinks.value.findIndex((link) => {
     const { path, hash } = splitTarget(link.to)
-    return route.path === path && route.hash === hash
+    if (hash) return route.path === path && route.hash === hash
+    if (path === '/lato' || path.startsWith('/lato/')) {
+      return route.path === '/lato' || route.path.startsWith('/lato/')
+    }
+    return route.path === path && route.hash === ''
   }),
 )
 
@@ -76,7 +88,7 @@ async function handleLogout() {
       <!-- Główna nawigacja -->
       <nav aria-label="Główna nawigacja" class="hidden flex-1 justify-center xl:flex">
         <ul class="flex items-center gap-1 font-display text-[15px] font-bold uppercase tracking-[0.08em] text-muted">
-          <li v-for="(link, i) in navLinks" :key="link.label">
+          <li v-for="(link, i) in menuLinks" :key="link.label">
             <RouterLink
               :to="link.to"
               :aria-current="isLinkActive(i) ? 'page' : undefined"
@@ -189,7 +201,7 @@ async function handleLogout() {
           </summary>
           <nav aria-label="Nawigacja mobilna" class="absolute right-0 top-14 w-60 bg-surface p-2 shadow-2xl">
             <ul class="flex flex-col font-display text-base font-bold uppercase tracking-[0.08em]">
-              <li v-for="(link, i) in navLinks" :key="link.label">
+              <li v-for="(link, i) in menuLinks" :key="link.label">
                 <RouterLink
                   :to="link.to"
                   :aria-current="isLinkActive(i) ? 'page' : undefined"

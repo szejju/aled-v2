@@ -10,10 +10,15 @@ import { Sun } from 'lucide-vue-next'
 import { useAuth } from '@/composables/useAuth'
 import { useToast } from '@/composables/useToast'
 import { getDatabaseClient } from '@/services/firebase'
+import { proposeSummerMatchDate, respondToSummerMatchDate } from '@/services/api'
 import { errorText } from '@/utils/errorText'
 import { asRecord } from '@/utils/rtdb'
+import { formatLocalProposal } from '@/utils/roundWindow'
+import SummerDateModal from '@/components/summer/SummerDateModal.vue'
 import SummerMatchDetailsModal from '@/components/summer/SummerMatchDetailsModal.vue'
 import { summerMatchKey } from '../../../functions/src/summer_league/scoreRules.ts'
+
+type SummerFlow = 'open' | 'proposed' | 'accepted' | 'pending_result' | 'played' | 'closed'
 
 const UID_KEY = /^[A-Za-z0-9_-]{1,128}$/
 
@@ -22,8 +27,14 @@ interface SummerProfileMatch {
   opponent: string
   played: boolean
   routable: boolean
+  flow: SummerFlow
+  isProposer: boolean
+  proposedDate: string
+  proposedTime: string
+  whenLabel: string
   statusLabel: string
   resultLabel: string
+  actionLabel: string
   detail: Record<string, unknown>
 }
 
@@ -43,6 +54,18 @@ const scheduleError = ref('')
 const scheduleReady = ref(false)
 const matches = ref<SummerProfileMatch[]>([])
 const selectedMatch = ref<Record<string, unknown> | null>(null)
+const dateMatch = ref<SummerProfileMatch | null>(null)
+const dateMode = ref<'propose' | 'respond'>('propose')
+const dateBusy = ref(false)
+
+function flowOf(status: string, played: boolean, walkover: boolean): SummerFlow {
+  if (walkover) return 'closed'
+  if (played || status === 'played' || status === 'approved' || status === 'finished') return 'played'
+  if (status === 'pending_result' || status === 'pending_approval') return 'pending_result'
+  if (status === 'accepted') return 'accepted'
+  if (status === 'proposed') return 'proposed'
+  return 'open'
+}
 
 const ownProfile = computed(() => {
   const sessionUid = userData.value?.uid ?? ''
@@ -90,18 +113,34 @@ function playerMatches(value: unknown, uid: string): SummerProfileMatch[] {
       ? rawName.trim().slice(0, 80)
       : 'Przeciwnik'
     const status = typeof row.status === 'string' ? row.status.trim().toLowerCase() : ''
-    const played = status === 'played'
+    const played = status === 'played' || status === 'approved' || status === 'finished'
+    const walkover = row.isWalkover === true || row.isDoubleWO === true
+    const proposerId = typeof row.proposerId === 'string' ? row.proposerId : typeof row.proposedBy === 'string' ? row.proposedBy : ''
+    const isProposer = proposerId !== '' && proposerId === uid
+    const flow = flowOf(status, played, walkover)
+    const proposedDate = typeof row.proposedDate === 'string' ? row.proposedDate : ''
+    const proposedTime = typeof row.proposedTime === 'string' ? row.proposedTime : ''
+    const proposedTimestamp = typeof row.proposedTimestamp === 'number' ? row.proposedTimestamp : 0
     const mine = mineIsP1 ? leg(row.score1) : leg(row.score2)
     const theirs = mineIsP1 ? leg(row.score2) : leg(row.score1)
     const score1 = leg(row.score1)
     const score2 = leg(row.score2)
+    const whenLabel = proposedTimestamp > 0
+      ? formatLocalProposal(proposedTimestamp).short
+      : [proposedDate, proposedTime].filter(Boolean).join(' · ')
     rows.push({
       id,
       opponent,
-      played,
+      played: flow === 'played',
       routable: summerMatchKey(id) != null,
-      statusLabel: played ? 'Rozegrany' : 'Do rozegrania',
-      resultLabel: played && mine != null && theirs != null ? `${mine} : ${theirs}` : played ? '—' : 'VS',
+      flow,
+      isProposer,
+      proposedDate,
+      proposedTime,
+      whenLabel,
+      statusLabel: summerStatusLabel(flow, isProposer),
+      resultLabel: flow === 'played' && mine != null && theirs != null ? `${mine} : ${theirs}` : flow === 'played' ? '—' : 'VS',
+      actionLabel: summerAction(flow, isProposer, summerMatchKey(id) != null),
       detail: {
         id,
         p1Id: p1,
@@ -130,6 +169,68 @@ function playerMatches(value: unknown, uid: string): SummerProfileMatch[] {
     return a.id.localeCompare(b.id, 'pl')
   })
   return rows
+}
+
+function summerStatusLabel(flow: SummerFlow, isProposer: boolean): string {
+  switch (flow) {
+    case 'played': return 'Rozegrany'
+    case 'accepted': return 'Termin ustalony'
+    case 'proposed': return isProposer ? 'Wysłano propozycję' : 'Wymagana decyzja'
+    case 'pending_result': return 'Weryfikacja admina'
+    case 'closed': return 'Walkower'
+    default: return 'Brak terminu'
+  }
+}
+
+function summerAction(flow: SummerFlow, isProposer: boolean, routable: boolean): string {
+  if (!routable) return ''
+  if (flow === 'open') return 'Ustal termin'
+  if (flow === 'proposed' && !isProposer) return 'Odpowiedz'
+  if (flow === 'accepted') return 'Wpisz wynik'
+  return ''
+}
+
+function openDate(match: SummerProfileMatch) {
+  if (!ownProfile.value || dateBusy.value) return
+  if (match.actionLabel === 'Ustal termin') {
+    dateMode.value = 'propose'
+    dateMatch.value = match
+    return
+  }
+  if (match.actionLabel === 'Odpowiedz') {
+    dateMode.value = 'respond'
+    dateMatch.value = match
+  }
+}
+
+async function sendProposal(payload: { date: string; time: string; timestamp: number }) {
+  const match = dateMatch.value
+  if (!match || dateBusy.value) return
+  dateBusy.value = true
+  try {
+    const result = await proposeSummerMatchDate({ matchId: match.id, ...payload })
+    showToast(result.message, 'success')
+    dateMatch.value = null
+  } catch (err: unknown) {
+    showToast(errorText(err, 'Nie udało się wysłać terminu.'), 'error')
+  } finally {
+    dateBusy.value = false
+  }
+}
+
+async function sendDecision(payload: { action: 'accept' | 'reject' | 'counter'; date?: string; time?: string; timestamp?: number }) {
+  const match = dateMatch.value
+  if (!match || dateBusy.value) return
+  dateBusy.value = true
+  try {
+    const result = await respondToSummerMatchDate({ matchId: match.id, ...payload })
+    showToast(result.message, 'success')
+    dateMatch.value = null
+  } catch (err: unknown) {
+    showToast(errorText(err, 'Nie udało się zapisać decyzji.'), 'error')
+  } finally {
+    dateBusy.value = false
+  }
 }
 
 function announce(err: unknown, fallback: string) {
@@ -325,6 +426,9 @@ onUnmounted(() => {
               {{ match.statusLabel }}
             </p>
             <p class="truncate font-display text-xs font-black uppercase text-fg">{{ match.opponent }}</p>
+            <p v-if="match.whenLabel && match.flow !== 'played'" class="mt-0.5 truncate text-[10px] font-semibold text-muted">
+              {{ match.whenLabel }}
+            </p>
           </button>
           <div class="flex shrink-0 items-center gap-2">
             <span
@@ -334,12 +438,20 @@ onUnmounted(() => {
               {{ match.resultLabel }}
             </span>
             <RouterLink
-              v-if="ownProfile && !match.played && match.routable"
+              v-if="ownProfile && match.actionLabel === 'Wpisz wynik'"
               :to="`/lato/protokol/${match.id}`"
               class="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-stone-950 transition hover:bg-amber-400"
             >
               Wpisz wynik
             </RouterLink>
+            <button
+              v-else-if="ownProfile && match.actionLabel"
+              type="button"
+              class="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-stone-950 transition hover:bg-amber-400"
+              @click="openDate(match)"
+            >
+              {{ match.actionLabel }}
+            </button>
           </div>
         </li>
       </ul>
@@ -348,6 +460,17 @@ onUnmounted(() => {
         v-if="selectedMatch"
         :match="selectedMatch"
         @close="selectedMatch = null"
+      />
+      <SummerDateModal
+        :open="dateMatch != null"
+        :mode="dateMode"
+        :opponent="dateMatch?.opponent ?? ''"
+        :proposed-date="dateMatch?.proposedDate"
+        :proposed-time="dateMatch?.proposedTime"
+        :submitting="dateBusy"
+        @close="dateMatch = null"
+        @propose="sendProposal"
+        @decide="sendDecision"
       />
     </template>
   </section>

@@ -22,15 +22,17 @@ export const getHomeData = onCall(
 
     const dbRef = db();
 
-    const [scheduleSnap, cupSnap] = await Promise.all([
+    const [scheduleSnap, cupSnap, summerSnap] = await Promise.all([
       dbRef.ref("schedule").once("value"),
       dbRef.ref("cup/schedule").once("value"),
+      dbRef.ref("summer_league/schedule").once("value"),
     ]);
     const { upcoming, recent } = buildHomeMatchLists(
       scheduleSnap.val(),
       cupSnap.val(),
       Date.now(),
       10,
+      summerSnap.val(),
     );
 
     // Newsy

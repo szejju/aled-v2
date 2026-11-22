@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { apiApproveMatch, apiRejectMatch, forceMatchDateAdmin, handleExceptionRequest, type ApproveResultPayload } from '@/services/api'
+import { apiApproveMatch, apiRejectMatch, approveSummerMatchResult, forceMatchDateAdmin, handleExceptionRequest, rejectSummerMatchResult, type ApproveResultPayload } from '@/services/api'
 import AdminManualProtocol from './AdminManualProtocol.vue'
 import AdminPendingReview from './AdminPendingReview.vue'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
@@ -108,12 +108,25 @@ const confirmLabel = computed(() => {
   return 'Odrzuc wynik'
 })
 
+function summerMatch(sourcePath: string): boolean {
+  return sourcePath === 'summer_league/schedule'
+}
+
 async function doAppr(payload: ApproveResultPayload) {
   if (confirmOpen.value) return
   clearRowErr(payload.matchId)
   await runAppr(payload.matchId, async () => {
     try {
-      const result = await apiApproveMatch(payload)
+      // Liga Lato nie może iść w approveMatchResult: tamten zapis nadaje odznaki i DPI.
+      const result = summerMatch(payload.sourcePath)
+        ? await approveSummerMatchResult({
+            matchId: payload.matchId,
+            score1: payload.finalScore1,
+            score2: payload.finalScore2,
+            p1Stats: payload.p1Stats,
+            p2Stats: payload.p2Stats,
+          })
+        : await apiApproveMatch(payload)
       if (!result.success) {
         setRowErr(payload.matchId, result.message || 'Blad zatwierdzenia.')
         return
@@ -132,11 +145,13 @@ async function executeConfirm() {
   confirmError.value = ''
   try {
     await runRej(match.id, async () => {
-      const result = await apiRejectMatch({
-        matchId: match.id,
-        sourcePath: match.sourcePath,
-        pendingData: match.pendingProtocol ?? {},
-      })
+      const result = summerMatch(match.sourcePath)
+        ? await rejectSummerMatchResult({ matchId: match.id })
+        : await apiRejectMatch({
+            matchId: match.id,
+            sourcePath: match.sourcePath,
+            pendingData: match.pendingProtocol ?? {},
+          })
       if (!result.success) throw new Error(result.message || 'Blad odrzucenia.')
       clearRowErr(match.id)
       hideRadar(match.id)
@@ -614,7 +629,8 @@ onMounted(() => {
       <span class="label rounded-full bg-amber-500/10 text-amber-400 px-2.5 py-1 text-[10px]">{{ radar.length }} oczekujacych</span>
     </template>
     <p v-if="feedError" class="text-sm font-bold text-red-400 mb-3">{{ feedError }}</p>
-    <div v-if="radar.length===0" class="text-center py-8 text-xs text-muted italic">Brak zgloszonych wynikow.</div>
+    <p v-if="pLoad" class="text-center py-8 text-xs text-muted italic">Wczytywanie zgloszonych wynikow...</p>
+    <div v-else-if="radar.length===0" class="text-center py-8 text-xs text-muted italic">Brak zgloszonych wynikow.</div>
     <div v-else class="space-y-4">
       <AdminPendingReview
         v-for="m in radar"

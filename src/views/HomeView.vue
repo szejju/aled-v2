@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import HeroSection from '@/components/home/HeroSection.vue'
 import MatchOfTheDay from '@/components/home/MatchOfTheDay.vue'
@@ -43,7 +43,13 @@ onMounted(async () => {
       get(dbRef(db, '/schedule')),
       get(dbRef(db, '/cup/schedule')),
     ])
-    const lists = buildHomeMatchLists(scheduleSnap.val(), cupSnap.val())
+    let summerSchedule: unknown = null
+    try {
+      summerSchedule = (await get(dbRef(db, '/summer_league/schedule'))).val()
+    } catch (summerError) {
+      console.error('[HomeView] Terminarz Ligi Lato:', summerError)
+    }
+    const lists = buildHomeMatchLists(scheduleSnap.val(), cupSnap.val(), Date.now(), 5, summerSchedule)
     recentResults.value = lists.recent
     upcomingMatches.value = lists.upcoming
   } catch (error) {
@@ -67,6 +73,14 @@ const selectedResultMatch = ref<ScheduleMatch | null>(null)
 const openMatchDetails = (match: Match | ScheduleMatch) => {
   if ('hasScore' in match) selectedResultMatch.value = match
 }
+
+/** Lista miesza ligę, puchar i Ligę Lato. Grupa Lata nie jest flagą pucharu. */
+const resultCompetition = computed(() => {
+  const div = selectedResultMatch.value?.div?.trim().toLocaleLowerCase('pl') ?? ''
+  if (div === 'liga lato' || div.startsWith('liga lato ')) return 'summer' as const
+  if (div === 'puchar ligi' || div.startsWith('puchar ')) return 'cup' as const
+  return undefined
+})
 
 function roundTitle(round: string | number | undefined): string {
   if (round == null || round === '') return ''
@@ -111,6 +125,9 @@ const openCompare = (match: Match | ScheduleMatch) => {
     id="centrum"
     class="grid min-w-0 scroll-mt-28 grid-cols-1 gap-4 md:grid-cols-6 lg:grid-cols-12 [&>*]:min-w-0"
   >
+    <!-- Przy otwartych zapisach pełna szerokość nad hero. Przy zamkniętych JoinCta nie renderuje sekcji. -->
+    <JoinCta />
+
     <!-- r1-r2: hero (8/12, 2 wiersze) + po prawej hit kolejki i statystyki -->
     <HeroSection class="md:col-span-6 lg:col-span-8 lg:row-span-2" />
     <MatchOfTheDay class="md:col-span-6 lg:col-span-4" />
@@ -171,13 +188,11 @@ const openCompare = (match: Match | ScheduleMatch) => {
         </li>
       </ul>
     </section>
-    <!-- WIERSZ 2: 3 równe kafelki – Power Ranking + Nadchodzące + Ostatnie wyniki -->
-    <div class="md:col-span-2 lg:col-span-4">
-      <PowerRanking />
-    </div>
-    <div class="md:col-span-2 lg:col-span-4">
+    <!-- Nadchodzące i ostatnie wyniki – dwie równe kolumny -->
+    <div class="md:col-span-3 lg:col-span-6">
       <MatchList
         id="mecze"
+        class="h-full"
         title="Nadchodzące"
         :matches="upcomingMatches"
         :loading="matchesLoading"
@@ -186,9 +201,10 @@ const openCompare = (match: Match | ScheduleMatch) => {
         @match-click="openCompare"
       />
     </div>
-    <div class="md:col-span-2 lg:col-span-4">
+    <div class="md:col-span-3 lg:col-span-6">
       <MatchList
         id="wyniki"
+        class="h-full"
         title="Ostatnie wyniki"
         :matches="recentResults"
         :loading="matchesLoading"
@@ -198,14 +214,20 @@ const openCompare = (match: Match | ScheduleMatch) => {
       />
     </div>
 
-    <!-- WIERSZ 3: Liderzy dywizji – pełna szerokość -->
-    <div class="col-span-full w-full">
-      <DivisionLeaders id="liderzy" />
+    <!-- Power Ranking (1) i liderzy dywizji (2) -->
+    <div class="md:col-span-2 lg:col-span-4">
+      <PowerRanking />
+    </div>
+    <div class="md:col-span-4 lg:col-span-8">
+      <DivisionLeaders id="liderzy" class="h-full" />
     </div>
 
-    <JoinCta />
-
-    <MatchDetailsModal v-if="selectedResultMatch" :match="selectedResultMatch as any" @close="selectedResultMatch = null" />
+    <MatchDetailsModal
+      v-if="selectedResultMatch"
+      :match="selectedResultMatch as any"
+      :competition="resultCompetition"
+      @close="selectedResultMatch = null"
+    />
     <MatchCompareModal v-if="selectedCompare" :match="selectedCompare" @close="selectedCompare = null" />
   </div>
 </template>

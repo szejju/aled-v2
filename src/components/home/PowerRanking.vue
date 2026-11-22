@@ -22,11 +22,11 @@ onMounted(async () => {
   }
 })
 
-const top5 = computed<RankingEntry[]>(() =>
+const top10 = computed<RankingEntry[]>(() =>
   [...players.value]
     .filter((p) => (p.stats?.dpi ?? 0) > 0)
     .sort((a, b) => (b.stats?.dpi ?? 0) - (a.stats?.dpi ?? 0))
-    .slice(0, 5)
+    .slice(0, 10)
     .map((p, i) => ({
       position: i + 1,
       player: [p.lastName, p.firstName].filter(Boolean).join(' ') || p.id,
@@ -36,10 +36,10 @@ const top5 = computed<RankingEntry[]>(() =>
 </script>
 
 <template>
-  <section id="ranking" aria-labelledby="pr-title" class="bento p-6 md:col-span-3 lg:col-span-4">
+  <section id="ranking" aria-labelledby="pr-title" class="bento p-6">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <h2 id="pr-title" class="font-display text-xl font-black uppercase italic sm:text-2xl">Power <span class="text-accent">ranking</span></h2>
-      <span class="label shrink-0 rounded-full bg-surface-2 px-2.5 py-1 text-muted">Top 5</span>
+      <span class="label shrink-0 rounded-full bg-surface-2 px-2.5 py-1 text-muted">Top 10</span>
     </div>
 
     <!-- Loading -->
@@ -48,10 +48,10 @@ const top5 = computed<RankingEntry[]>(() =>
     </div>
 
     <!-- Ranking -->
-    <ol v-else-if="top5.length" class="mt-5 flex flex-col gap-2 uppercase">
+    <ol v-else-if="top10.length" class="mt-5 flex flex-col gap-2 uppercase">
       <li
-        v-for="entry in top5"
-        :key="entry.player"
+        v-for="entry in top10"
+        :key="entry.position"
         class="flex min-w-0 items-center gap-3 rounded-2xl p-3"
         :class="entry.position === 1 ? 'border border-lime/50 bg-lime/10' : 'bg-surface-2'"
       >
