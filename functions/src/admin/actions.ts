@@ -8,7 +8,6 @@ import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { getAuth } from "firebase-admin/auth";
 import { db, adminInstance, archiveDatabase } from "../database/connection.js";
-import { StatsEngine, type Match, type Player } from "../stats_engine/calculator.js";
 import { awardSeasonTrophies, persistSeasonClose, type SeasonClose } from "../league/ceremony.js";
 import {
   officialResult,
@@ -16,7 +15,7 @@ import {
   settleMatchAchievements,
   type CurrentMatchData,
 } from "../league/playerAchievements.js";
-import { collectOfficialLeagueMatches, sortLeagueTable } from "../league/table.js";
+import { buildSeasonSnapshot } from "../league/seasonSnapshot.js";
 import { chosenWalkoverMargin, CUP_WALKOVER_SETS, scoresForWinner } from "../league/walkover.js";
 import { buildSummerStandings } from "../summer_league/actions.js";
 import { summerMatchKey } from "../summer_league/scoreRules.js";
@@ -1330,89 +1329,6 @@ function asRecord(value: unknown): Record<string, any> {
 /** RTDB odrzuca `undefined` i NaN. JSON zostawia tylko dane serializowalne. */
 function toRtdb<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function toPlayers(raw: Record<string, any>): Player[] {
-  return Object.keys(raw).map((id) => {
-    const row = raw[id] || {};
-    return {
-      id,
-      firstName: row.firstName,
-      lastName: row.lastName,
-      nick: row.nick,
-      div: row.div,
-      max: row.max,
-      checkout: row.checkout,
-      short: row.short,
-    };
-  });
-}
-
-function toMatches(raw: Record<string, any>): Match[] {
-  return Object.values(raw).filter((row) => row && typeof row === "object") as Match[];
-}
-
-function divisionKey(div: unknown): string {
-  return String(div || "").trim().toUpperCase();
-}
-
-/**
- * Zamrożona tabela ligowa: te same mecze i ta sama kolejność co getDivisionTable.
- * Punkty liczą się dopiero po zatwierdzeniu. Baraż nie wchodzi do bilansu ani H2H.
- */
-function buildSeasonSnapshot(
-  playersRaw: Record<string, any>,
-  scheduleRaw: Record<string, any>,
-  penaltiesRaw: Record<string, any>,
-  cupRaw: Record<string, any>
-) {
-  const players = toPlayers(playersRaw);
-  const officialMatches = collectOfficialLeagueMatches(scheduleRaw);
-  const stats = StatsEngine.calculateAllStats(players, toMatches(scheduleRaw));
-  const tableStats = StatsEngine.calculateAllStats(players, officialMatches);
-  const cupStats = StatsEngine.calculateCupStats(players, toMatches(asRecord(cupRaw.schedule)));
-
-  const penaltiesByPlayer = new Map<string, number>();
-  Object.values(penaltiesRaw).forEach((pen) => {
-    if (!pen || typeof pen !== "object") return;
-    const playerId = (pen as { playerId?: string }).playerId;
-    const points = Number((pen as { points?: unknown }).points) || 0;
-    if (playerId) penaltiesByPlayer.set(playerId, (penaltiesByPlayer.get(playerId) || 0) + points);
-  });
-
-  const tables: Record<string, any[]> = {};
-  const grouped = new Map<string, string[]>();
-  Object.keys(playersRaw).forEach((playerId) => {
-    const div = divisionKey(playersRaw[playerId]?.div);
-    if (!div || div.includes("POCZEKALNIA")) return;
-    const bucket = grouped.get(div) || [];
-    bucket.push(playerId);
-    grouped.set(div, bucket);
-  });
-
-  grouped.forEach((ids, div) => {
-    const rows = ids.map((playerId) => {
-      const raw = playersRaw[playerId] || {};
-      const base = tableStats[playerId];
-      const minusPts = penaltiesByPlayer.get(playerId) || penaltiesByPlayer.get(raw.uid) || 0;
-      return {
-        id: playerId,
-        firstName: raw.firstName || "",
-        lastName: raw.lastName || "",
-        nick: raw.nick || "",
-        div: raw.div || div,
-        isDisqualified: raw.isDisqualified === true,
-        minusPts,
-        st: base
-          ? { ...base, pts: base.pts - minusPts }
-          : { pts: -minusPts, lw: 0, ll: 0, realAvg: 0 },
-      };
-    });
-
-    tables[div] = sortLeagueTable(rows, officialMatches);
-  });
-
-  return { stats, cupStats, tables };
 }
 
 export const archiveCurrentSeason = functions.https.onCall(async (request) => {

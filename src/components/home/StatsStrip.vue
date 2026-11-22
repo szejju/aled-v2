@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ref as dbRef, onValue } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { getPlayersList, fetchArchiveData, type PlayerListItem } from '@/services/api'
+import { fetchArchiveSeason, getPlayersList, listArchiveSeasons, type PlayerListItem } from '@/services/api'
 import { useSeason } from '@/composables/useSeason'
 
 // ─── Dane z RTDB / API ──────────────────────────────────────────────────
 
-const { currentSeason, initSeasonListener } = useSeason()
+const { currentSeason, seasonReady, initSeasonListener } = useSeason()
 initSeasonListener()
 
 /** Gracze – pobrani przez getPlayersList (StatsEngine po stronie backendu). */
@@ -22,14 +22,9 @@ interface RtdbMatch {
 const schedule = ref<RtdbMatch[]>([])
 let _unsubSchedule: (() => void) | null = null
 
-/** Dane archiwalne (poprzednie sezony). */
-interface ArchivePlayer {
-  max?: number | string
-}
-interface SeasonArchive {
-  players?: Record<string, ArchivePlayer>
-}
-const archiveData = ref<Record<string, SeasonArchive> | null>(null)
+/** Liczba zawodników poprzedniego sezonu, bez ściągania całego archiwum. */
+const prevSeasonPlayers = ref(0)
+let archiveToken = 0
 
 // ─── Nasłuchy RTDB ──────────────────────────────────────────────────────
 
@@ -52,25 +47,46 @@ async function loadData() {
     players.value = []
   }
 
-  try {
-    archiveData.value = await fetchArchiveData()
-  } catch (e) {
-    console.warn('[StatsStrip] Błąd pobierania archiwum:', e)
-    archiveData.value = null
-  }
 }
 
 // ─── KROK 2: Kafelek "Zawodnicy" (z trendem) ────────────────────────────
 
 const playersCount = computed(() => players.value.length)
 
-const prevSeasonPlayers = computed(() => {
-  if (!archiveData.value || !currentSeason.value) return 0
-  const prevKey = `season_${currentSeason.value - 1}`
-  const prev = archiveData.value[prevKey]
-  if (!prev?.players) return 0
-  return Object.keys(prev.players).length
-})
+function archivedPlayerCount(node: unknown): number {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return 0
+  const playersNode = (node as { players?: unknown }).players
+  if (!playersNode || typeof playersNode !== 'object') return 0
+  return Object.keys(playersNode).length
+}
+
+watch(
+  [seasonReady, currentSeason],
+  async ([ready, seasonNumber]) => {
+    const token = ++archiveToken
+    if (!ready || seasonNumber <= 1) {
+      prevSeasonPlayers.value = 0
+      return
+    }
+    try {
+      const archived = await listArchiveSeasons()
+      if (token !== archiveToken) return
+      const previous = seasonNumber - 1
+      if (!archived.includes(previous)) {
+        prevSeasonPlayers.value = 0
+        return
+      }
+      const node = await fetchArchiveSeason(previous)
+      if (token !== archiveToken) return
+      prevSeasonPlayers.value = archivedPlayerCount(node)
+    } catch (err) {
+      if (token !== archiveToken) return
+      console.warn('[StatsStrip] Błąd pobierania archiwum:', err)
+      prevSeasonPlayers.value = 0
+    }
+  },
+  { immediate: true },
+)
 
 const playersTrend = computed(() => playersCount.value - prevSeasonPlayers.value)
 
@@ -235,6 +251,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  archiveToken += 1
   _unsubSchedule?.()
   stopCarousel()
 })

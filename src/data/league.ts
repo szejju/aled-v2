@@ -43,7 +43,7 @@ export const navLinks: NavLink[] = [
   { label: 'Newsy', to: '/news' },
   { label: 'Puchar Ligi', to: '/puchar' },
   { label: 'Liga Lato', to: '/lato' },
-  { label: 'Archiwum', to: '/#wyniki' },
+  { label: 'Archiwum', to: '/archiwum' },
 ]
 
 export const currentSeason = 'Sezon 4'

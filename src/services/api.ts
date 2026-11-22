@@ -856,6 +856,33 @@ export const archiveCurrentSeason = makeCallable<
 /** Zamyka sezon: zapis na osobną instancję archiwum i reset bazy operacyjnej. */
 export const apiArchiveCurrentSeason = archiveCurrentSeason
 
+// ─── backfillArchiveTables (jednorazowe tabele archiwum) ─
+
+export interface BackfillArchiveTablesPayload {
+  /** `season_2` albo sam numer. Puste przelicza sezony bez węzła `tables`. */
+  seasonKey?: string
+}
+
+export interface BackfillArchiveSeasonReport {
+  seasonKey: string
+  divisions: string[]
+  rows: number
+  matches: number
+}
+
+export interface BackfillArchiveTablesResult {
+  success: boolean
+  message: string
+  source: 'archive' | 'operational'
+  seasons: BackfillArchiveSeasonReport[]
+}
+
+/** Przelicza zamrożone tabele archiwum tym samym silnikiem co zamknięcie sezonu. */
+export const apiBackfillArchiveTables = makeCallable<
+  BackfillArchiveTablesPayload,
+  BackfillArchiveTablesResult
+>('backfillArchiveTables')
+
 // ─── setCupStatusAdmin (Status Pucharu Ligi) ────────────────────────────────
 
 export interface SetCupStatusPayload {
@@ -1223,25 +1250,55 @@ export const replacePlayerWithHistory = makeCallable<
   { success: boolean; message: string; walkoverCount: number; cleanCount: number }
 >('replacePlayerWithHistory')
 
-// ─── fetchArchiveData (REST – Archiwum bez SDK) ────────────────────────────
+// ─── Archiwum (REST, osobna instancja RTDB) ─────────────────────────────────
 
-/**
- * Pobiera dane archiwalne przez REST API, omijając SDK Firebase.
- * Używa zewnętrznej bazy (VITE_ARCHIVE_DB_URL), by nie obciążać głównej RTDB.
- * Fallback do głównej bazy przez SDK, gdy zmienna nie jest skonfigurowana.
- */
-export const fetchArchiveData = async () => {
-  const archiveUrl = import.meta.env.VITE_ARCHIVE_DB_URL
-  if (!archiveUrl) {
-    console.warn('Brak VITE_ARCHIVE_DB_URL, próba odczytu z głównej bazy przez SDK.')
-    const { getDatabase, ref, get } = await import('firebase/database')
-    const snap = await get(ref(getDatabase(), 'archive'))
-    return snap.val()
+function envUrl(value: unknown): string {
+  return typeof value === 'string' ? value.trim().replace(/\/+$/, '') : ''
+}
+
+/** Baza archiwum. Brak dedykowanego URL-a wraca do głównej bazy ligi. */
+function archiveRestBase(): string {
+  const base = envUrl(import.meta.env.VITE_ARCHIVE_DB_URL) || envUrl(import.meta.env.VITE_FIREBASE_DATABASE_URL)
+  if (!base) throw new Error('Brak adresu bazy archiwum.')
+  return base
+}
+
+async function archiveGet(path: string): Promise<unknown> {
+  let response: Response
+  try {
+    response = await fetch(`${archiveRestBase()}${path}`, { cache: 'no-store' })
+  } catch {
+    throw new Error('Nie udało się połączyć z archiwum.')
   }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('Baza archiwum odmówiła odczytu.')
+  }
+  if (!response.ok) throw new Error('Nie udało się pobrać archiwum.')
+  try {
+    return await response.json()
+  } catch {
+    throw new Error('Nie udało się odczytać archiwum.')
+  }
+}
 
-  const response = await fetch(`${archiveUrl}/archive.json`)
-  if (!response.ok) throw new Error('Błąd pobierania archiwum po REST.')
-  return await response.json()
+/** Numery sezonów z płytkiego indeksu `archive`, od najnowszego. */
+export async function listArchiveSeasons(): Promise<number[]> {
+  const data = await archiveGet('/archive.json?shallow=true')
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return []
+  const seasons: number[] = []
+  for (const key of Object.keys(data)) {
+    const match = /^season_(\d+)$/.exec(key)
+    const season = match?.[1] ? Number(match[1]) : Number.NaN
+    if (Number.isInteger(season) && season > 0) seasons.push(season)
+  }
+  seasons.sort((a, b) => b - a)
+  return seasons
+}
+
+/** Pełny węzeł jednego sezonu. `null`, gdy klucz istnieje, ale nie ma treści. */
+export async function fetchArchiveSeason(season: number): Promise<unknown> {
+  if (!Number.isInteger(season) || season <= 0) throw new Error('Niepoprawny numer sezonu.')
+  return archiveGet(`/archive/season_${season}.json`)
 }
 
 // ─── getSocialStats (Statystyki Social Media) ─────────────────────────────────

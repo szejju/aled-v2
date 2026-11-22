@@ -4,8 +4,12 @@
 import type { Match, MatchPlayerStats } from "../stats_engine/calculator.js";
 import { isSingleWalkover, listedScore } from "./walkover.js";
 
-/** Statusy, po których sędzia oficjalnie zamknął mecz. `played` zapisuje radar i panel. */
-const OFFICIAL_STATUSES = new Set(["played", "approved"]);
+/**
+ * Statusy, po których mecz wchodzi do tabeli.
+ * Bieżący sezon zamyka sędzia jako `played` albo `approved`.
+ * Archiwum v1 używa `finished`, `walkover` albo samej flagi `isPlayed`.
+ */
+const OFFICIAL_STATUSES = new Set(["played", "approved", "finished", "walkover"]);
 
 const BARRAGE_DIV = /BARA[ZŻ]|PLAY-?OFF/i;
 
@@ -50,26 +54,102 @@ function statsOf(value: unknown): MatchPlayerStats | undefined {
   return raw as MatchPlayerStats;
 }
 
+function flagTrue(value: unknown): boolean {
+  return value === true || value === 1 || value === "true" || value === "1";
+}
+
+function textId(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function numberScore(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function statusOf(raw: Record<string, unknown>): string {
+  return typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
+}
+
+function divisionLabel(raw: Record<string, unknown>): string {
+  if (typeof raw.div === "string" && raw.div.trim() !== "") return raw.div;
+  if (typeof raw.division === "string" && raw.division.trim() !== "") return raw.division;
+  return "";
+}
+
+/**
+ * Sezon 2 nie zapisywał `status`. Rozegrany mecz ma `isPlayed: true`.
+ * Obustronny walkover bywa samą flagą i wynikiem 0:0, bez statusu.
+ * `proposed` / `accepted` / `scheduled` zostają poza tabelą, dopóki nie ma `isPlayed`.
+ */
+function legacyClosed(raw: Record<string, unknown>): boolean {
+  const status = statusOf(raw);
+  if (OFFICIAL_STATUSES.has(status)) return true;
+  if (flagTrue(raw.isPlayed) || flagTrue(raw.played)) return true;
+  if (status !== "") return false;
+  return flagTrue(raw.isDoubleWO) || flagTrue(raw.isSingleWO) || flagTrue(raw.isWalkover);
+}
+
+/**
+ * Kopia, którą czyta ten sam filtr co bieżący sezon.
+ * Stary walkover trzyma zwycięzcę w `winnerId` albo `walkoverFor`, nie w `walkoverPlayerId`.
+ * Oryginalnego meczu ta funkcja nie zmienia.
+ */
+function preparedLeagueMatch(raw: Record<string, unknown>): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...raw };
+  const p1Id = textId(raw.p1Id);
+  const p2Id = textId(raw.p2Id);
+  if (p1Id) next.p1Id = p1Id;
+  if (p2Id) next.p2Id = p2Id;
+
+  const score1 = numberScore(raw.score1 ?? raw.homeScore ?? raw.p1Score);
+  const score2 = numberScore(raw.score2 ?? raw.awayScore ?? raw.p2Score);
+  if (score1 !== null) next.score1 = score1;
+  if (score2 !== null) next.score2 = score2;
+
+  if (flagTrue(raw.isDoubleWO)) {
+    next.isDoubleWO = true;
+    if (numberScore(next.score1) === null) next.score1 = 0;
+    if (numberScore(next.score2) === null) next.score2 = 0;
+    return next;
+  }
+
+  const marked = flagTrue(raw.isSingleWO) || flagTrue(raw.isWalkover) || statusOf(raw) === "walkover";
+  if (!marked) return next;
+  next.isWalkover = true;
+  const winner = textId(raw.walkoverPlayerId) || textId(raw.winnerId) || textId(raw.walkoverFor);
+  if (winner !== "" && (winner === p1Id || winner === p2Id)) next.walkoverPlayerId = winner;
+  return next;
+}
+
 /** Baraż nie wchodzi do punktów, legów ani pojedynku bezpośredniego. */
 export function isBarrageMatch(match: unknown): boolean {
   const raw = asRecord(match);
   if (!raw) return false;
-  if (raw.isPlayoff === true || raw.isBarrage === true) return true;
-  return typeof raw.div === "string" && BARRAGE_DIV.test(raw.div);
+  if (flagTrue(raw.isPlayoff) || flagTrue(raw.isBarrage)) return true;
+  return BARRAGE_DIV.test(divisionLabel(raw));
 }
 
 /**
- * Mecz ligowy zamknięty przez sędziego.
+ * Mecz ligowy, z którego wolno liczyć tabelę.
+ * Bieżący sezon: status `played` / `approved`.
+ * Archiwum: także `finished`, `walkover` i `isPlayed === true`.
  * Zaplanowane, zgłoszone i odrzucone protokoły nie mają tu wstępu.
  */
 export function isOfficialLeagueMatch(match: unknown): boolean {
   const raw = asRecord(match);
   if (!raw || isBarrageMatch(raw)) return false;
-  if (!listedScore(raw, "league")) return false;
-  const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
-  if (!OFFICIAL_STATUSES.has(status) && !isSingleWalkover(raw)) return false;
-  const p1Id = typeof raw.p1Id === "string" ? raw.p1Id : "";
-  const p2Id = typeof raw.p2Id === "string" ? raw.p2Id : "";
+  const prepared = preparedLeagueMatch(raw);
+  if (!listedScore(prepared, "league")) return false;
+  if (!legacyClosed(raw) && !isSingleWalkover(prepared)) return false;
+  const p1Id = textId(prepared.p1Id);
+  const p2Id = textId(prepared.p2Id);
   return p1Id !== "" && p2Id !== "" && p1Id !== p2Id;
 }
 
@@ -83,13 +163,14 @@ export function collectOfficialLeagueMatches(schedule: unknown): Match[] {
   for (const value of rows) {
     const raw = asRecord(value);
     if (!raw || !isOfficialLeagueMatch(raw)) continue;
-    const scores = listedScore(raw, "league");
-    const p1Id = raw.p1Id;
-    const p2Id = raw.p2Id;
-    if (!scores || typeof p1Id !== "string" || typeof p2Id !== "string") continue;
-    const status = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "";
-    const closed = OFFICIAL_STATUSES.has(status);
+    const prepared = preparedLeagueMatch(raw);
+    const scores = listedScore(prepared, "league");
+    const p1Id = textId(prepared.p1Id);
+    const p2Id = textId(prepared.p2Id);
+    if (!scores || p1Id === "" || p2Id === "") continue;
+    const status = statusOf(raw);
     const verifiedAt = typeof raw.verifiedAt === "number" ? raw.verifiedAt : undefined;
+    const div = divisionLabel(raw);
     official.push({
       p1Id,
       p2Id,
@@ -97,12 +178,12 @@ export function collectOfficialLeagueMatches(schedule: unknown): Match[] {
       p2Name: typeof raw.p2Name === "string" ? raw.p2Name : undefined,
       score1: scores.score1,
       score2: scores.score2,
-      p1Stats: closed ? statsOf(raw.p1Stats) : undefined,
-      p2Stats: closed ? statsOf(raw.p2Stats) : undefined,
-      isDoubleWO: raw.isDoubleWO === true,
+      p1Stats: legacyClosed(raw) ? statsOf(raw.p1Stats) : undefined,
+      p2Stats: legacyClosed(raw) ? statsOf(raw.p2Stats) : undefined,
+      isDoubleWO: flagTrue(prepared.isDoubleWO),
       isPlayoff: false,
-      div: typeof raw.div === "string" ? raw.div : undefined,
-      status: closed ? status : "played",
+      div: div !== "" ? div : undefined,
+      status: status === "approved" ? "approved" : "played",
       round: matchRound(raw.round),
       timestamp: typeof raw.timestamp === "number" ? raw.timestamp : verifiedAt,
     });

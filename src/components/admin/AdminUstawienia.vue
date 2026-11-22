@@ -6,7 +6,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { apiArchiveCurrentSeason, manageAdminEmails, updateRules, updateScheduleDates } from '@/services/api'
+import { apiArchiveCurrentSeason, apiBackfillArchiveTables, manageAdminEmails, updateRules, updateScheduleDates } from '@/services/api'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import ArchiveSeasonModal from './shared/ArchiveSeasonModal.vue'
 import { errorText } from '@/utils/errorText'
@@ -193,6 +193,33 @@ async function confirmArchive() {
   if (!archiveFailed.value) archiveOpen.value = false
 }
 
+const backfillSeason = ref('')
+const backfillLoading = ref(false)
+const backfillMsg = ref('')
+const backfillFailed = ref(false)
+
+async function runArchiveBackfill() {
+  if (backfillLoading.value) return
+  backfillLoading.value = true
+  backfillFailed.value = false
+  backfillMsg.value = ''
+  const seasonKey = backfillSeason.value.trim()
+  try {
+    const result = await apiBackfillArchiveTables(seasonKey ? { seasonKey } : {})
+    backfillMsg.value = result.message
+  } catch (err: unknown) {
+    console.error(
+      '%c[backfillArchiveTables] Przeliczenie tabel archiwum nie powiodło się',
+      'color:#f87171;font-weight:bold',
+      err,
+    )
+    backfillFailed.value = true
+    backfillMsg.value = errorText(err)
+  } finally {
+    backfillLoading.value = false
+  }
+}
+
 onMounted(() => {
   loadSched()
   fetchAdminEmails()
@@ -254,6 +281,31 @@ onMounted(() => {
       {{ isLoading ? 'Archiwizuję...' : 'Zamknij sezon' }}
     </button>
     <p v-if="archiveMsg && !archiveOpen" :class="['text-sm font-bold mt-3', archiveFailed ? 'text-red-400' : 'text-lime']">{{ archiveMsg }}</p>
+  </AdminSectionCard>
+
+  <AdminSectionCard title="Tabele archiwum" dot-color="bg-amber-500" class="xl:col-span-2">
+    <p class="mb-4 text-xs text-muted">
+      Jednorazowo dopisuje zamrożone tabele starych sezonów. Puste pole bierze każdy sezon bez tabel.
+      Wskazany sezon, np. season_2, przelicza ten jeden węzeł od nowa. Skład, terminarz, puchar i data zamknięcia zostają.
+    </p>
+    <div class="flex flex-col gap-3 sm:flex-row">
+      <input
+        v-model="backfillSeason"
+        type="text"
+        placeholder="season_2 albo puste"
+        :disabled="backfillLoading"
+        class="input w-full rounded-xl border border-line bg-fg/5 px-3 py-2 text-sm text-fg sm:max-w-xs"
+      />
+      <button
+        type="button"
+        :disabled="backfillLoading"
+        class="rounded-xl bg-amber-500 px-6 py-2.5 font-display text-[10px] font-extrabold uppercase tracking-widest text-on-lime hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+        @click="runArchiveBackfill"
+      >
+        {{ backfillLoading ? 'Przeliczam...' : 'Przelicz tabele archiwum' }}
+      </button>
+    </div>
+    <p v-if="backfillMsg" :class="['mt-3 text-sm font-bold', backfillFailed ? 'text-red-400' : 'text-lime']">{{ backfillMsg }}</p>
   </AdminSectionCard>
 
   <ArchiveSeasonModal

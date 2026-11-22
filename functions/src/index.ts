@@ -45,6 +45,7 @@ export {
   updateGlobalSettings,
   forceMatchDateAdmin,
   archiveCurrentSeason,
+  backfillArchiveTables,
   setDoubleWalkoverAdmin,
   adminAwardCupWalkover,
   // cupActions.ts

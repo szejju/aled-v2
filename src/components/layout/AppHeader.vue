@@ -69,17 +69,17 @@ async function handleLogout() {
 
 <template>
   <header class="sticky top-0 z-40 border-b border-line/70 bg-ink/80 backdrop-blur-xl">
-    <div class="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:h-20 sm:gap-3 sm:px-6 lg:h-24 lg:gap-6">
-      <!-- Logo -->
-      <RouterLink to="/" class="flex min-w-0 shrink items-center gap-3" aria-label="Amatorska Liga e-Darta – strona główna">
+    <div class="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:h-20 sm:gap-3 sm:px-6 lg:h-24 lg:gap-6 xl:gap-4">
+      <!-- Logo. min-w-max: bez tego flex ściska markę do 0 i napis wylewa się na „Home”. -->
+      <RouterLink to="/" class="flex shrink-0 min-w-max items-center gap-3" aria-label="Amatorska Liga e-Darta – strona główna">
         <img
           src="/images/logo_2.png"
           alt="ALED Logo"
-          class="h-11 w-auto shrink-0 object-contain transition-transform hover:scale-105 cursor-pointer sm:h-16 lg:h-24"
+          class="h-11 w-auto shrink-0 object-contain transition-transform hover:scale-105 cursor-pointer sm:h-16 lg:h-24 xl:h-20"
         />
-        <span class="hidden min-w-0 flex-col leading-none sm:flex">
-          <span class="truncate font-display text-[11px] font-bold uppercase tracking-[0.16em] text-muted lg:tracking-[0.3em]">Amatorska liga</span>
-          <span class="font-display text-2xl font-black uppercase italic tracking-tight lg:text-3xl">
+        <span class="hidden flex-col leading-none sm:flex">
+          <span class="whitespace-nowrap font-display text-[11px] font-bold uppercase tracking-[0.16em] text-muted lg:tracking-[0.3em] xl:tracking-[0.16em]">Amatorska liga</span>
+          <span class="whitespace-nowrap font-display text-2xl font-black uppercase italic tracking-tight lg:text-3xl">
             e-Dart<span class="text-accent">a</span>
           </span>
         </span>
@@ -87,15 +87,15 @@ async function handleLogout() {
 
       <!-- Główna nawigacja -->
       <nav aria-label="Główna nawigacja" class="hidden flex-1 justify-center xl:flex">
-        <ul class="flex items-center gap-1 font-display text-[15px] font-bold uppercase tracking-[0.08em] text-muted">
+        <ul class="flex items-center gap-0.5 font-display text-[14px] font-bold uppercase tracking-[0.04em] text-muted">
           <li v-for="(link, i) in menuLinks" :key="link.label">
             <RouterLink
               :to="link.to"
               :aria-current="isLinkActive(i) ? 'page' : undefined"
-              class="inline-flex items-center justify-center whitespace-nowrap rounded-full px-3.5 py-2 leading-none transition hover:text-fg"
+              class="inline-flex items-center justify-center whitespace-nowrap rounded-full px-2 py-2 leading-none transition hover:text-fg"
               :class="
                 isLinkActive(i)
-                  ? 'relative text-fg after:absolute after:inset-x-3.5 after:-bottom-0.5 after:h-0.5 after:rounded-full after:bg-lime'
+                  ? 'relative text-fg after:absolute after:inset-x-2 after:-bottom-0.5 after:h-0.5 after:rounded-full after:bg-lime'
                   : ''
               "
             >
@@ -176,7 +176,8 @@ async function handleLogout() {
               <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
               </svg>
-              <span class="hidden md:inline">Panel Administratora</span>
+              <span class="hidden md:max-xl:inline">Panel Administratora</span>
+              <span class="hidden xl:inline">Panel</span>
             </RouterLink>
 
             <!-- Przycisk WYLOGUJ -->
