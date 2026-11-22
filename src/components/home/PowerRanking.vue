@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { getPlayersList, type PlayerListItem } from '@/services/api'
+import { publicSurnameLabel } from '@/utils/playerName'
 
 interface RankingEntry {
   position: number
@@ -29,7 +30,7 @@ const top10 = computed<RankingEntry[]>(() =>
     .slice(0, 10)
     .map((p, i) => ({
       position: i + 1,
-      player: [p.lastName, p.firstName].filter(Boolean).join(' ') || p.id,
+      player: publicSurnameLabel(p.firstName, p.lastName, p.id),
       points: p.stats?.dpi ?? 0,
     })),
 )

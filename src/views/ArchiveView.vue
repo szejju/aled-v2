@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { fetchArchiveData } from '@/services/api'
+import { publicStoredName, publicSurnameLabel } from '@/utils/playerName'
 
 type ArchiveTab = 'table' | 'matches' | 'cup' | 'players'
 
@@ -82,8 +83,8 @@ const tableData = computed<TableRow[]>(() => {
     ;[m.p1Id, m.p2Id].forEach((id, idx) => {
       if (!acc[id]) acc[id] = { id, name: '', div, m: 0, w: 0, d: 0, l: 0, lw: 0, ll: 0, ld: 0, pts: 0 }
       const r = acc[id]; r.m++
-      if (idx === 0) { r.name = m.p1Name || ''; r.lw += s1; r.ll += s2; if (s1 > s2) { r.w++; r.pts += 3 } else if (s1 === s2 && s1 > 0) { r.d++; r.pts += 1 } else r.l++ }
-      else { r.name = m.p2Name || ''; r.lw += s2; r.ll += s1; if (s2 > s1) { r.w++; r.pts += 3 } else if (s1 === s2 && s1 > 0) { r.d++; r.pts += 1 } else r.l++ }
+      if (idx === 0) { r.name = publicStoredName(m.p1Name); r.lw += s1; r.ll += s2; if (s1 > s2) { r.w++; r.pts += 3 } else if (s1 === s2 && s1 > 0) { r.d++; r.pts += 1 } else r.l++ }
+      else { r.name = publicStoredName(m.p2Name); r.lw += s2; r.ll += s1; if (s2 > s1) { r.w++; r.pts += 3 } else if (s1 === s2 && s1 > 0) { r.d++; r.pts += 1 } else r.l++ }
       r.ld = r.lw - r.ll
     })
   })
@@ -250,9 +251,9 @@ const tabClass = (tab: ArchiveTab): string => {
               <span>Kolejka {{ m.round }}</span>
             </div>
             <div class="flex items-center justify-between gap-4">
-              <span class="font-display font-bold uppercase tracking-wide text-fg">{{ m.p1Name || '?' }}</span>
+              <span class="font-display font-bold uppercase tracking-wide text-fg">{{ publicStoredName(m.p1Name, '?') }}</span>
               <span class="font-display text-lg font-black tabular-nums text-accent">{{ m.score1 ?? '-' }} : {{ m.score2 ?? '-' }}</span>
-              <span class="font-display font-bold uppercase tracking-wide text-fg text-right">{{ m.p2Name || '?' }}</span>
+              <span class="font-display font-bold uppercase tracking-wide text-fg text-right">{{ publicStoredName(m.p2Name, '?') }}</span>
             </div>
           </article>
         </div>
@@ -276,9 +277,9 @@ const tabClass = (tab: ArchiveTab): string => {
               </span>
             </div>
             <div class="flex items-center justify-between gap-4">
-              <span class="font-display font-bold uppercase tracking-wide text-fg">{{ m.p1Name || '?' }}</span>
+              <span class="font-display font-bold uppercase tracking-wide text-fg">{{ publicStoredName(m.p1Name, '?') }}</span>
               <span class="font-display text-lg font-black tabular-nums text-purple-400">{{ m.score1 ?? '-' }} : {{ m.score2 ?? '-' }}</span>
-              <span class="font-display font-bold uppercase tracking-wide text-fg text-right">{{ m.p2Name || '?' }}</span>
+              <span class="font-display font-bold uppercase tracking-wide text-fg text-right">{{ publicStoredName(m.p2Name, '?') }}</span>
             </div>
           </article>
         </div>
@@ -297,7 +298,7 @@ const tabClass = (tab: ArchiveTab): string => {
                 {{ p.seasons }}
               </div>
               <div>
-                <h3 class="font-display font-bold uppercase tracking-wide text-fg">{{ p.lastName }} {{ p.firstName }}</h3>
+                <h3 class="font-display font-bold uppercase tracking-wide text-fg">{{ publicSurnameLabel(p.firstName, p.lastName) }}</h3>
                 <p class="text-xs text-muted">{{ p.seasons }} sezon{{ p.seasons !== 1 ? 'y' : '' }}</p>
               </div>
             </div>

@@ -4,6 +4,7 @@ import { ref as dbRef, get } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { officialLeagueStats } from '@/utils/leagueDpi'
 import { pickHitOfTheRound, type HitCandidate } from '@/utils/hitOfTheRound'
+import { publicPlayerLabel, publicStoredName } from '@/utils/playerName'
 
 interface RawScheduleMatch extends HitCandidate {
   p1Name?: string; p2Name?: string
@@ -104,12 +105,10 @@ onMounted(async () => {
     const selectedMatch = pickHitOfTheRound(allMatches, engine, startDateStr)
     if (!selectedMatch?.p1Id || !selectedMatch.p2Id) { loading.value = false; return }
 
-    const p1Name = selectedMatch.p1Name ||
-      [rawPlayers[selectedMatch.p1Id!]?.lastName, rawPlayers[selectedMatch.p1Id!]?.firstName]
-        .filter(Boolean).join(' ') || '—'
-    const p2Name = selectedMatch.p2Name ||
-      [rawPlayers[selectedMatch.p2Id!]?.lastName, rawPlayers[selectedMatch.p2Id!]?.firstName]
-        .filter(Boolean).join(' ') || '—'
+    const p1 = rawPlayers[selectedMatch.p1Id]
+    const p2 = rawPlayers[selectedMatch.p2Id]
+    const p1Name = publicStoredName(selectedMatch.p1Name) || publicPlayerLabel(p1?.firstName, p1?.lastName, '—')
+    const p2Name = publicStoredName(selectedMatch.p2Name) || publicPlayerLabel(p2?.firstName, p2?.lastName, '—')
 
     const when = shownSchedule(selectedMatch)
     match.value = {

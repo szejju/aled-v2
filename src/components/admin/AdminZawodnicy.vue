@@ -8,6 +8,7 @@ import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { addPenalty, apiRemovePenalty } from '@/services/api'
 import AdminPlayerNotify from './AdminPlayerNotify.vue'
+import AdminRosterHold from './AdminRosterHold.vue'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
 import AdminVerificationQueue from './AdminVerificationQueue.vue'
 import { usePlayerDirectory } from '@/composables/usePlayerDirectory'
@@ -20,6 +21,7 @@ import { asRecord, optNum, optStr } from '@/utils/rtdb'
 const directory = usePlayerDirectory()
 const uPlayers = directory.unverified
 const lPlayers = directory.verified
+const heldPlayers = directory.held
 const directoryError = directory.error
 const directoryReady = directory.ready
 
@@ -52,15 +54,86 @@ const cupIds = cupRoster.data
 const cupRosterError = cupRoster.error
 const cupRosterReady = cupRoster.ready
 
+interface SummerRosterIndex {
+  ids: Set<string>
+  /** Imię i nazwisko z zapisu, gdy na liście Lata występuje tylko raz. */
+  uniqueNames: Set<string>
+}
+
+const emptySummerRoster: SummerRosterIndex = { ids: new Set(), uniqueNames: new Set() }
+
+function rosterName(firstName?: string, lastName?: string, raw?: string): string {
+  const source = raw ?? `${firstName ?? ''} ${lastName ?? ''}`
+  return source.replace(/\s+/g, ' ').trim().toLocaleLowerCase('pl')
+}
+
+/**
+ * Zapis do Ligi Lato żyje w `summer_league/participants/{auth.uid}`.
+ * Profil ligowy ma osobny klucz. Konto na zapisie bywa inne niż `players.uid`
+ * (zapis szuka też po mailu), więc przy jednym imieniu i nazwisku łączymy po nazwie.
+ */
+function summerRosterIndex(value: unknown): SummerRosterIndex {
+  const record = asRecord(value)
+  const ids = new Set<string>()
+  const nameCounts = new Map<string, number>()
+  if (!record) return { ids, uniqueNames: new Set() }
+  for (const [key, row] of Object.entries(record)) {
+    if (row == null) continue
+    ids.add(key)
+    const nested = asRecord(row)
+    const uid = optStr(nested?.uid)
+    if (uid) ids.add(uid)
+    const playerId = optStr(nested?.playerId)
+    if (playerId) ids.add(playerId)
+    const name = rosterName(undefined, undefined, optStr(nested?.name))
+    if (name) nameCounts.set(name, (nameCounts.get(name) ?? 0) + 1)
+  }
+  const uniqueNames = new Set(
+    [...nameCounts.entries()].filter(([, count]) => count === 1).map(([name]) => name),
+  )
+  return { ids, uniqueNames }
+}
+
+const summerRoster = useRtdbValue('summer_league/participants', (snapshot) => summerRosterIndex(snapshot.val()), emptySummerRoster)
+const summerIndex = summerRoster.data
+const summerRosterError = summerRoster.error
+const summerRosterReady = summerRoster.ready
+
+const summerNameOwners = computed(() => {
+  const counts = new Map<string, number>()
+  for (const player of lPlayers.value) {
+    const name = rosterName(player.firstName, player.lastName)
+    if (!name) continue
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  return counts
+})
+
+function inSummer(
+  player: { id: string; uid?: string; firstName?: string; lastName?: string },
+  roster: SummerRosterIndex,
+  owners: Map<string, number>,
+): boolean {
+  if ((player.uid && roster.ids.has(player.uid)) || roster.ids.has(player.id)) return true
+  const name = rosterName(player.firstName, player.lastName)
+  return name.length > 0 && roster.uniqueNames.has(name) && owners.get(name) === 1
+}
+
 const fPlayers = computed(() => {
   const enrolled = cupIds.value
+  const roster = summerIndex.value
+  const owners = summerNameOwners.value
   const division = plFilterDiv.value
   const query = plSearch.value
   const rows = lPlayers.value.filter((player) => {
     if (division && player.div !== division) return false
     return matchesPlayerQuery(player, query)
   })
-  return rows.map((player) => ({ ...player, cup: enrolled.has(player.id) }))
+  return rows.map((player) => ({
+    ...player,
+    cup: enrolled.has(player.id),
+    summer: inSummer(player, roster, owners),
+  }))
 })
 
 const {
@@ -332,6 +405,7 @@ async function confirmPenalty() {
 onMounted(() => {
   directory.start()
   cupRoster.start()
+  summerRoster.start()
   fetchPen()
 })
 </script>
@@ -359,11 +433,15 @@ onMounted(() => {
     </template>
     <p v-if="kickNotice" class="text-xs font-bold text-lime mb-3">{{ kickNotice }}</p>
     <p v-if="cupRosterError" class="text-xs font-bold text-red-400 mb-3">{{ cupRosterError }}</p>
+    <p v-if="summerRosterError" class="text-xs font-bold text-red-400 mb-3">{{ summerRosterError }}</p>
     <div class="overflow-x-auto max-h-[600px] overflow-y-auto">
       <table class="w-full text-xs"><thead class="sticky top-0 bg-surface z-10"><tr class="border-b border-line text-muted uppercase tracking-widest text-[10px]"><th class="text-left py-2 px-2">Imie</th><th class="text-left py-2 px-2">Nazwisko</th><th class="text-left py-2 px-2">UID</th><th class="text-left py-2 px-2">Mail</th><th class="text-center py-2 px-2">Puchar</th><th class="text-center py-2 px-2">Lato</th><th class="text-right py-2 px-2">Akcje</th></tr></thead>
-        <tbody><tr v-if="fPlayers.length === 0"><td colspan="7" class="py-8 px-2 text-center text-xs text-muted">{{ plSearch.trim() ? 'Brak zawodnikow o takim imieniu lub nazwisku.' : 'Brak zawodnikow w tej dywizji.' }}</td></tr><tr v-for="p in fPlayers" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }}</td><td class="py-2 px-2 font-bold text-fg">{{ p.lastName }}</td><td class="py-2 px-2 text-muted font-mono text-[10px]">{{ p.id }}</td><td class="py-2 px-2 text-muted">{{ p.email||'--' }}</td><td class="py-2 px-2 text-center"><span v-if="!cupRosterReady" class="text-muted">...</span><span v-else :class="p.cup?'text-lime':'text-muted'">{{ p.cup?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-center"><span :class="p.summer?'text-lime':'text-muted'">{{ p.summer?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-right"><div class="flex gap-1 justify-end"><button @click="beginRepl(p)" :disabled="replLoading && replTarget?.id === p.id" class="rounded-lg bg-blue-600/10 text-blue-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-blue-600/20 disabled:opacity-50">{{ replLoading && replTarget?.id === p.id ? 'Podmiana...' : 'Podmien' }}</button><button @click="beginKick(p)" :disabled="kickLoading && kickTarget?.id === p.id" class="rounded-lg bg-red-600/10 text-red-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-red-600/20 disabled:opacity-50">{{ kickLoading && kickTarget?.id === p.id ? 'Wyrzucanie...' : 'Usun' }}</button></div></td></tr></tbody></table>
+        <tbody><tr v-if="fPlayers.length === 0"><td colspan="7" class="py-8 px-2 text-center text-xs text-muted">{{ plSearch.trim() ? 'Brak zawodnikow o takim imieniu lub nazwisku.' : 'Brak zawodnikow w tej dywizji.' }}</td></tr><tr v-for="p in fPlayers" :key="p.id" class="border-b border-line/50 hover:bg-surface-2/50"><td class="py-2 px-2 font-bold text-fg">{{ p.firstName }}</td><td class="py-2 px-2 font-bold text-fg">{{ p.lastName }}</td><td class="py-2 px-2 text-muted font-mono text-[10px]">{{ p.id }}</td><td class="py-2 px-2 text-muted">{{ p.email||'--' }}</td><td class="py-2 px-2 text-center"><span v-if="!cupRosterReady" class="text-muted">...</span><span v-else :class="p.cup?'text-lime':'text-muted'">{{ p.cup?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-center"><span v-if="!summerRosterReady" class="text-muted">...</span><span v-else :class="p.summer?'text-lime':'text-muted'">{{ p.summer?'Tak':'Nie' }}</span></td><td class="py-2 px-2 text-right"><div class="flex gap-1 justify-end"><button @click="beginRepl(p)" :disabled="replLoading && replTarget?.id === p.id" class="rounded-lg bg-blue-600/10 text-blue-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-blue-600/20 disabled:opacity-50">{{ replLoading && replTarget?.id === p.id ? 'Podmiana...' : 'Podmien' }}</button><button @click="beginKick(p)" :disabled="kickLoading && kickTarget?.id === p.id" class="rounded-lg bg-red-600/10 text-red-400 px-2 py-1 font-extrabold uppercase text-[9px] hover:bg-red-600/20 disabled:opacity-50">{{ kickLoading && kickTarget?.id === p.id ? 'Wyrzucanie...' : 'Usun' }}</button></div></td></tr></tbody></table>
     </div>
   </AdminSectionCard>
+
+  <AdminRosterHold :players="heldPlayers" :ready="directoryReady" :error="directoryError" />
+
   <!-- POWIADOMIENIA -->
   <AdminSectionCard title="Powiadomienia" dot-color="bg-amber-500">
     <AdminPlayerNotify :players="lPlayers" />
@@ -444,7 +522,7 @@ onMounted(() => {
         <h3 id="kick-title" class="font-display font-extrabold text-xl uppercase text-fg">{{ kickStep === 1 ? 'Wyrzucic gracza?' : 'Ostateczne potwierdzenie' }}</h3>
         <p class="text-sm text-muted">Gracz: <span class="font-bold text-fg">{{ kickTarget?.firstName }} {{ kickTarget?.lastName }}</span></p>
         <label class="block"><span class="text-[10px] font-black uppercase text-muted tracking-widest">Wynik walkowera</span><select v-model.number="walkoverScore" :disabled="kickLoading || kickStep === 2" class="mt-1 w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-fg disabled:opacity-50"><option :value="5">5:0</option><option :value="6">6:0</option><option :value="7">7:0</option><option :value="8">8:0</option></select></label>
-        <p class="text-xs text-muted italic">{{ kickStep === 1 ? 'Wszystkie nierozegrane mecze otrzymaja walkower ' + walkoverScore + ':0.' : 'Tej operacji nie mozna cofnac. Wyrzucic gracza i rozdac walkowery ' + walkoverScore + ':0?' }}</p>
+        <p class="text-xs text-muted italic">{{ kickStep === 1 ? 'Wszystkie nierozegrane mecze otrzymaja walkower ' + walkoverScore + ':0. Profil zostaje w rezerwie.' : 'Walkowerow nie da sie cofnac. Gracza mozna pozniej przywrocic z rezerwy bez ponownej weryfikacji.' }}</p>
         <p v-if="kickMsg && showKick" class="text-sm font-bold text-red-400">{{ kickMsg }}</p>
         <div class="flex gap-3"><button type="button" @click="dismissKick" :disabled="kickLoading" class="flex-1 rounded-xl bg-fg/5 border border-line px-4 py-3 font-extrabold uppercase text-[10px] text-fg/70 hover:bg-fg/10 disabled:opacity-50">Anuluj</button><button type="button" @click="confirmKick" :disabled="kickLoading" class="flex-1 rounded-xl bg-red-600 text-white px-4 py-3 font-extrabold uppercase text-[10px] hover:bg-red-500 disabled:opacity-50">{{ kickLoading ? 'Wyrzucanie...' : (kickStep === 1 ? 'Tak, kontynuuj' : 'Wyrzuc') }}</button></div>
       </div>
@@ -457,7 +535,7 @@ onMounted(() => {
       <div class="bg-surface border border-line rounded-3xl p-8 w-full max-w-lg shadow-2xl space-y-6">
         <h3 id="repl-title" class="font-display font-extrabold text-xl uppercase text-fg">{{ replStep === 1 ? 'Podmien gracza' : 'Ostateczne potwierdzenie' }}</h3>
         <p class="text-sm text-muted">Zastepujesz: <span class="font-bold text-fg">{{ replTarget?.firstName }} {{ replTarget?.lastName }}</span></p>
-        <p v-if="replStep === 2" class="text-sm text-muted">Nowy gracz: <span class="font-bold text-fg">{{ playerLabel(replChoice) }}</span>. Stary profil zostanie usuniety z dywizji, a nierozegrane mecze dostanie zastepca.</p>
+        <p v-if="replStep === 2" class="text-sm text-muted">Nowy gracz: <span class="font-bold text-fg">{{ playerLabel(replChoice) }}</span>. Mecze dostaje zastepca. Stary profil schodzi do rezerwy i zachowuje weryfikacje.</p>
         <input v-if="replStep === 1" v-model="replSearch" type="text" placeholder="Szukaj gracza..." class="w-full rounded-xl border border-line bg-surface-2 px-4 py-2.5 text-sm text-fg"/>
         <div v-if="replStep === 1" class="max-h-[300px] overflow-y-auto space-y-1"><button v-for="p in replList" :key="p.id" type="button" @click="replNewId=p.id; replStep=1" :class="['w-full text-left rounded-xl px-4 py-3 text-sm transition-colors',replNewId===p.id?'bg-lime/15 text-lime font-bold':'hover:bg-surface-2 text-fg']">{{ p.firstName }} {{ p.lastName }} <span class="text-muted text-xs">{{ p.div||'--' }}</span></button></div>
         <button type="button" @click="confirmRepl" :disabled="replLoading||!replNewId" class="w-full rounded-xl bg-lime text-on-lime px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ replLoading ? 'Podmieniam...' : (replStep === 1 ? 'Tak, kontynuuj' : 'Potwierdz podmiane') }}</button>

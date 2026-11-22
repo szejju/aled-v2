@@ -13,6 +13,7 @@ import { getSchedule, getPlayersList, type ScheduleMatch, type ScheduleRound } f
 import { listedScore } from '../../functions/src/league/walkover.ts'
 import { getDatabaseClient } from '@/services/firebase'
 import { formatWarsawDate, isoToEuropean, roundWindowFromStart } from '@/utils/roundWindow'
+import { publicStoredName } from '@/utils/playerName'
 
 interface DivisionTab {
   id: string
@@ -549,7 +550,7 @@ const getTimeText = (m: ScheduleMatch) => {
                 class="flex-1 truncate font-medium"
                 :class="[match.hasScore && match.score1! > match.score2! ? 'text-accent font-bold' : '', match.hasScore ? 'group-hover:text-accent transition-colors' : '']"
               >
-                {{ match.p1Name }}
+                {{ publicStoredName(match.p1Name) }}
               </span>
 
               <span
@@ -563,7 +564,7 @@ const getTimeText = (m: ScheduleMatch) => {
                 class="flex-1 truncate text-right font-medium"
                 :class="[match.hasScore && match.score2! > match.score1! ? 'text-accent font-bold' : '', match.hasScore ? 'group-hover:text-accent transition-colors' : '']"
               >
-                {{ match.p2Name }}
+                {{ publicStoredName(match.p2Name) }}
               </span>
             </div>
           </div>

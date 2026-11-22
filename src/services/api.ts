@@ -641,6 +641,16 @@ export const replacePlayer = makeCallable<
   { success: boolean; message: string }
 >('replacePlayer')
 
+export const restoreHeldPlayer = makeCallable<
+  { playerId: string },
+  { success: boolean; message: string }
+>('restoreHeldPlayer')
+
+export const eraseHeldPlayer = makeCallable<
+  { playerId: string },
+  { success: boolean; message: string }
+>('eraseHeldPlayer')
+
 // ─── admin (Kolejka Wyjątków) ──────────────────────────────────────────────
 
 export interface HandleExceptionPayload {

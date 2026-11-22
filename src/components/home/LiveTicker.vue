@@ -1,122 +1,190 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { getSchedule, getPlayersList, type ScheduleMatch, type PlayerListItem } from '@/services/api'
-import { listedScore } from '../../../functions/src/league/walkover.ts'
-import { fetchCupData } from '@/services/api'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { get, ref as dbRef } from 'firebase/database'
+import { getDatabaseClient } from '@/services/firebase'
+import { officialLeagueStats } from '@/utils/leagueDpi'
+import {
+  buildHomeMatchLists,
+  type ListedMatch,
+} from '../../../functions/src/league/upcoming.ts'
+import type { Player, PlayerStats } from '../../../functions/src/stats_engine/calculator.ts'
+import { publicStoredName } from '@/utils/playerName'
 
-// ─── Dane refs ────────────────────────────────────────────────
-const allMatches = ref<ScheduleMatch[]>([])
-const allPlayers = ref<PlayerListItem[]>([])
-const cupStatus = ref<string>('')
-const loading = ref(false)
+/** Ostatnie wyniki zostają na każdym okrążeniu. Rekord i trójka terminów idą dalej. */
+const RECENT_LIMIT = 3
+const UPCOMING_PER_LAP = 3
+const UPCOMING_POOL = 9
+const REFRESH_GAP_MS = 15_000
 
-// ─── Fetch on mount ────────────────────────────────────────────
-onMounted(async () => {
-  loading.value = true
-  try {
-    // 1. Harmonogram ze wszystkich dywizji
-    const allDivs = ['DYWIZJA 1', 'DYWIZJA 2', 'DYWIZJA 3', 'DYWIZJA 4', 'DYWIZJA 5']
-    const matches: ScheduleMatch[] = []
-    for (const div of allDivs) {
-      try {
-        const res = await getSchedule({ division: div })
-        for (const r of res.schedule ?? []) {
-          for (const match of r.matches) {
-            const stored = typeof match.score1 === 'number' && typeof match.score2 === 'number'
-            if (stored) {
-              matches.push(match)
-              continue
-            }
-            const scores = listedScore(match, 'league')
-            matches.push(scores
-              ? { ...match, score1: scores.score1, score2: scores.score2, hasScore: true, badgeState: 'finished', isWalkover: true }
-              : match)
-          }
-        }
-      } catch { /* pojedyncza dywizja może nie istnieć */ }
-    }
-    allMatches.value = matches
+interface RecordDef {
+  label: string
+  higher: boolean
+  percent?: boolean
+  read: (row: PlayerStats) => number
+}
 
-    // 2. Lista graczy (wszyscy)
-    try {
-      const res = await getPlayersList({})
-      allPlayers.value = res.players ?? []
-    } catch { /* cicha porażka */ }
+const RECORD_DEFS: RecordDef[] = [
+  { label: 'Najwyższy checkout', higher: true, read: (row) => row.hf },
+  { label: 'Najwyższa średnia', higher: true, read: (row) => row.bestAvg },
+  { label: 'Najszybszy leg', higher: false, read: (row) => row.sl },
+  { label: 'Średnia meczowa', higher: true, read: (row) => row.realAvg },
+  { label: 'Maksy 180', higher: true, read: (row) => row.max },
+  { label: 'Skuteczność dablów', higher: true, percent: true, read: (row) => row.doublesPct },
+]
 
-    // 3. Dane pucharu (lekkie, bezpośrednie RTDB)
-    try {
-      const raw = await fetchCupData()
-      cupStatus.value = raw?.settings?.status ?? ''
-    } catch { /* cicha porażka */ }
-  } finally {
-    loading.value = false
+const recent = ref<ListedMatch[]>([])
+const upcoming = ref<ListedMatch[]>([])
+const records = ref<string[]>([])
+const cupStatus = ref('')
+const lap = ref(0)
+
+let loadSeq = 0
+let loadedAt = 0
+
+function toRoster(value: unknown): Player[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const roster: Player[] = []
+  for (const [id, row] of Object.entries(value as Record<string, unknown>)) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue
+    const data = row as Record<string, unknown>
+    roster.push({
+      id,
+      firstName: typeof data.firstName === 'string' ? data.firstName : '',
+      lastName: typeof data.lastName === 'string' ? data.lastName : '',
+      div: typeof data.div === 'string' ? data.div : undefined,
+    })
   }
-})
+  return roster
+}
 
-// ─── Generator wiadomości tickera ──────────────────────────────
+function formatRecord(value: number, def: RecordDef): string {
+  if (def.percent) return `${value.toFixed(1)}%`
+  if (Number.isInteger(value)) return String(value)
+  return value.toFixed(2)
+}
+
+function pickLeader(rows: PlayerStats[], def: RecordDef): { name: string; value: number } | null {
+  let best: { name: string; value: number } | null = null
+  for (const row of rows) {
+    const name = row.name.trim()
+    const value = def.read(row)
+    if (!name || !(value > 0)) continue
+    if (!best) {
+      best = { name, value }
+      continue
+    }
+    const better = def.higher ? value > best.value : value < best.value
+    const tie = value === best.value && name.localeCompare(best.name, 'pl') < 0
+    if (better || tie) best = { name, value }
+  }
+  return best
+}
+
+function buildRecords(players: Player[], schedule: unknown): string[] {
+  const stats = Object.values(officialLeagueStats(players, schedule))
+  const lines: string[] = []
+  for (const def of RECORD_DEFS) {
+    const leader = pickLeader(stats, def)
+    if (!leader) continue
+    lines.push(`⚡ REKORD: ${def.label} - ${formatRecord(leader.value, def)} (${leader.name})`)
+  }
+  return lines
+}
+
+/** Okno z puli. Przy więcej niż jednym pełnym oknie skacze o całą trójkę, inaczej przesuwa lidera. */
+function windowForLap<T>(items: readonly T[], stepLap: number, size: number): T[] {
+  if (items.length === 0 || size <= 0) return []
+  const count = Math.min(size, items.length)
+  const step = items.length > size ? size : 1
+  const start = (stepLap * step) % items.length
+  return Array.from({ length: count }, (_, index) => items[(start + index) % items.length]!)
+}
+
+function resultLine(match: ListedMatch): string {
+  const div = match.div?.trim()
+  const where = div ? ` (${div})` : ''
+  return `🎯 WYNIK: ${publicStoredName(match.p1Name)} ${match.score1}:${match.score2} ${publicStoredName(match.p2Name)}${where}`
+}
+
+function upcomingLine(match: ListedMatch): string {
+  const when = [match.displayDate, match.displayTime].filter(Boolean).join(' ')
+  const div = match.div?.trim()
+  const where = div ? ` (${div})` : ''
+  return `🗓️ NADCHODZI: ${publicStoredName(match.p1Name)} vs ${publicStoredName(match.p2Name)}${where}${when ? ` — ${when}` : ''}`
+}
+
+async function loadTicker() {
+  const seq = ++loadSeq
+  try {
+    const db = getDatabaseClient()
+    const [scheduleSnap, cupSnap, playersSnap, statusSnap] = await Promise.all([
+      get(dbRef(db, '/schedule')),
+      get(dbRef(db, '/cup/schedule')),
+      get(dbRef(db, '/players')),
+      get(dbRef(db, '/cup/settings/status')),
+    ])
+    let summer: unknown = null
+    try {
+      summer = (await get(dbRef(db, '/summer_league/schedule'))).val()
+    } catch (summerError) {
+      console.warn('[LiveTicker] Terminarz Ligi Lato:', summerError)
+    }
+    if (seq !== loadSeq) return
+
+    const lists = buildHomeMatchLists(
+      scheduleSnap.val(),
+      cupSnap.val(),
+      Date.now(),
+      RECENT_LIMIT,
+      summer,
+      UPCOMING_POOL,
+    )
+    recent.value = lists.recent
+    upcoming.value = lists.upcoming
+    records.value = buildRecords(toRoster(playersSnap.val()), scheduleSnap.val())
+    cupStatus.value = typeof statusSnap.val() === 'string' ? statusSnap.val() : ''
+    loadedAt = Date.now()
+  } catch (error) {
+    console.warn('[LiveTicker] Błąd paska:', error)
+  }
+}
+
+function onVisible() {
+  if (document.visibilityState !== 'visible') return
+  if (Date.now() - loadedAt < REFRESH_GAP_MS) return
+  void loadTicker()
+}
+
+function nextLap() {
+  lap.value += 1
+}
+
 const tickerMessages = computed(() => {
   const messages: string[] = []
-
-  // 1. Ostatnie 3 wyniki: przefiltruj zakończone, posortuj od najnowszego
-  const finished = allMatches.value
-    .filter(m => typeof m.score1 === 'number' && typeof m.score2 === 'number')
-    .sort((a, b) => {
-      const aRound = parseInt(String(a.round).replace(/\D/g, ''), 10) || 0
-      const bRound = parseInt(String(b.round).replace(/\D/g, ''), 10) || 0
-      return bRound - aRound
-    })
-    .slice(0, 3)
-
-  for (const m of finished) {
-    const div = m.div ?? ''
-    messages.push(`🎯 WYNIK: ${m.p1Name} ${m.score1}:${m.score2} ${m.p2Name} (${div})`)
+  for (const match of recent.value) messages.push(resultLine(match))
+  for (const match of windowForLap(upcoming.value, lap.value, UPCOMING_PER_LAP)) {
+    messages.push(upcomingLine(match))
   }
-
-  // 2. Najbliższy nierozegrany mecz
-  const now = Date.now()
-  const upcoming = allMatches.value
-    .filter(m => {
-      if (typeof m.score1 === 'number' && typeof m.score2 === 'number') return false
-      return !!(m.displayDate || m.proposedTimestamp)
-    })
-    .sort((a, b) => {
-      const aTs = a.proposedTimestamp ?? 0
-      const bTs = b.proposedTimestamp ?? 0
-      if (aTs > now && bTs > now) return aTs - bTs
-      if (aTs > now) return -1
-      if (bTs > now) return 1
-      return bTs - aTs
-    })[0]
-
-  if (upcoming) {
-    const dateTime = [upcoming.displayDate, upcoming.displayTime].filter(Boolean).join(' ')
-    messages.push(`🗓️ NADCHODZI: ${upcoming.p1Name} vs ${upcoming.p2Name} (${dateTime || 'TBD'})`)
+  if (records.value.length > 0) {
+    messages.push(records.value[lap.value % records.value.length]!)
   }
-
-  // 3. Rekord – gracz z najwyższym checkoutem
-  const topCheckout = allPlayers.value
-    .filter(p => p.checkout != null)
-    .map(p => ({
-      name: `${p.firstName} ${p.lastName}`,
-      checkout: Number(p.checkout),
-    }))
-    .filter(p => !isNaN(p.checkout) && p.checkout > 0)
-    .sort((a, b) => b.checkout - a.checkout)[0]
-
-  if (topCheckout) {
-    messages.push(`⚡ REKORD: Najwyższy zamek sezonu - ${topCheckout.checkout} (${topCheckout.name})`)
-  }
-
-  // 4. Puchar Ligi – czy zapisy otwarte
   if (cupStatus.value === 'registration') {
     messages.push('🏆 PUCHAR LIGI: Zapisy otwarte! Dołącz w panelu gracza.')
   }
-
   return messages
 })
 
-/** Połączony, długi string przedzielony grubą kropką. */
 const tickerText = computed(() => tickerMessages.value.join('   •   '))
+
+onMounted(() => {
+  void loadTicker()
+  document.addEventListener('visibilitychange', onVisible)
+})
+
+onUnmounted(() => {
+  loadSeq += 1
+  document.removeEventListener('visibilitychange', onVisible)
+})
 </script>
 
 <template>
@@ -126,19 +194,15 @@ const tickerText = computed(() => tickerMessages.value.join('   •   '))
     aria-label="Pasek informacyjny na żywo"
   >
     <div class="flex items-center">
-      <!-- BADGE: LIVE -->
       <span class="z-10 flex shrink-0 items-center gap-1.5 bg-red-600 px-3 py-[5px] text-[10px] font-black text-white">
         <span class="size-1.5 animate-pulse-dot rounded-full bg-white" />
         LIVE
       </span>
 
-      <!-- SCROLLING TICKER -->
       <div class="relative flex-1 overflow-hidden">
-        <div class="flex w-max animate-ticker gap-0">
-          <!-- oryginalny ciąg -->
-          <span class="shrink-0 inline-block px-6">{{ tickerText }}</span>
-          <!-- duplikat dla pętli nieskończonej -->
-          <span class="shrink-0 inline-block px-6" aria-hidden="true">{{ tickerText }}</span>
+        <div class="flex w-max animate-ticker" @animationiteration="nextLap">
+          <span class="inline-block shrink-0 px-6">{{ tickerText }}</span>
+          <span class="inline-block shrink-0 px-6" aria-hidden="true">{{ tickerText }}</span>
         </div>
       </div>
     </div>
@@ -147,7 +211,7 @@ const tickerText = computed(() => tickerMessages.value.join('   •   '))
 
 <style scoped>
 .animate-ticker {
-  animation: marquee 110s linear infinite;
+  animation: marquee 52s linear infinite;
 }
 
 .animate-ticker:hover {
@@ -155,7 +219,7 @@ const tickerText = computed(() => tickerMessages.value.join('   •   '))
 }
 
 @keyframes marquee {
-  0%   { transform: translateX(100%); }
-  100% { transform: translateX(-100%); }
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
 </style>

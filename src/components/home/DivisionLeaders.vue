@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { getPlayersList, getDivisionTable, type DivisionTableResponse } from '@/services/api'
+import { publicSurnameLabel } from '@/utils/playerName'
 
 /** Link do pełnej tabeli: numer dywizji i opcjonalna grupa, tak jak czyta je StandingsView. */
 const tableRoute = (name: string) => {
@@ -55,7 +56,7 @@ onMounted(async () => {
         id: `div-${i + 1}`,
         name: t.division,
         leaders: t.players.slice(0, 3).map((p) => ({
-          player: [p.lastName, p.firstName].filter(Boolean).join(' ') || p.id,
+          player: publicSurnameLabel(p.firstName, p.lastName, p.id),
           points: p.st.pts ?? 0,
         })),
       }))

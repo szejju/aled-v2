@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { CupPlayer } from '@/types/cup'
+import { publicSurnameLabel } from '@/utils/playerName'
 
 interface Props {
   players: CupPlayer[]
@@ -135,7 +136,7 @@ const showPlayerCard = (playerId: string) => {
           <!-- Informacje o graczu -->
           <div class="flex-1 min-w-0">
             <h4 class="text-sm font-display font-black text-fg uppercase truncate group-hover:text-lime transition-colors leading-tight">
-              {{ player.lastName }} {{ player.firstName }}
+              {{ publicSurnameLabel(player.firstName, player.lastName) }}
             </h4>
             <p v-if="player.nick" class="label text-accent truncate mb-0.5">
               "{{ player.nick }}"

@@ -4,6 +4,7 @@ import { ref as dbRef, get } from 'firebase/database'
 import { getAuthClient, getDatabaseClient } from '@/services/firebase'
 import PlayerCardModal from '@/components/player/PlayerCardModal.vue'
 import { officialLeagueStats } from '@/utils/leagueDpi'
+import { publicStoredName, publicSurnameLabel } from '@/utils/playerName'
 
 /**
  * Podstrona „Rankingi” – Top 10 w 7 kategoriach.
@@ -126,7 +127,9 @@ function splitGivenName(name: string): { firstName: string; lastName: string } {
 }
 
 function surnameFirst(name: string): string {
-  const { firstName, lastName } = splitGivenName(name)
+  const stored = publicStoredName(name)
+  if (stored === 'Nieznany zawodnik') return stored
+  const { firstName, lastName } = splitGivenName(stored)
   return `${lastName} ${firstName}`.trim()
 }
 
@@ -444,7 +447,7 @@ const rankingRows = computed(() => {
   filteredPlayers.value.forEach((p) => {
     const st = statsMap.value[p.id]
     if (!st) return
-    const name = `${p.lastName || ''} ${p.firstName || ''}`.trim()
+    const name = publicSurnameLabel(p.firstName, p.lastName)
     const divLabel = formatDivisionLabel(p)
 
     if (st.realAvg > 0) rows.avg.push({ id: p.id, name, val: st.realAvg, info: divLabel })

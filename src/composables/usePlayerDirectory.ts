@@ -17,6 +17,22 @@ export interface VerifiedPlayer {
   declaredAvg?: number
 }
 
+/** Profil zdjęty z kadry (wyrzucenie albo podmiana). Weryfikacja zostaje na węźle. */
+export interface HeldPlayer {
+  id: string
+  uid?: string
+  firstName?: string
+  lastName?: string
+  email?: string
+  div?: string
+  previousDiv?: string
+  reason: 'kicked' | 'replaced'
+  heldAt?: number
+  replacedByName?: string
+  /** RODO: imię i nazwisko zdjęte ze strony. Wiersz zostaje, przywrócenie nie. */
+  erased?: boolean
+}
+
 export interface UnverifiedPlayer {
   id: string
   firstName?: string
@@ -36,12 +52,47 @@ function optBool(value: unknown): boolean | undefined {
   return undefined
 }
 
-export function splitPlayers(value: unknown): { verified: VerifiedPlayer[]; unverified: UnverifiedPlayer[] } {
+function holdReason(player: Record<string, unknown>): HeldPlayer['reason'] | null {
+  const hold = asRecord(player.rosterHold)
+  if (hold?.reason === 'replaced') return 'replaced'
+  if (hold?.reason === 'kicked') return 'kicked'
+  if (flag(player.isDisqualified)) return 'kicked'
+  return null
+}
+
+function toHeld(playerId: string, player: Record<string, unknown>, reason: HeldPlayer['reason']): HeldPlayer {
+  const hold = asRecord(player.rosterHold)
+  return {
+    id: playerId,
+    uid: optStr(player.uid),
+    firstName: optStr(player.firstName),
+    lastName: optStr(player.lastName),
+    email: optStr(player.email),
+    div: optStr(player.div),
+    previousDiv: optStr(hold?.previousDiv) || optStr(player.div),
+    reason,
+    heldAt: optNum(hold?.at),
+    replacedByName: optStr(hold?.replacedByName),
+    erased: hold?.erased === true,
+  }
+}
+
+export function splitPlayers(value: unknown): {
+  verified: VerifiedPlayer[]
+  unverified: UnverifiedPlayer[]
+  held: HeldPlayer[]
+} {
   const verified: VerifiedPlayer[] = []
   const unverified: UnverifiedPlayer[] = []
+  const held: HeldPlayer[] = []
 
   for (const entry of mapEntries(value, (playerId, player) => ({ playerId, player }))) {
     const { playerId, player } = entry
+    const reason = holdReason(player)
+    if (reason) {
+      held.push(toHeld(playerId, player, reason))
+      continue
+    }
     if (!flag(player.isVerified)) {
       unverified.push({
         id: playerId,
@@ -55,38 +106,44 @@ export function splitPlayers(value: unknown): { verified: VerifiedPlayer[]; unve
         verifyCamScreen: optStr(player.verifyCamScreen),
         declaredAvg: optNum(player.declaredAvg),
       })
+      continue
     }
-    if (flag(player.isVerified) && !flag(player.isDisqualified)) {
-      verified.push({
-        id: playerId,
-        uid: optStr(player.uid),
-        firstName: optStr(player.firstName),
-        lastName: optStr(player.lastName),
-        nick: optStr(player.nick),
-        div: optStr(player.div),
-        email: optStr(player.email),
-        cup: optBool(player.cup),
-        summer: optBool(player.summer),
-        avg: optNum(player.avg),
-        declaredAvg: optNum(player.declaredAvg),
-      })
-    }
+    verified.push({
+      id: playerId,
+      uid: optStr(player.uid),
+      firstName: optStr(player.firstName),
+      lastName: optStr(player.lastName),
+      nick: optStr(player.nick),
+      div: optStr(player.div),
+      email: optStr(player.email),
+      cup: optBool(player.cup),
+      summer: optBool(player.summer),
+      avg: optNum(player.avg),
+      declaredAvg: optNum(player.declaredAvg),
+    })
   }
 
   verified.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || ''))
-  return { verified, unverified }
+  held.sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '', 'pl'))
+  return { verified, unverified, held }
 }
 
-const emptySplit = { verified: [] as VerifiedPlayer[], unverified: [] as UnverifiedPlayer[] }
+const emptySplit = {
+  verified: [] as VerifiedPlayer[],
+  unverified: [] as UnverifiedPlayer[],
+  held: [] as HeldPlayer[],
+}
 
 /** Jeden nasłuch `players/` rozdzielony na zweryfikowanych i oczekujących. */
 export function usePlayerDirectory() {
   const source = useRtdbValue('players', (snapshot) => splitPlayers(snapshot.val()), emptySplit)
   const verified = computed(() => source.data.value.verified)
   const unverified = computed(() => source.data.value.unverified)
+  const held = computed(() => source.data.value.held)
   return {
     verified,
     unverified,
+    held,
     error: source.error,
     ready: source.ready,
     start: source.start,

@@ -238,6 +238,13 @@ export const replacePlayerWithHistory = functions.https.onCall(async (request) =
 
   updates[`players/${oldPlayerId}/div`] = null;
   updates[`players/${oldPlayerId}/isDisqualified`] = true;
+  updates[`players/${oldPlayerId}/rosterHold`] = {
+    reason: "replaced",
+    at: admin.database.ServerValue.TIMESTAMP,
+    previousDiv: oldDiv,
+    replacedById: newPlayerId,
+    replacedByName: fullName,
+  };
   updates[`players/${newPlayerId}/div`] = oldDiv;
 
   const schedSnap = await db.ref("schedule").once("value");

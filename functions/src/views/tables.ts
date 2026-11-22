@@ -76,9 +76,12 @@ export const getDivisionTable = functions.https.onCall(async (request) => {
         .filter((pen: any) => sortedPlayers.some((player: any) => player.id === pen.playerId || player.uid === pen.playerId))
         .map((pen: any) => {
           const owner = sortedPlayers.find((player: any) => player.id === pen.playerId || player.uid === pen.playerId);
-          const playerName = owner
-            ? `${owner.lastName || ''} ${owner.firstName || ''}`.trim()
-            : (pen.playerName || '');
+          const erased = owner?.rosterHold && typeof owner.rosterHold === "object" && owner.rosterHold.erased === true;
+          const playerName = !owner
+            ? (pen.playerName || "")
+            : erased
+              ? "Nieznany zawodnik"
+              : `${owner.lastName || ""} ${owner.firstName || ""}`.trim();
           return { ...pen, playerName, div: owner?.div || pen.div || division };
         })
     };

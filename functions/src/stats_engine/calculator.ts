@@ -178,6 +178,19 @@ export class StatsEngine {
     return trueAvg + momentumBonus + bonus180 + bonusHF + bonusSL;
   }
 
+  /** Wymazany profil ma jedną etykietę, niezależnie od kolejności pól. */
+  private static listedName(first?: string, last?: string): string {
+    const given = (first || "").trim().toLocaleLowerCase("pl");
+    const family = (last || "").trim().toLocaleLowerCase("pl");
+    if (
+      (given === "nieznany" && family === "zawodnik") ||
+      (given === "zawodnik" && family === "nieznany")
+    ) {
+      return "Nieznany zawodnik";
+    }
+    return `${last || ""} ${first || ""}`.trim();
+  }
+
   // 🧠 2. CENTRALNY SILNIK STATYSTYK LIGOWYCH
   public static calculateAllStats(players: Player[] = [], matches: Match[] = []): Record<string, PlayerStats> {
     const stats: Record<string, PlayerStats> = {};
@@ -186,7 +199,7 @@ export class StatsEngine {
     players.forEach(p => {
       stats[p.id] = {
         id: p.id,
-        name: `${p.lastName || ''} ${p.firstName || ''}`.trim(),
+        name: StatsEngine.listedName(p.firstName, p.lastName),
         div: p.div,
         m: 0, w: 0, d: 0, l: 0,
         lw: 0, ll: 0, pts: 0,
@@ -285,7 +298,7 @@ export class StatsEngine {
     players.forEach(p => {
       stats[p.id] = {
         id: p.id,
-        name: `${p.lastName || ''} ${p.firstName || ''}`.trim(),
+        name: StatsEngine.listedName(p.firstName, p.lastName),
         div: p.div,
         m: 0, w: 0, d: 0, l: 0, lw: 0, ll: 0, pts: 0, form: [],
         avgSum: 0, avgCount: 0, realAvg: 0, bestAvg: 0, bestAvgOpp: '',

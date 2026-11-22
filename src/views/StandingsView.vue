@@ -19,6 +19,7 @@ import {
   type DivisionConfig,
   type DivisionPenalty,
 } from '@/services/api'
+import { publicPlayerLabel } from '@/utils/playerName'
 
 type FormResult = 'W' | 'D' | 'L' | 'N'
 
@@ -412,7 +413,7 @@ const showPlayerCardModal = (player: DivisionTablePlayer) => {
                 <!-- Zawodnik -->
                 <td
                   class="group cursor-pointer p-4"
-                  :title="`Otwórz kartę zawodnika: ${p.firstName} ${p.lastName}`"
+                  :title="`Otwórz kartę zawodnika: ${publicPlayerLabel(p.firstName, p.lastName)}`"
                   @click="showPlayerCardModal(p)"
                 >
                   <div class="flex flex-col leading-tight">
@@ -421,7 +422,7 @@ const showPlayerCardModal = (player: DivisionTablePlayer) => {
                         class="cursor-pointer font-display text-sm font-extrabold uppercase tracking-wide transition-colors hover:text-accent"
                         :class="p.isDisqualified ? 'text-danger line-through' : 'text-fg'"
                       >
-                        {{ p.firstName }} {{ p.lastName }}
+                        {{ publicPlayerLabel(p.firstName, p.lastName) }}
                       </span>
 
                       <span v-if="p.isDisqualified" class="label rounded bg-danger/20 px-1.5 py-0.5 text-[8px] font-black text-danger">

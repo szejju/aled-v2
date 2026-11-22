@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { publicSurnameLabel } from '@/utils/playerName'
 
 const props = defineProps<{
   player: any
@@ -59,7 +60,7 @@ const stats = computed(() => {
         </div>
         <div v-else class="w-20 h-20 bg-gray-700 rounded-full mx-auto flex items-center justify-center text-3xl mb-4 border-4 border-gray-600 shadow-inner">🎯</div>
         
-        <h2 class="text-2xl font-black uppercase leading-tight">{{ player.lastName }} {{ player.firstName }}</h2>
+        <h2 class="text-2xl font-black uppercase leading-tight">{{ publicSurnameLabel(player.firstName, player.lastName) }}</h2>
         <p class="text-lime-400 font-bold text-xs uppercase tracking-widest mt-1">{{ player.nick ? `"${player.nick}"` : 'Brak Pseudonimu' }}</p>
       </div>
       

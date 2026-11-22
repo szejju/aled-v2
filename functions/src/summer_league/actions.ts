@@ -34,6 +34,8 @@ interface SummerSettings {
 interface SummerParticipant {
   uid: string;
   name: string;
+  /** Klucz `players/{id}`. Konto Auth na zapisie nie musi być równe `players.uid`. */
+  playerId: string;
   registeredAt: number | object;
 }
 
@@ -145,6 +147,7 @@ export const registerForSummerLeague = onCall(
       const participant: SummerParticipant = {
         uid,
         name,
+        playerId: player.id,
         registeredAt: admin.database.ServerValue.TIMESTAMP,
       };
 

@@ -2,6 +2,7 @@
 import { computed, reactive } from 'vue'
 import type { CupMatch, CupPlayer } from '@/types/cup'
 import { countsForCupGroup, rankCupGroup } from '../../../functions/src/league/cupTable.ts'
+import { publicSurnameLabel } from '@/utils/playerName'
 
 interface Props {
   groups: Record<string, string[]>
@@ -76,7 +77,7 @@ const groupTable = computed<GroupTableRow[]>(() => {
   const names = new Map<string, string>()
   for (const pid of activeMemberIds.value) {
     const player = findPlayer(pid)
-    names.set(pid, player ? `${player.lastName} ${player.firstName}`.trim() || pid : pid)
+    names.set(pid, player ? publicSurnameLabel(player.firstName, player.lastName, pid) : pid)
   }
   const played = activeGroupMatches.value.flatMap((match) => {
     if (typeof match.score1 !== 'number' || typeof match.score2 !== 'number') return []

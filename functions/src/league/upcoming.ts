@@ -221,6 +221,7 @@ export function buildHomeMatchLists(
   now = Date.now(),
   recentLimit = 5,
   summerSchedule: unknown = null,
+  upcomingLimit = 5,
 ) {
   const league = rowsOf(schedule, 'league')
   const cup = rowsOf(cupSchedule, 'cup')
@@ -229,7 +230,7 @@ export function buildHomeMatchLists(
   return {
     league,
     cup,
-    upcoming: pickUpcoming(all, now),
+    upcoming: pickUpcoming(all, now, upcomingLimit),
     recent: pickRecentResults(all, recentLimit),
   }
 }

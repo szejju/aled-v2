@@ -410,7 +410,18 @@ export const kickPlayer = functions.https.onCall(async (request) => {
       walkoverCount = awarded.count;
       played = awarded.played;
     } else {
+      const playerSnap = await database.ref(`players/${playerId}`).once("value");
+      const player = playerSnap.val() as { div?: unknown } | null;
+      if (!player || typeof player !== "object") {
+        throw new functions.https.HttpsError("not-found", "Gracz nie istnieje.");
+      }
+      const previousDiv = typeof player.div === "string" ? player.div : "";
       updates[`players/${playerId}/isDisqualified`] = true;
+      updates[`players/${playerId}/rosterHold`] = {
+        reason: "kicked",
+        at: admin.database.ServerValue.TIMESTAMP,
+        previousDiv,
+      };
       const snap = await database.ref('schedule').once('value');
       const schedule = snap.val() || {};
       const awarded = awardScheduledWalkovers(updates, "schedule", schedule, playerId, walkoverLegs);
@@ -427,9 +438,12 @@ export const kickPlayer = functions.https.onCall(async (request) => {
         archeologistError,
       );
     }
-    return { success: true, message: `Wyrzucono gracza. Rozdano ${walkoverCount} walkowerów.` };
-  } catch (error: any) {
-    throw new functions.https.HttpsError(error.code || 'internal', error.message);
+    const parked = isCup ? "" : " Profil jest w rezerwie.";
+    return { success: true, message: `Wyrzucono gracza. Rozdano ${walkoverCount} walkowerów.${parked}` };
+  } catch (error: unknown) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    const message = error instanceof Error ? error.message : "Nie udało się wyrzucić gracza.";
+    throw new functions.https.HttpsError("internal", message);
   }
 });
 
@@ -487,8 +501,24 @@ export const replacePlayer = functions.https.onCall(async (request) => {
         }
       });
     } else {
-      updates[`players/${oldPlayerId}`] = null;
-      updates[`players/${newPlayerId}/div`] = oldPlayerDiv;
+      const oldSnap = await database.ref(`players/${oldPlayerId}`).once("value");
+      const oldPlayer = oldSnap.val() as { div?: unknown } | null;
+      if (!oldPlayer || typeof oldPlayer !== "object") {
+        throw new functions.https.HttpsError("not-found", "Zastępowany gracz nie istnieje.");
+      }
+      const previousDiv = typeof oldPlayer.div === "string" && oldPlayer.div
+        ? oldPlayer.div
+        : (typeof oldPlayerDiv === "string" ? oldPlayerDiv : "");
+      updates[`players/${oldPlayerId}/isDisqualified`] = true;
+      updates[`players/${oldPlayerId}/div`] = null;
+      updates[`players/${oldPlayerId}/rosterHold`] = {
+        reason: "replaced",
+        at: admin.database.ServerValue.TIMESTAMP,
+        previousDiv,
+        replacedById: newPlayerId,
+        replacedByName: fullName,
+      };
+      updates[`players/${newPlayerId}/div`] = oldPlayerDiv || previousDiv;
 
       // Zmiennik przejmuje id w meczu, więc zatwierdzone wyniki zostają przy nim w tabeli.
       const schedSnap = await database.ref('schedule').once('value');
@@ -508,9 +538,322 @@ export const replacePlayer = functions.https.onCall(async (request) => {
     }
 
     await database.ref().update(updates);
-    return { success: true, message: `Podmieniono gracza. Zaktualizowano ${replacedCount} meczów.` };
-  } catch (error: any) {
-    throw new functions.https.HttpsError(error.code || 'internal', error.message);
+    const parked = isCup ? "" : " Stary profil jest w rezerwie.";
+    return { success: true, message: `Podmieniono gracza. Zaktualizowano ${replacedCount} meczów.${parked}` };
+  } catch (error: unknown) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    const message = error instanceof Error ? error.message : "Nie udało się podmienić gracza.";
+    throw new functions.https.HttpsError("internal", message);
+  }
+});
+
+// ---- restoreHeldPlayer ------------------------------------------------------
+
+function readHeldPlayerId(value: unknown): string {
+  const id = typeof value === "string" ? value.trim() : "";
+  if (!id || id.length > 128 || /[.#$[\]/]/.test(id)) {
+    throw new functions.https.HttpsError("invalid-argument", "Podaj gracza.");
+  }
+  return id;
+}
+
+function playerIsHeld(player: Record<string, unknown>): boolean {
+  if (player.isDisqualified === true || player.isDisqualified === 1 || player.isDisqualified === "true") {
+    return true;
+  }
+  const hold = player.rosterHold;
+  return !!hold && typeof hold === "object";
+}
+
+/**
+ * Przywraca wyrzucony albo podmieniony profil do poczekalni.
+ * Weryfikacja, screeny i średnia zostają. Mecze i walkowery nie ruszają się.
+ */
+export const restoreHeldPlayer = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new functions.https.HttpsError("unauthenticated", "Brak autoryzacji.");
+  if (!(await verifyAdmin(uid))) throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+
+  const data = request.data as { playerId?: unknown } | null;
+  const playerId = readHeldPlayerId(data?.playerId);
+  const database = db();
+
+  try {
+    const snap = await database.ref(`players/${playerId}`).once("value");
+    const player = snap.val() as Record<string, unknown> | null;
+    if (!player || typeof player !== "object") {
+      throw new functions.https.HttpsError("not-found", "Gracz nie istnieje.");
+    }
+    if (!playerIsHeld(player)) {
+      throw new functions.https.HttpsError("failed-precondition", "Ten gracz nie jest w rezerwie.");
+    }
+    if (holdIsErased(player)) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Ten profil został wymazany i nie wraca do poczekalni.",
+      );
+    }
+
+    await database.ref(`players/${playerId}`).update({
+      isDisqualified: false,
+      rosterHold: null,
+      div: "POCZEKALNIA",
+    });
+
+    return {
+      success: true,
+      message: "Gracz wrócił do poczekalni. Weryfikacja została.",
+    };
+  } catch (error: unknown) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error("[restoreHeldPlayer]", error);
+    throw new functions.https.HttpsError("internal", "Nie udało się przywrócić gracza.");
+  }
+});
+
+// ---- eraseHeldPlayer --------------------------------------------------------
+
+const ERASED_LABEL = "Nieznany zawodnik";
+const ERASED_FIRST = "Nieznany";
+const ERASED_LAST = "zawodnik";
+
+const IDENTITY_KEYS = [
+  "nick",
+  "email",
+  "imie",
+  "nazwisko",
+  "avatarUrl",
+  "photoUrl",
+  "photoURL",
+  "avatar",
+  "dartcounter",
+  "phone",
+  "telefon",
+  "verifyAvg",
+  "verifyCam",
+  "verifyAvgScreen",
+  "verifyCamScreen",
+] as const;
+
+function plainText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function nodeMap(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function rtdbChildKey(value: string): boolean {
+  return value.length > 0 && value.length <= 128 && !/[.#$[\]/]/.test(value);
+}
+
+function holdIsErased(player: Record<string, unknown>): boolean {
+  const hold = nodeMap(player.rosterHold);
+  return hold.erased === true;
+}
+
+function identityIds(playerId: string, player: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+  for (const candidate of [playerId, plainText(player.uid), plainText(player.id)]) {
+    if (rtdbChildKey(candidate)) ids.add(candidate);
+  }
+  return ids;
+}
+
+function rememberedNames(player: Record<string, unknown>): Set<string> {
+  const first = plainText(player.firstName) || plainText(player.imie);
+  const last = plainText(player.lastName) || plainText(player.nazwisko);
+  const names = new Set<string>();
+  const pair = `${first} ${last}`.replace(/\s+/g, " ").trim();
+  const swapped = `${last} ${first}`.replace(/\s+/g, " ").trim();
+  if (pair.length >= 3) names.add(pair);
+  if (swapped.length >= 3 && swapped !== pair) names.add(swapped);
+  const nick = plainText(player.nick);
+  if (nick.length >= 2) names.add(nick);
+  return names;
+}
+
+function rewriteSideNames(
+  updates: Record<string, unknown>,
+  basePath: string,
+  raw: unknown,
+  playerIds: Set<string>,
+): void {
+  for (const [matchId, value] of Object.entries(nodeMap(raw))) {
+    if (!rtdbChildKey(matchId)) continue;
+    const match = nodeMap(value);
+    const home = plainText(match.p1Id);
+    const away = plainText(match.p2Id);
+    if (playerIds.has(home) && match.p1Name !== ERASED_LABEL) {
+      updates[`${basePath}/${matchId}/p1Name`] = ERASED_LABEL;
+    }
+    if (playerIds.has(away) && match.p2Name !== ERASED_LABEL) {
+      updates[`${basePath}/${matchId}/p2Name`] = ERASED_LABEL;
+    }
+  }
+}
+
+function rewritePersonNode(
+  updates: Record<string, unknown>,
+  path: string,
+  row: Record<string, unknown>,
+): void {
+  if (row.firstName !== ERASED_FIRST) updates[`${path}/firstName`] = ERASED_FIRST;
+  if (row.lastName !== ERASED_LAST) updates[`${path}/lastName`] = ERASED_LAST;
+  if (typeof row.name === "string" && row.name !== ERASED_LABEL) updates[`${path}/name`] = ERASED_LABEL;
+  for (const key of IDENTITY_KEYS) {
+    if (row[key]) updates[`${path}/${key}`] = null;
+  }
+}
+
+function nameMatches(value: unknown, names: Set<string>): boolean {
+  return typeof value === "string" && names.has(value.trim());
+}
+
+/** Zdejmuje imię i nazwisko z kopii sezonu, także gdy mecze leżą głębiej niż jeden poziom. */
+function scrubArchiveTree(
+  updates: Record<string, unknown>,
+  path: string,
+  value: unknown,
+  playerIds: Set<string>,
+  names: Set<string>,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      scrubArchiveTree(updates, `${path}/${index}`, item, playerIds, names);
+    });
+    return;
+  }
+  const row = nodeMap(value);
+  if (Object.keys(row).length === 0) return;
+
+  const pathId = path.split("/").pop() ?? "";
+  const ownId = plainText(row.id);
+  const aboutPlayer = playerIds.has(pathId) || (ownId !== "" && playerIds.has(ownId));
+  if (aboutPlayer) {
+    if (typeof row.firstName === "string" && row.firstName !== ERASED_FIRST) {
+      updates[`${path}/firstName`] = ERASED_FIRST;
+    }
+    if (typeof row.lastName === "string" && row.lastName !== ERASED_LAST) {
+      updates[`${path}/lastName`] = ERASED_LAST;
+    }
+    for (const key of IDENTITY_KEYS) {
+      if (row[key]) updates[`${path}/${key}`] = null;
+    }
+  }
+  if (nameMatches(row.name, names)) updates[`${path}/name`] = ERASED_LABEL;
+  if (nameMatches(row.playerName, names)) updates[`${path}/playerName`] = ERASED_LABEL;
+
+  const home = plainText(row.p1Id);
+  const away = plainText(row.p2Id);
+  if (playerIds.has(home) && row.p1Name !== ERASED_LABEL) updates[`${path}/p1Name`] = ERASED_LABEL;
+  if (playerIds.has(away) && row.p2Name !== ERASED_LABEL) updates[`${path}/p2Name`] = ERASED_LABEL;
+  if (typeof row.bestAvgOpp === "string") {
+    for (const remembered of names) {
+      if (row.bestAvgOpp === `vs ${remembered}`) {
+        updates[`${path}/bestAvgOpp`] = `vs ${ERASED_LABEL}`;
+        break;
+      }
+    }
+  }
+
+  for (const [key, child] of Object.entries(row)) {
+    if (!rtdbChildKey(key) || !child || typeof child !== "object") continue;
+    scrubArchiveTree(updates, `${path}/${key}`, child, playerIds, names);
+  }
+}
+
+/**
+ * Wymazuje dane osobowe gracza z rezerwy.
+ * Węzeł zostaje (szary ślad i UID), ale imię i nazwisko znikają ze strony.
+ * Terminarz, tabela, puchar, Liga Lato i archiwum dostają „Nieznany zawodnik”.
+ */
+export const eraseHeldPlayer = functions.https.onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) throw new functions.https.HttpsError("unauthenticated", "Brak autoryzacji.");
+  if (!(await verifyAdmin(uid))) throw new functions.https.HttpsError("permission-denied", "Brak uprawnień.");
+
+  const data = request.data as { playerId?: unknown } | null;
+  const playerId = readHeldPlayerId(data?.playerId);
+  const database = db();
+
+  try {
+    const playerSnap = await database.ref(`players/${playerId}`).once("value");
+    const player = playerSnap.val() as Record<string, unknown> | null;
+    if (!player || typeof player !== "object") {
+      throw new functions.https.HttpsError("not-found", "Gracz nie istnieje.");
+    }
+    if (!playerIsHeld(player)) {
+      throw new functions.https.HttpsError("failed-precondition", "Ten gracz nie jest w rezerwie.");
+    }
+    if (holdIsErased(player)) {
+      throw new functions.https.HttpsError("failed-precondition", "Ten profil jest już wymazany.");
+    }
+
+    const playerIds = identityIds(playerId, player);
+    const names = rememberedNames(player);
+    const [scheduleSnap, cupSnap, summerPeopleSnap, summerScheduleSnap, penaltiesSnap, archiveSnap] =
+      await Promise.all([
+        database.ref("schedule").once("value"),
+        database.ref("cup").once("value"),
+        database.ref("summer_league/participants").once("value"),
+        database.ref("summer_league/schedule").once("value"),
+        database.ref("penalties").once("value"),
+        database.ref("archive").once("value"),
+      ]);
+
+    const updates: Record<string, unknown> = {};
+    rewritePersonNode(updates, `players/${playerId}`, player);
+    updates[`players/${playerId}/isDisqualified`] = true;
+    updates[`players/${playerId}/rosterHold/erased`] = true;
+    updates[`players/${playerId}/rosterHold/erasedAt`] = admin.database.ServerValue.TIMESTAMP;
+
+    rewriteSideNames(updates, "schedule", scheduleSnap.val(), playerIds);
+    const cup = nodeMap(cupSnap.val());
+    rewriteSideNames(updates, "cup/schedule", cup.schedule, playerIds);
+    for (const [key, value] of Object.entries(nodeMap(cup.participants))) {
+      if (!rtdbChildKey(key) || !playerIds.has(key)) continue;
+      rewritePersonNode(updates, `cup/participants/${key}`, nodeMap(value));
+    }
+
+    for (const [key, value] of Object.entries(nodeMap(summerPeopleSnap.val()))) {
+      if (!rtdbChildKey(key)) continue;
+      const row = nodeMap(value);
+      const linked = plainText(row.uid) || plainText(row.playerId);
+      if (!playerIds.has(key) && !playerIds.has(linked)) continue;
+      rewritePersonNode(updates, `summer_league/participants/${key}`, row);
+    }
+    rewriteSideNames(updates, "summer_league/schedule", summerScheduleSnap.val(), playerIds);
+
+    for (const [penId, value] of Object.entries(nodeMap(penaltiesSnap.val()))) {
+      if (!rtdbChildKey(penId)) continue;
+      const pen = nodeMap(value);
+      if (!playerIds.has(plainText(pen.playerId))) continue;
+      if (pen.playerName !== ERASED_LABEL) updates[`penalties/${penId}/playerName`] = ERASED_LABEL;
+    }
+
+    scrubArchiveTree(updates, "archive", archiveSnap.val(), playerIds, names);
+    await database.ref().update(updates);
+
+    try {
+      const archiveDb = archiveDatabase();
+      const archiveUpdates: Record<string, unknown> = {};
+      const remote = await archiveDb.ref("archive").once("value");
+      scrubArchiveTree(archiveUpdates, "archive", remote.val(), playerIds, names);
+      if (Object.keys(archiveUpdates).length > 0) await archiveDb.ref().update(archiveUpdates);
+    } catch (archiveError: unknown) {
+      console.error("[eraseHeldPlayer] Archiwum na osobnej instancji zostało pominięte.", archiveError);
+    }
+
+    return {
+      success: true,
+      message: "Dane wymazane. W terminarzu i tabeli jest Nieznany zawodnik. Przywrócenie jest zablokowane.",
+    };
+  } catch (error: unknown) {
+    if (error instanceof functions.https.HttpsError) throw error;
+    console.error("[eraseHeldPlayer]", error);
+    throw new functions.https.HttpsError("internal", "Nie udało się wymazać danych gracza.");
   }
 });
 

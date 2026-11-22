@@ -30,6 +30,8 @@ export {
   assignPlayerToDivision,
   kickPlayer,
   replacePlayer,
+  restoreHeldPlayer,
+  eraseHeldPlayer,
   handleExceptionRequest,
   massAssignPlayers,
   // actions.ts – migracja z admin.js
