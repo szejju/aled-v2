@@ -20,3 +20,4 @@ functions/lib/
 node_modules
 .next/
 .DS_Store
+dist/

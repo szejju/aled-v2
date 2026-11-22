@@ -33,10 +33,6 @@ export const STAT_FIELDS = [
   { key: 'sl', label: 'Short leg', decimal: false },
 ] as const satisfies ReadonlyArray<{ key: keyof SideDraft; label: string; decimal: boolean }>
 
-function emptySide(): SideDraft {
-  return { avg: '', da: '', max: '', hf: '', sl: '' }
-}
-
 function numText(value: unknown): string {
   const parsed = optNum(value)
   return parsed === undefined ? '' : String(parsed)

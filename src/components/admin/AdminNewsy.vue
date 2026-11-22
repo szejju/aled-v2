@@ -35,7 +35,7 @@ const previewHtml = computed(() => simpleMarkdown(newsForm.value.content, { link
 const contentEl = ref<HTMLTextAreaElement | null>(null)
 const savedRange = ref({ start: 0, end: 0 })
 const {
-  fileInput: coverInput,
+  fileInput,
   uploading: coverUploading,
   note: coverNote,
   noteOk: coverNoteOk,
@@ -47,6 +47,11 @@ const {
 } = useNewsCoverUpload((url) => {
   newsForm.value.imageUrl = url
 })
+
+function bindCoverInput(el: unknown) {
+  fileInput.value = el instanceof HTMLInputElement ? el : null
+}
+
 const coverPreview = computed(() => /^https?:\/\//i.test(newsForm.value.imageUrl.trim()) && !coverPreviewBroken.value)
 
 function rememberSelection() {
@@ -264,7 +269,7 @@ onMounted(() => {
           <input v-model="newsForm.imageUrl" placeholder="https:// albo wgraj z dysku" class="input min-w-0 flex-1 bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/>
           <button type="button" :disabled="coverUploading" class="shrink-0 rounded-xl border border-line bg-fg/5 px-4 py-2 font-display text-[10px] font-extrabold uppercase tracking-widest text-fg hover:bg-fg/10 disabled:opacity-50" @click="openCoverPicker()">{{ coverUploading ? 'Wgrywam...' : 'Z dysku' }}</button>
         </div>
-        <input ref="coverInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="sr-only" @change="onCoverFile"/>
+        <input :ref="bindCoverInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="sr-only" @change="onCoverFile"/>
         <button v-if="newsForm.imageUrl && !coverUploading" type="button" class="mt-2 font-display text-[10px] font-extrabold uppercase tracking-widest text-muted hover:text-fg" @click="clearCover">Usun obrazek</button>
         <img v-if="coverPreview" :src="newsForm.imageUrl" alt="Podglad obrazka" class="mt-2 h-32 w-full rounded-xl border border-line object-cover" @error="markCoverBroken"/>
         <p v-if="coverNote" :class="['mt-2 text-xs font-bold', coverNoteOk ? 'text-lime' : 'text-red-400']">{{ coverNote }}</p>
