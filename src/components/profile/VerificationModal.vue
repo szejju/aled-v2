@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 
-const props = defineProps<{ type: 'avg' | 'cam' }>()
+const props = withDefaults(defineProps<{
+  type: 'avg' | 'cam'
+  uploading?: boolean
+}>(), {
+  uploading: false,
+})
 const emit = defineEmits(['close', 'submit'])
 
 const step = ref(1)
@@ -9,7 +14,6 @@ const file = ref<File | null>(null)
 const previewUrl = ref('')
 const isDragging = ref(false)
 const showHelp = ref(false)
-const isUploading = ref(false)
 
 const isAvg = computed(() => props.type === 'avg')
 const eyebrow = computed(() => isAvg.value ? 'Profil · Dartcounter' : 'Profil · Kamera')
@@ -63,8 +67,13 @@ function onPaste(e: ClipboardEvent) {
   }
 }
 
+function requestClose() {
+  if (props.uploading) return
+  emit('close')
+}
+
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') emit('close')
+  if (event.key === 'Escape') requestClose()
 }
 
 onMounted(() => {
@@ -81,8 +90,7 @@ onUnmounted(() => {
 })
 
 function submitFile() {
-  if (!file.value) return
-  isUploading.value = true
+  if (!file.value || props.uploading) return
   emit('submit', file.value)
 }
 </script>
@@ -93,7 +101,7 @@ function submitFile() {
     role="dialog"
     aria-modal="true"
     aria-labelledby="verification-title"
-    @click.self="emit('close')"
+    @click.self="requestClose"
   >
     <div
       class="relative max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-line bg-surface p-6 shadow-2xl"
@@ -101,9 +109,10 @@ function submitFile() {
     >
       <button
         type="button"
-        class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg"
+        class="absolute right-4 top-4 rounded-lg p-1.5 text-muted transition hover:bg-surface-2 hover:text-fg disabled:opacity-40"
         aria-label="Zamknij"
-        @click="emit('close')"
+        :disabled="uploading"
+        @click="requestClose"
       >
         <svg class="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -170,20 +179,20 @@ function submitFile() {
           v-if="step === 2"
           type="button"
           class="flex w-full items-center justify-center gap-2 rounded-xl bg-lime px-4 py-3 font-display font-extrabold uppercase tracking-wide text-on-lime transition hover:bg-lime/90 disabled:opacity-40"
-          :disabled="isUploading"
+          :disabled="uploading"
           @click="submitFile"
         >
-          <svg v-if="isUploading" class="size-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+          <svg v-if="uploading" class="size-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          {{ isUploading ? 'Wysyłanie...' : 'Wyślij do weryfikacji' }}
+          {{ uploading ? 'Wysyłanie...' : 'Wyślij do weryfikacji' }}
         </button>
         <button
           type="button"
           class="w-full rounded-xl bg-surface-2 px-4 py-3 font-display font-extrabold uppercase tracking-wide text-muted transition hover:text-fg disabled:opacity-40"
-          :disabled="isUploading"
-          @click="emit('close')"
+          :disabled="uploading"
+          @click="requestClose"
         >
           Anuluj
         </button>

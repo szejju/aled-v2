@@ -12,6 +12,7 @@ export {
   // players.ts
   verifyPlayer,
   mergeAccounts,
+  registerNewPlayer,
   // settings.ts
   updateDivisionSettings,
   updateLeagueSettings,

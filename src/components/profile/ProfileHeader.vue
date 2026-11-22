@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import { Calendar, Camera, X } from 'lucide-vue-next'
 import { errorText } from '@/utils/errorText'
+import VerificationPreviewModal from '@/components/profile/VerificationPreviewModal.vue'
 
 type VerifyStatus = 'none' | 'pending' | 'verified'
 export interface Leave { start: string; end: string }
@@ -17,6 +18,8 @@ interface Props {
   uploadAvatar?: (file: File) => Promise<void>
   verifyAvg?: VerifyStatus
   verifyCam?: VerifyStatus
+  verifyAvgScreen?: string
+  verifyCamScreen?: string
 }
 interface Emits {
   (e: 'edit-nick'): void
@@ -29,6 +32,8 @@ const props = withDefaults(defineProps<Props>(), {
   loading: false,
   verifyAvg: 'none',
   verifyCam: 'none',
+  verifyAvgScreen: '',
+  verifyCamScreen: '',
 })
 const emit = defineEmits<Emits>()
 const avatarInput = ref<HTMLInputElement | null>(null)
@@ -127,9 +132,54 @@ function verifyBadge(status: VerifyStatus): string {
 }
 function verifyLabel(status: VerifyStatus): string {
   if (status === 'verified') return 'OK'
-  if (status === 'pending') return '...'
+  if (status === 'pending') return 'Wysłano'
   return 'X'
 }
+type ShotKind = 'avg' | 'cam'
+const previewKind = ref<ShotKind | null>(null)
+function shotStatus(kind: ShotKind): VerifyStatus {
+  return kind === 'avg' ? props.verifyAvg : props.verifyCam
+}
+function screenUrl(kind: ShotKind): string {
+  const raw = kind === 'avg' ? props.verifyAvgScreen : props.verifyCamScreen
+  return typeof raw === 'string' && /^https?:\/\//i.test(raw) ? raw : ''
+}
+function hasPreview(kind: ShotKind): boolean {
+  return screenUrl(kind) !== ''
+}
+function shotAction(kind: ShotKind): string {
+  if (hasPreview(kind)) return 'Podgląd'
+  return shotStatus(kind) === 'pending' ? 'Podmień' : 'Dodaj'
+}
+function shotButtonClass(kind: ShotKind): string {
+  const status = shotStatus(kind)
+  if (hasPreview(kind) && status === 'verified') return 'bg-lime/10 text-lime border-lime/30'
+  if (hasPreview(kind) || status === 'pending') return 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+  return 'bg-red-500/10 text-red-400 border-red-500/30'
+}
+function openShot(kind: ShotKind) {
+  if (hasPreview(kind)) {
+    previewKind.value = kind
+    return
+  }
+  emit('verify', kind)
+}
+async function replacePreview() {
+  const kind = previewKind.value
+  previewKind.value = null
+  await nextTick()
+  if (kind) emit('verify', kind)
+}
+const previewTitle = computed(() =>
+  previewKind.value === 'cam' ? 'Weryfikacja kamery' : 'Weryfikacja średniej',
+)
+const previewImage = computed(() => (previewKind.value ? screenUrl(previewKind.value) : ''))
+const previewNote = computed(() => {
+  if (previewKind.value && shotStatus(previewKind.value) === 'verified') {
+    return 'Screen został zatwierdzony. Podmiana wyśle nowy plik do ponownego sprawdzenia.'
+  }
+  return 'Screen jest zapisany i czeka na sprawdzenie przez administratora.'
+})
 </script>
 <template>
   <div class="bento p-6 relative overflow-hidden h-fit">
@@ -190,10 +240,10 @@ function verifyLabel(status: VerifyStatus): string {
               <span :class="['inline-block mt-1 px-3 py-1 rounded-lg text-xs font-extrabold uppercase border', verifyBadge(verifyAvg)]">{{ verifyLabel(verifyAvg) }}</span>
             </div>
           </div>
-          <button v-if="verifyAvg !== 'verified'" type="button" @click="emit('verify', 'avg')"
+          <button v-if="verifyAvg !== 'verified' || hasPreview('avg')" type="button" @click="openShot('avg')"
             class="text-xs font-bold uppercase px-4 py-2 rounded-xl border transition-all"
-            :class="verifyAvg === 'pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'">
-            {{ verifyAvg === 'pending' ? 'Podmien' : 'Dodaj' }}
+            :class="shotButtonClass('avg')">
+            {{ shotAction('avg') }}
           </button>
         </div>
         <div :class="['rounded-2xl p-4 flex items-center justify-between gap-3 border', verifyFrame(verifyCam)]">
@@ -206,10 +256,10 @@ function verifyLabel(status: VerifyStatus): string {
               <span :class="['inline-block mt-1 px-3 py-1 rounded-lg text-xs font-extrabold uppercase border', verifyBadge(verifyCam)]">{{ verifyLabel(verifyCam) }}</span>
             </div>
           </div>
-          <button v-if="verifyCam !== 'verified'" type="button" @click="emit('verify', 'cam')"
+          <button v-if="verifyCam !== 'verified' || hasPreview('cam')" type="button" @click="openShot('cam')"
             class="text-xs font-bold uppercase px-4 py-2 rounded-xl border transition-all"
-            :class="verifyCam === 'pending' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'">
-            {{ verifyCam === 'pending' ? 'Podmien' : 'Dodaj' }}
+            :class="shotButtonClass('cam')">
+            {{ shotAction('cam') }}
           </button>
         </div>
         <div :class="['rounded-2xl p-4 flex items-center justify-between gap-3 border', dartcounterLink ? 'border-[#fe5735]/35 bg-[#fe5735]/10' : 'border-[#fe5735]/25']">
@@ -301,4 +351,12 @@ function verifyLabel(status: VerifyStatus): string {
       </div>
     </Transition>
   </Teleport>
+  <VerificationPreviewModal
+    v-if="previewKind && previewImage"
+    :title="previewTitle"
+    :image-url="previewImage"
+    :note="previewNote"
+    @close="previewKind = null"
+    @replace="replacePreview"
+  />
 </template>

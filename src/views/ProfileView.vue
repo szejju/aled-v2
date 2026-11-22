@@ -124,6 +124,22 @@ const playerStats = ref<ProfileStatsSet>({
 const enrollmentData = ref<EnrollmentData>({
   verifyAvg: 'none', verifyCam: 'none', enrolledSeason: null, currentSeason: currentSeason.value,
 })
+const verifyScreens = ref({ avg: '', cam: '' })
+
+type ShotStatus = EnrollmentData['verifyAvg']
+
+function httpScreen(value: unknown): string {
+  return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : ''
+}
+
+function readShot(statusRaw: unknown, screenRaw: unknown): { status: ShotStatus; screen: string } {
+  const screen = httpScreen(screenRaw) || httpScreen(statusRaw)
+  if (statusRaw === 'verified' || statusRaw === 'pending' || statusRaw === 'none') {
+    return { status: statusRaw, screen }
+  }
+  if (statusRaw === 'rejected') return { status: 'none', screen: '' }
+  return { status: screen ? 'pending' : 'none', screen }
+}
 
 watch(currentSeason, (season) => {
   enrollmentData.value = { ...enrollmentData.value, currentSeason: season }
@@ -153,12 +169,15 @@ async function fetchPlayerProfile(id: string) {
       leave: d.leave ?? null,
       dartcounter: typeof d.dartcounter === 'string' ? d.dartcounter : '',
     }
+    const avgShot = readShot(d.verifyAvg ?? d.weryfikacjaSredniej, d.verifyAvgScreen)
+    const camShot = readShot(d.verifyCam ?? d.weryfikacjaKamery, d.verifyCamScreen)
     enrollmentData.value = {
-      verifyAvg: (d.verifyAvg ?? d.weryfikacjaSredniej ?? 'none') as EnrollmentData['verifyAvg'],
-      verifyCam: (d.verifyCam ?? d.weryfikacjaKamery ?? 'none') as EnrollmentData['verifyCam'],
+      verifyAvg: avgShot.status,
+      verifyCam: camShot.status,
       enrolledSeason: d.enrolledSeason ?? d.zapisanySezon ?? null,
       currentSeason: currentSeason.value,
     }
+    verifyScreens.value = { avg: avgShot.screen, cam: camShot.screen }
     const engine = officialLeagueStats([{
       id,
       firstName: d.firstName ?? d.imie ?? '',
@@ -596,29 +615,34 @@ async function handleAvatarUpload(file: File) {
 // ─── Modale ────────────────────────────────────────────────────
 const verificationModalOpen = ref(false)
 const verificationModalType = ref<'avg' | 'cam'>('avg')
+const verificationUploading = ref(false)
 function openVerificationModal(type: 'avg' | 'cam') {
+  if (verificationUploading.value) return
   verificationModalType.value = type
   verificationModalOpen.value = true
 }
 
 async function handleVerificationSubmit(file: File) {
+  if (verificationUploading.value) return
+  verificationUploading.value = true
+  const type = verificationModalType.value
   try {
-    const type = verificationModalType.value; // 'avg' lub 'cam'
-    
-    // 1. Wysyłka pliku na Cloudinary przez pancerny silnik XHR/Canvas
-    const secureUrl = await uploadToCloudinary(file);
-    
-    // 2. Wywołanie bezpiecznej Cloud Function zapisującej status 'pending' i URL
-    await submitVerification({ type, fileUrl: secureUrl });
-    
-    verificationModalOpen.value = false;
-    
-    // Opcjonalne odświeżenie danych profilu
-    if (typeof fetchCupData === 'function') fetchCupData(playerId.value);
-    
-  } catch (error: any) {
-    console.error('Błąd podczas wysyłania pliku weryfikacyjnego:', error);
-    alert('Wystąpił błąd: ' + (error?.message || 'Nieznany błąd'));
+    const secureUrl = await uploadToCloudinary(file)
+    await submitVerification({ type, fileUrl: secureUrl })
+    if (type === 'avg') {
+      enrollmentData.value = { ...enrollmentData.value, verifyAvg: 'pending' }
+      verifyScreens.value = { ...verifyScreens.value, avg: secureUrl }
+    } else {
+      enrollmentData.value = { ...enrollmentData.value, verifyCam: 'pending' }
+      verifyScreens.value = { ...verifyScreens.value, cam: secureUrl }
+    }
+    verificationModalOpen.value = false
+    showToast('Screen wysłany. Otwórz Podgląd, żeby sprawdzić plik albo go podmienić.', 'success')
+  } catch (error: unknown) {
+    console.error('Błąd podczas wysyłania pliku weryfikacyjnego:', error)
+    showToast(errorText(error, 'Nie udało się wysłać screena.'), 'error')
+  } finally {
+    verificationUploading.value = false
   }
 }
 
@@ -889,6 +913,8 @@ async function handleDecision(data: {
         :upload-avatar="handleAvatarUpload"
         :verify-avg="enrollmentData.verifyAvg"
         :verify-cam="enrollmentData.verifyCam"
+        :verify-avg-screen="verifyScreens.avg"
+        :verify-cam-screen="verifyScreens.cam"
         @edit-nick="openNickEdit"
         @edit-dartcounter="dartcounterModalOpen = true"
         @verify="openVerificationModal"
@@ -944,10 +970,11 @@ async function handleDecision(data: {
     <!-- MODAL: WERYFIKACJA                                               -->
     <!-- ================================================================ -->
     <VerificationModal
+      v-if="verificationModalOpen"
       :type="verificationModalType"
+      :uploading="verificationUploading"
       @close="verificationModalOpen = false"
       @submit="handleVerificationSubmit"
-      v-if="verificationModalOpen"
     />
 
     <EditNickModal

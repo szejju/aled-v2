@@ -1,5 +1,5 @@
 export { confirmMatchResult, awardWalkover } from "./panel.js";
-export { verifyPlayer, mergeAccounts } from "./players.js";
+export { verifyPlayer, mergeAccounts, registerNewPlayer } from "./players.js";
 export { updateDivisionSettings, updateLeagueSettings, updateRules, manageReferees } from "./settings.js";
 export { createNews, toggleNewsVisibility, createPoll } from "./social.js";
 export { approveMatchResult, rejectMatchResult, verifyPlayerFeature, deletePlayerDefinitively, assignPlayerToDivision, kickPlayer, replacePlayer, handleExceptionRequest, saveLeagueLevel, deleteLeagueLevel, massAssignPlayers, adminSaveMatchResult, addSinglePlayer, deletePlayerAdmin, saveNewsAdmin, deleteNewsAdmin, updateGlobalSettings, forceMatchDateAdmin, archiveCurrentSeason, setDoubleWalkoverAdmin, adminAwardCupWalkover, manageAdminEmails, linkAdminProfile, generatePlayoffsAdmin, manageSummerLeagueSettings, generateSummerSchedule, removeSummerLeaguePlayer, replaceSummerLeaguePlayer } from "./actions.js";
