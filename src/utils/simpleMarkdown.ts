@@ -1,6 +1,9 @@
+import { newsFontClass } from '@/utils/newsMarkup'
+
 /**
- * Podgląd Markdown w panelu admina.
+ * Podgląd Markdown w panelu admina i na stronie newsów.
  * Najpierw escapuje HTML, linki i obrazki dopuszcza tylko dla http(s).
+ * Czcionka: {{font:display|serif|mono}}tekst{{/font}}
  */
 function escapeHtml(text: string): string {
   return text
@@ -27,8 +30,14 @@ export function simpleMarkdown(text: string, options?: { links?: boolean }): str
   html = html.replace(/^### (.+)$/gm, '<h3 class="text-lg font-bold mt-4 mb-2">$1</h3>')
   html = html.replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold mt-4 mb-2">$1</h2>')
   html = html.replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold mt-4 mb-2">$1</h1>')
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
+  html = html.replace(/\{\{font:(display|serif|mono)\}\}([\s\S]+?)\{\{\/font\}\}/g, (full, id: string, inner: string) => {
+    const className = newsFontClass(id)
+    if (!className) return full
+    return `<span class="${className}">${inner}</span>`
+  })
 
   if (options?.links) {
     html = html.replace(/!\[(.*?)\]\((.*?)\)/g, (full, alt: string, url: string) => {

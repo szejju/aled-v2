@@ -114,5 +114,5 @@ export function useScheduleFeed() {
     summer.start()
   }
 
-  return { all, radar, exceptions, error, ready, start }
+  return { all, summer: summer.data, radar, exceptions, error, ready, start }
 }

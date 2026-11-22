@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * ProfileCup – karty meczów pucharowych z logiką 3 stanów (z V1),
- * odliczaniem do końca zapisów i statusem gracza.
+ * ProfileCup – karty meczów pucharowych z logiką 3 stanów (z V1)
+ * i odliczaniem do końca zapisów.
  */
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { formatLocalProposal } from '@/utils/roundWindow'
@@ -42,10 +42,6 @@ export interface CupEnrollmentData {
   isFullyVerified: boolean
   /** Status fazy pucharu  */
   phase: CupPhaseStatus
-  /** Tekst statusu gracza (np. "Mistrz Pucharu!", "Awans", "W grze") */
-  playerStatusText?: string
-  /** Nazwa aktualnej fazy (np. "Faza Grupowa", "Finał") */
-  playerStageText?: string
 }
 
 interface Props {
@@ -280,26 +276,6 @@ function handleClick(match: CupMatchEntry) {
         {{ enrollment.isEnrolled ? 'Jesteś na liście' : 'Zapisy zamknięte' }}
       </p>
       <p class="text-[10px] text-muted mt-1">Trwa losowanie grup...</p>
-    </div>
-
-    <!-- STAN 3: Faza grupowa / pucharowa – status gracza -->
-    <div v-if="enrollment?.phase === 'groups' || enrollment?.phase === 'knockout'">
-      <div class="bento rounded-2xl p-4 text-center"
-        :class="enrollment.isEnrolled ? 'border-purple-500/20' : 'border-line'">
-        <div class="flex flex-col items-center gap-1">
-          <p class="text-xs font-extrabold uppercase tracking-wider"
-            :class="{
-              'text-yellow-400': enrollment.playerStatusText === 'Mistrz Pucharu!',
-              'text-lime': enrollment.playerStatusText === 'Awans',
-              'text-purple-400': enrollment.playerStatusText === 'W grze' || !enrollment.playerStatusText,
-              'text-muted': enrollment.playerStatusText === 'Odpadł z turnieju' || enrollment.playerStatusText === 'Zakończono udział',
-              'text-amber-400': enrollment.playerStatusText === 'Oczekuje na awans',
-            }">
-            {{ enrollment.playerStatusText || (enrollment.isEnrolled ? 'W grze' : 'Nie bierzesz udziału') }}
-          </p>
-          <p class="text-[10px] font-bold uppercase text-muted">{{ enrollment.playerStageText || '' }}</p>
-        </div>
-      </div>
     </div>
 
     <template v-if="skeleton">

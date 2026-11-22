@@ -3,7 +3,8 @@
  * AdminNewsy – Tab 6: Newsy i Social Media.
  * Edytor Newsow (Markdown z podgladem), Lista Newsow, Social Media inputy.
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { Bold, Italic } from 'lucide-vue-next'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { deleteNewsAdmin, saveNewsAdmin, updateSocialStats } from '@/services/api'
@@ -11,6 +12,8 @@ import AdminSectionCard from './shared/AdminSectionCard.vue'
 import { errorText } from '@/utils/errorText'
 import { asRecord, optNum, optStr } from '@/utils/rtdb'
 import { simpleMarkdown } from '@/utils/simpleMarkdown'
+import { NEWS_FONTS, applyFontMarker, isNewsFontId, toggleEmphasis, type MarkupEdit } from '@/utils/newsMarkup'
+import { useNewsCoverUpload } from './useNewsCoverUpload'
 
 interface NewsItem {
   id: string
@@ -29,6 +32,82 @@ const newsForm = ref({ id: '', title: '', content: '', imageUrl: '' })
 const editMode = ref(false)
 const previewTab = ref<'edit' | 'preview'>('edit')
 const previewHtml = computed(() => simpleMarkdown(newsForm.value.content, { links: true }))
+const contentEl = ref<HTMLTextAreaElement | null>(null)
+const savedRange = ref({ start: 0, end: 0 })
+const {
+  fileInput: coverInput,
+  uploading: coverUploading,
+  note: coverNote,
+  noteOk: coverNoteOk,
+  previewBroken: coverPreviewBroken,
+  resetStatus: resetCoverStatus,
+  openPicker: openCoverPicker,
+  onFile: onCoverFile,
+  markBroken: markCoverBroken,
+} = useNewsCoverUpload((url) => {
+  newsForm.value.imageUrl = url
+})
+const coverPreview = computed(() => /^https?:\/\//i.test(newsForm.value.imageUrl.trim()) && !coverPreviewBroken.value)
+
+function rememberSelection() {
+  const el = contentEl.value
+  if (!el) return
+  savedRange.value = { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 }
+}
+
+function selectionRange(): { start: number; end: number } {
+  const el = contentEl.value
+  if (el && document.activeElement === el) {
+    return { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0 }
+  }
+  const length = newsForm.value.content.length
+  const start = Math.min(savedRange.value.start, length)
+  const end = Math.min(savedRange.value.end, length)
+  return { start, end: Math.max(start, end) }
+}
+
+async function commitMarkup(edit: MarkupEdit) {
+  newsForm.value.content = edit.value
+  savedRange.value = { start: edit.start, end: edit.end }
+  await nextTick()
+  const el = contentEl.value
+  if (!el) return
+  el.focus()
+  el.setSelectionRange(edit.start, edit.end)
+}
+
+function formatBold() {
+  const range = selectionRange()
+  void commitMarkup(toggleEmphasis(newsForm.value.content, range.start, range.end, 2))
+}
+
+function formatItalic() {
+  const range = selectionRange()
+  void commitMarkup(toggleEmphasis(newsForm.value.content, range.start, range.end, 1))
+}
+
+function onFontChange(event: Event) {
+  const select = event.target
+  if (!(select instanceof HTMLSelectElement)) return
+  const value = select.value
+  select.value = ''
+  if (!value || (value !== 'clear' && !isNewsFontId(value))) return
+  const range = selectionRange()
+  const font = value === 'clear' ? null : value
+  void commitMarkup(applyFontMarker(newsForm.value.content, range.start, range.end, font))
+}
+
+function onEditorKeydown(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+  const key = event.key.toLowerCase()
+  if (key === 'b') {
+    event.preventDefault()
+    formatBold()
+  } else if (key === 'i') {
+    event.preventDefault()
+    formatItalic()
+  }
+}
 
 async function fetchNews() {
   newsLoad.value = true
@@ -58,16 +137,29 @@ async function fetchNews() {
 }
 
 function editNews(item: NewsItem) {
+  resetCoverStatus()
   newsForm.value = { id: item.id, title: item.title, content: item.content, imageUrl: item.imageUrl || '' }
   editMode.value = true
 }
 
 function resetForm() {
+  resetCoverStatus()
   newsForm.value = { id: '', title: '', content: '', imageUrl: '' }
   editMode.value = false
 }
 
+function clearCover() {
+  newsForm.value.imageUrl = ''
+  coverNote.value = ''
+  coverNoteOk.value = false
+  coverPreviewBroken.value = false
+}
+
 async function saveNews() {
+  if (coverUploading.value) {
+    newsMsg.value = 'Poczekaj na wgranie obrazka.'
+    return
+  }
   if (!newsForm.value.title || !newsForm.value.content) {
     newsMsg.value = 'Tytul i tresc wymagane.'
     return
@@ -166,16 +258,42 @@ onMounted(() => {
     <template #actions><button @click="resetForm" class="label rounded-full bg-surface-2 px-3 py-1.5 text-muted hover:text-fg hover:bg-line transition-colors">Nowy News</button></template>
     <div class="space-y-4">
       <div><label class="label block text-muted mb-1">Tytul</label><input v-model="newsForm.title" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:border-lime/60"/></div>
-      <div><label class="label block text-muted mb-1">URL Obrazka (opcjonalnie)</label><input v-model="newsForm.imageUrl" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/></div>
+      <div>
+        <label class="label block text-muted mb-1">Obrazek (opcjonalnie)</label>
+        <div class="flex gap-2">
+          <input v-model="newsForm.imageUrl" placeholder="https:// albo wgraj z dysku" class="input min-w-0 flex-1 bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg"/>
+          <button type="button" :disabled="coverUploading" class="shrink-0 rounded-xl border border-line bg-fg/5 px-4 py-2 font-display text-[10px] font-extrabold uppercase tracking-widest text-fg hover:bg-fg/10 disabled:opacity-50" @click="openCoverPicker()">{{ coverUploading ? 'Wgrywam...' : 'Z dysku' }}</button>
+        </div>
+        <input ref="coverInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" class="sr-only" @change="onCoverFile"/>
+        <button v-if="newsForm.imageUrl && !coverUploading" type="button" class="mt-2 font-display text-[10px] font-extrabold uppercase tracking-widest text-muted hover:text-fg" @click="clearCover">Usun obrazek</button>
+        <img v-if="coverPreview" :src="newsForm.imageUrl" alt="Podglad obrazka" class="mt-2 h-32 w-full rounded-xl border border-line object-cover" @error="markCoverBroken"/>
+        <p v-if="coverNote" :class="['mt-2 text-xs font-bold', coverNoteOk ? 'text-lime' : 'text-red-400']">{{ coverNote }}</p>
+      </div>
       <!-- Tabs: Edit / Preview -->
       <div class="flex gap-2">
         <button @click="previewTab='edit'" :class="['px-4 py-2 rounded-xl font-display font-extrabold uppercase text-[10px] tracking-widest',previewTab==='edit'?'bg-lime text-on-lime':'bg-fg/5 text-fg/60 hover:bg-fg/10']">Edytuj</button>
         <button @click="previewTab='preview'" :class="['px-4 py-2 rounded-xl font-display font-extrabold uppercase text-[10px] tracking-widest',previewTab==='preview'?'bg-lime text-on-lime':'bg-fg/5 text-fg/60 hover:bg-fg/10']">Podglad</button>
       </div>
-      <textarea v-if="previewTab==='edit'" v-model="newsForm.content" rows="10" placeholder="Tresc newsa (Markdown)..." class="w-full rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg font-mono placeholder:text-muted/50 focus:border-lime/60 focus:outline-none resize-y"></textarea>
-      <div v-else class="rounded-xl border border-line bg-surface-2 px-4 py-3 min-h-[200px] prose prose-sm text-fg" v-html="previewHtml"></div>
+      <div v-if="previewTab==='edit'" class="overflow-hidden rounded-xl border border-line bg-surface-2 focus-within:border-lime/60">
+        <div class="flex flex-wrap items-center gap-1 border-b border-line bg-fg/[0.03] px-2 py-1.5">
+          <button type="button" title="Pogrubienie (Ctrl+B)" aria-label="Pogrubienie" class="grid h-8 w-8 place-items-center rounded-lg text-fg/80 hover:bg-fg/10 hover:text-fg" @mousedown.prevent @click="formatBold">
+            <Bold class="h-4 w-4" :stroke-width="2.5" />
+          </button>
+          <button type="button" title="Kursywa (Ctrl+I)" aria-label="Kursywa" class="grid h-8 w-8 place-items-center rounded-lg text-fg/80 hover:bg-fg/10 hover:text-fg" @mousedown.prevent @click="formatItalic">
+            <Italic class="h-4 w-4" :stroke-width="2.5" />
+          </button>
+          <span class="mx-1 h-4 w-px bg-line" aria-hidden="true"></span>
+          <select aria-label="Czcionka" class="h-8 rounded-lg border border-line bg-surface px-2 text-xs text-fg" @change="onFontChange">
+            <option value="">Czcionka</option>
+            <option v-for="font in NEWS_FONTS" :key="font.id" :value="font.id">{{ font.label }}</option>
+            <option value="clear">Domyslna</option>
+          </select>
+        </div>
+        <textarea ref="contentEl" v-model="newsForm.content" rows="10" placeholder="Tresc newsa (Markdown)..." class="w-full resize-y border-0 bg-transparent px-4 py-3 font-mono text-sm text-fg placeholder:text-muted/50 focus:outline-none" @blur="rememberSelection" @keyup="rememberSelection" @mouseup="rememberSelection" @select="rememberSelection" @keydown="onEditorKeydown"></textarea>
+      </div>
+      <div v-else class="min-h-[200px] rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-fg" v-html="previewHtml"></div>
       <div class="flex gap-3">
-        <button @click="saveNews" :disabled="newsLoad" class="flex-1 rounded-xl bg-lime text-on-lime px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ newsLoad?'Zapisuje...':(editMode?'Aktualizuj News':'Dodaj News') }}</button>
+        <button @click="saveNews" :disabled="newsLoad || coverUploading" class="flex-1 rounded-xl bg-lime text-on-lime px-6 py-3 font-display font-extrabold uppercase text-xs tracking-widest hover:bg-lime/90 disabled:opacity-50 transition-colors">{{ newsLoad?'Zapisuje...':(editMode?'Aktualizuj News':'Dodaj News') }}</button>
         <button v-if="editMode" @click="resetForm" class="rounded-xl bg-fg/5 border border-line px-6 py-3 font-display font-extrabold uppercase text-[10px] text-fg/70 hover:bg-fg/10">Anuluj</button>
       </div>
       <p v-if="newsMsg" :class="['text-sm font-bold',newsMsg.includes('Blad')?'text-red-400':'text-lime']">{{ newsMsg }}</p>

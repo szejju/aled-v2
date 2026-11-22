@@ -394,10 +394,6 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
-      <div class="bento rounded-2xl border-amber-500/30 bg-amber-500/5 p-4 text-center">
-        <p class="text-xs font-extrabold uppercase tracking-wider text-amber-400">Uczestnik Ligi Lato</p>
-      </div>
-
       <div v-if="!scheduleReady" class="bento animate-pulse rounded-2xl border-amber-500/20 p-4" aria-hidden="true">
         <div class="h-4 w-3/4 rounded bg-surface-2" />
       </div>

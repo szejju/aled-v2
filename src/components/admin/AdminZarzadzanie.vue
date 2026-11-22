@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
-import { apiApproveMatch, apiRejectMatch, approveSummerMatchResult, forceMatchDateAdmin, handleExceptionRequest, rejectSummerMatchResult, type ApproveResultPayload } from '@/services/api'
+import { apiApproveMatch, apiRejectMatch, approveSummerMatchResult, handleExceptionRequest, rejectSummerMatchResult, type ApproveResultPayload } from '@/services/api'
+import AdminForceDate from './AdminForceDate.vue'
 import AdminManualProtocol from './AdminManualProtocol.vue'
 import AdminPendingReview from './AdminPendingReview.vue'
 import AdminSectionCard from './shared/AdminSectionCard.vue'
@@ -14,7 +15,6 @@ import { awaitsProtocolApproval, useScheduleFeed, type ScheduleRow } from '@/com
 import { errorText } from '@/utils/errorText'
 import { listOverdue, readSeasonStart } from '@/utils/overdue'
 import { playerFullName } from '@/utils/playerName'
-import { extractDivisionNumber, isBarrageDivision } from '@/utils/divisions'
 import { asRecord, flag, optNum, optStr } from '@/utils/rtdb'
 
 const feed = useScheduleFeed()
@@ -22,6 +22,7 @@ const hiddenRadar = ref<Set<string>>(new Set())
 const radar = computed(() => feed.radar.value.filter((match) => !hiddenRadar.value.has(match.id)))
 const excs = computed(() => feed.exceptions.value)
 const pAll = feed.all
+const summerRows = feed.summer
 const pLoad = computed(() => !feed.ready.value)
 const feedError = feed.error
 const { ids: appr, run: runAppr } = useBusyIds()
@@ -424,192 +425,6 @@ async function fVac() {
   }
 }
 
-const BARRAGE_KEY = 'BARAZE'
-
-const fDiv = ref('')
-const fGrp = ref('')
-const fRnd = ref('')
-const fMid = ref('')
-const fDt = ref('')
-const fTm = ref('')
-const fLd = ref(false)
-const fMsg = ref('')
-const fOk = ref(true)
-
-function groupLetter(div: string | undefined): string {
-  const match = String(div ?? '').match(/GRUPA\s*([A-Z]+)/i)
-  return match ? match[1].toUpperCase() : ''
-}
-
-function divisionBucket(div: string | undefined): string {
-  if (!div || /poczekalnia/i.test(div)) return ''
-  if (isBarrageDivision(div)) return BARRAGE_KEY
-  return extractDivisionNumber(div)
-}
-
-const fLeague = computed(() =>
-  pAll.value.filter((match) => match.sourcePath === 'schedule' && divisionBucket(match.div)),
-)
-
-const fDivs = computed(() => {
-  const seen = new Map<string, string>()
-  for (const match of fLeague.value) {
-    const key = divisionBucket(match.div)
-    if (!key || seen.has(key)) continue
-    seen.set(key, key === BARRAGE_KEY ? 'Baraze' : `Dywizja ${key}`)
-  }
-  return [...seen.entries()]
-    .map(([key, label]) => ({ key, label }))
-    .sort((a, b) => {
-      if (a.key === BARRAGE_KEY) return 1
-      if (b.key === BARRAGE_KEY) return -1
-      return Number(a.key) - Number(b.key)
-    })
-})
-
-const fGroups = computed(() => {
-  if (!fDiv.value) return [] as { key: string; label: string }[]
-  const seen = new Map<string, string>()
-  for (const match of fLeague.value) {
-    if (divisionBucket(match.div) !== fDiv.value) continue
-    if (fDiv.value === BARRAGE_KEY) {
-      const key = match.div ?? ''
-      if (key) seen.set(key, key)
-      continue
-    }
-    const letter = groupLetter(match.div)
-    if (letter) seen.set(letter, `Grupa ${letter}`)
-  }
-  return [...seen.entries()]
-    .map(([key, label]) => ({ key, label }))
-    .sort((a, b) => a.label.localeCompare(b.label, 'pl'))
-})
-
-const fNeedsGroup = computed(() => fGroups.value.length > 0)
-
-function matchInScope(match: ScheduleRow): boolean {
-  if (divisionBucket(match.div) !== fDiv.value) return false
-  if (!fNeedsGroup.value) return true
-  if (fDiv.value === BARRAGE_KEY) return match.div === fGrp.value
-  return groupLetter(match.div) === fGrp.value
-}
-
-const fRnds = computed(() => {
-  if (!fDiv.value || (fNeedsGroup.value && !fGrp.value)) return []
-  const rounds = new Set<string>()
-  for (const match of fLeague.value) {
-    if (!matchInScope(match) || match.round === undefined) continue
-    rounds.add(String(match.round))
-  }
-  return [...rounds].sort((a, b) => {
-    const na = Number(a)
-    const nb = Number(b)
-    const aNum = a.trim() !== '' && Number.isFinite(na)
-    const bNum = b.trim() !== '' && Number.isFinite(nb)
-    if (aNum && bNum && na !== nb) return na - nb
-    if (aNum !== bNum) return aNum ? -1 : 1
-    return a.localeCompare(b, 'pl')
-  })
-})
-
-const fMatches = computed(() =>
-  fLeague.value
-    .filter((match) => matchInScope(match) && String(match.round) === fRnd.value)
-    .sort((a, b) =>
-      `${a.p1Name ?? ''} ${a.p2Name ?? ''}`.localeCompare(`${b.p1Name ?? ''} ${b.p2Name ?? ''}`, 'pl'),
-    ),
-)
-
-const fCur = computed(() => fLeague.value.find((match) => match.id === fMid.value) ?? null)
-
-function kolejkaLabel(round: string): string {
-  return /^\d+$/.test(round) ? `Kolejka ${round}` : round
-}
-
-function forceTerm(match: ScheduleRow): string {
-  const date = match.proposedDate || (typeof match.date === 'string' ? match.date : '')
-  const time = match.proposedTime
-  if (date && time) return `${date} ${time}`
-  if (date) return date
-  if (typeof match.date === 'number') {
-    return new Date(match.date).toLocaleString('pl-PL', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
-  return 'brak terminu'
-}
-
-function forceMatchLabel(match: ScheduleRow): string {
-  const names = `${match.p1Name || 'Gracz 1'} vs ${match.p2Name || 'Gracz 2'}`
-  const term = forceTerm(match)
-  return term === 'brak terminu' ? names : `${names} · ${term}`
-}
-
-function clearForceMatch() {
-  fMsg.value = ''
-  fMid.value = ''
-  fDt.value = ''
-  fTm.value = ''
-}
-
-function onForceDivision() {
-  fGrp.value = ''
-  fRnd.value = ''
-  clearForceMatch()
-}
-
-function onForceGroup() {
-  fRnd.value = ''
-  clearForceMatch()
-}
-
-function onForceRound() {
-  clearForceMatch()
-}
-
-function fillForceDate() {
-  fMsg.value = ''
-  const match = fCur.value
-  if (!match) {
-    fDt.value = ''
-    fTm.value = ''
-    return
-  }
-  const date = match.proposedDate ?? ''
-  fDt.value = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
-  const time = match.proposedTime ?? ''
-  fTm.value = /^\d{2}:\d{2}/.test(time) ? time.slice(0, 5) : ''
-}
-
-async function doFrc() {
-  if (!fMid.value || !fDt.value || !fTm.value) {
-    fOk.value = false
-    fMsg.value = 'Wybierz mecz oraz nowa date i godzine.'
-    return
-  }
-  fLd.value = true
-  fMsg.value = ''
-  try {
-    const result = await forceMatchDateAdmin({
-      matchId: fMid.value,
-      isCup: false,
-      date: fDt.value,
-      time: fTm.value,
-    })
-    fOk.value = true
-    fMsg.value = result.message
-  } catch (err: unknown) {
-    fOk.value = false
-    fMsg.value = errorText(err)
-  } finally {
-    fLd.value = false
-  }
-}
-
 onMounted(() => {
   feed.start()
   scheduleDates.start()
@@ -652,56 +467,9 @@ onMounted(() => {
   <AdminManualProtocol :matches="pAll" :loading="pLoad" :error="feedError" @reload="feed.start()" />
 </div>
 
-<!-- 7. RECZNA ZMIANA TERMINOW -->
-  <AdminSectionCard id="admin-terminy" class="admin-jump-target h-full" title="Reczna Zmiana Terminow" dot-color="bg-purple-500">
-    <p class="text-xs text-muted mb-4">Nadpisz termin meczu ligowego. Wybierz dywizje, grupe, kolejke i mecz, potem ustaw nowa date i godzine.</p>
-    <p v-if="feedError" class="text-sm font-bold text-red-400 mb-3">{{ feedError }}</p>
-    <p v-else-if="pLoad" class="text-xs text-muted italic">Wczytywanie terminarza...</p>
-    <p v-else-if="fDivs.length === 0" class="text-xs text-muted italic">Brak meczow w terminarzu ligowym.</p>
-    <div v-else class="space-y-3">
-      <div>
-        <label class="label block text-muted mb-1" for="force-div">Dywizja</label>
-        <select id="force-div" v-model="fDiv" @change="onForceDivision" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500">
-          <option value="">Wybierz dywizje</option>
-          <option v-for="d in fDivs" :key="d.key" :value="d.key">{{ d.label }}</option>
-        </select>
-      </div>
-      <div v-if="fNeedsGroup">
-        <label class="label block text-muted mb-1" for="force-group">{{ fDiv === 'BARAZE' ? 'Cel' : 'Grupa' }}</label>
-        <select id="force-group" v-model="fGrp" :disabled="!fDiv" @change="onForceGroup" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500 disabled:opacity-50">
-          <option value="">{{ fDiv === 'BARAZE' ? 'Wybierz cel' : 'Wybierz grupe' }}</option>
-          <option v-for="g in fGroups" :key="g.key" :value="g.key">{{ g.label }}</option>
-        </select>
-      </div>
-      <div>
-        <label class="label block text-muted mb-1" for="force-round">Kolejka</label>
-        <select id="force-round" v-model="fRnd" :disabled="!fDiv || (fNeedsGroup && !fGrp)" @change="onForceRound" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500 disabled:opacity-50">
-          <option value="">Wybierz kolejke</option>
-          <option v-for="r in fRnds" :key="r" :value="r">{{ kolejkaLabel(r) }}</option>
-        </select>
-      </div>
-      <div>
-        <label class="label block text-muted mb-1" for="force-match">Mecz</label>
-        <select id="force-match" v-model="fMid" :disabled="!fRnd" @change="fillForceDate" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500 disabled:opacity-50">
-          <option value="">Wybierz mecz</option>
-          <option v-for="m in fMatches" :key="m.id" :value="m.id">{{ forceMatchLabel(m) }}</option>
-        </select>
-      </div>
-      <p v-if="fCur" class="text-xs text-muted">Aktualny termin: <span class="font-bold text-fg">{{ forceTerm(fCur) }}</span></p>
-      <div class="grid grid-cols-2 gap-3">
-        <div>
-          <label class="label block text-muted mb-1" for="force-date">Nowa data</label>
-          <input id="force-date" v-model="fDt" type="date" :disabled="!fMid" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500 disabled:opacity-50"/>
-        </div>
-        <div>
-          <label class="label block text-muted mb-1" for="force-time">Godzina</label>
-          <input id="force-time" v-model="fTm" type="time" :disabled="!fMid" class="input w-full bg-fg/5 border border-line rounded-xl px-3 py-2 text-sm text-fg focus:outline-none focus:border-purple-500 disabled:opacity-50"/>
-        </div>
-      </div>
-      <button type="button" @click="doFrc" :disabled="fLd || !fMid || !fDt || !fTm" :aria-busy="fLd" class="w-full rounded-xl bg-purple-600 text-white px-6 py-2.5 font-display font-extrabold uppercase text-[10px] tracking-widest hover:bg-purple-500 disabled:opacity-50 transition-colors">{{ fLd ? 'Zapisuje...' : 'Zmien Termin' }}</button>
-    </div>
-    <p v-if="fMsg" :class="['text-sm font-bold mt-3', fOk ? 'text-lime' : 'text-red-400']">{{ fMsg }}</p>
-  </AdminSectionCard>
+<div id="admin-terminy" class="admin-jump-target h-full min-w-0">
+  <AdminForceDate :matches="pAll" :summer-matches="summerRows" :loading="pLoad" :error="feedError" />
+</div>
 
   </div>
 

@@ -2,6 +2,7 @@ import { get, ref as dbRef } from 'firebase/database'
 import { getDatabaseClient } from '@/services/firebase'
 import { asRecord, optNum, optStr } from '@/utils/rtdb'
 import { simpleMarkdown } from '@/utils/simpleMarkdown'
+import { stripNewsFontMarkers } from '@/utils/newsMarkup'
 
 export interface LeagueNews {
   id: string
@@ -38,7 +39,7 @@ function toIso(date: string | undefined, timestamp: number): string {
 }
 
 function plainExcerpt(content: string, max = 150): string {
-  const text = content
+  const text = stripNewsFontMarkers(content)
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, ' ')
     .replace(/<[^>]+>/g, '')

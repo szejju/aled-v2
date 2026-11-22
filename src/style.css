@@ -135,6 +135,18 @@
   @apply font-sans text-[11px] font-semibold uppercase tracking-[0.14em];
 }
 
+/* Czcionki z edytora newsów. Klasa siedzi na <span> wstawianym przy renderze. */
+.news-font-display {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+.news-font-serif {
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.news-font-mono {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
 @utility grid-noise {
   background-image:
     linear-gradient(to right, color-mix(in oklab, var(--fg) 4%, transparent) 1px, transparent 1px),

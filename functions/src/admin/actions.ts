@@ -916,22 +916,63 @@ export const updateGlobalSettings = functions.https.onCall(async (request) => {
 
 // ---- forceMatchDateAdmin (Boska Interwencja) --------------------------------
 
+function forceDateRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+/** Identyfikator meczu, który da się wstawić w ścieżkę RTDB. */
+function forceDateMatchId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  if (!id || id.length > 120) return null;
+  if (/[.#$\[\]/]/.test(id)) return null;
+  return id;
+}
+
+function forceDateScope(data: Record<string, unknown>): "league" | "cup" | "summer" {
+  if (data.scope === "league" || data.scope === "cup" || data.scope === "summer") return data.scope;
+  return data.isCup === true ? "cup" : "league";
+}
+
+function forceDatePath(scope: "league" | "cup" | "summer"): string {
+  if (scope === "cup") return "cup/schedule";
+  if (scope === "summer") return "summer_league/schedule";
+  return "schedule";
+}
+
 export const forceMatchDateAdmin = functions.https.onCall(async (request) => {
   const uid = request.auth?.uid;
   if (!uid || !(await verifyAdmin(uid)))
-    throw new functions.https.HttpsError('permission-denied', 'Brak uprawnien.');
-  
-  const { matchId, isCup, date, time } = request.data;
-  if (!matchId || !date || !time)
-    throw new functions.https.HttpsError('invalid-argument', 'Brakujace dane.');
-  
-  const basePath = isCup ? 'cup/schedule' : 'schedule';
+    throw new functions.https.HttpsError("permission-denied", "Brak uprawnien.");
+
+  const data = forceDateRecord(request.data);
+  const matchId = forceDateMatchId(data?.matchId);
+  const date = typeof data?.date === "string" ? data.date.trim() : "";
+  const time = typeof data?.time === "string" ? data.time.trim().slice(0, 5) : "";
+  if (!data || !matchId || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+    throw new functions.https.HttpsError("invalid-argument", "Brakujace dane.");
+  }
+
+  const scope = forceDateScope(data);
   const ts = new Date(`${date}T${time}`).getTime();
-  
-  await db().ref(`${basePath}/${matchId}`).update({
-    proposedDate: date, proposedTime: time, proposedTimestamp: ts, status: 'accepted'
+  if (!Number.isFinite(ts)) {
+    throw new functions.https.HttpsError("invalid-argument", "Brakujace dane.");
+  }
+
+  const matchRef = db().ref(`${forceDatePath(scope)}/${matchId}`);
+  const snap = await matchRef.once("value");
+  if (!snap.exists()) {
+    throw new functions.https.HttpsError("not-found", "Mecz nie istnieje.");
+  }
+
+  await matchRef.update({
+    proposedDate: date,
+    proposedTime: time,
+    proposedTimestamp: ts,
+    status: "accepted",
   });
-  return { success: true, message: 'Termin zapisany i zatwierdzony przymusowo.' };
+  return { success: true, message: "Termin zapisany i zatwierdzony przymusowo." };
 });
 
 // ---- archiveCurrentSeason (Atomowy Reset) -------------------------------

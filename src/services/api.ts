@@ -826,6 +826,7 @@ export const updateGlobalSettings = makeCallable<
 export interface ForceMatchDatePayload {
   matchId: string
   isCup: boolean
+  scope?: 'league' | 'cup' | 'summer'
   date: string
   time: string
 }

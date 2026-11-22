@@ -382,59 +382,16 @@ async function fetchCupData(id: string) {
       else phase = 'after_closed'
     }
 
-    // 4. Określ status gracza w pucharze
-    let playerStatusText = 'W grze'
-    let playerStageText = 'Faza Grupowa'
-
     const cupScheduleArr = Object.entries(scheduleObj).map(([key, match]) => ({
       ...match,
       id: match.id ?? key,
     }))
     const myCupMatches = cupScheduleArr.filter(m => m.p1Id === id || m.p2Id === id)
 
-    if (phase === 'groups' || phase === 'knockout') {
-      const allKnockoutMatches = cupScheduleArr.filter(m => m.isKnockout)
-      const myKnockoutMatches = myCupMatches.filter(m => m.isKnockout)
-      const myGroupMatches = myCupMatches.filter(m => !m.isKnockout)
-      const hasKnockoutStarted = allKnockoutMatches.length > 0
-
-      if (status === 'groups' && !hasKnockoutStarted) {
-        playerStageText = 'Faza Grupowa'
-        if (myGroupMatches.length > 0 && myGroupMatches.every(m => isOfficialMatchStatus(m.status))) {
-          playerStatusText = 'Oczekuje na awans'
-        }
-      } else if (hasKnockoutStarted || status === 'knockout') {
-        if (myKnockoutMatches.length === 0) {
-          playerStageText = 'Faza Grupowa'
-          playerStatusText = 'Odpadł z turnieju'
-        } else {
-          myKnockoutMatches.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))
-          const lastMatch = myKnockoutMatches[0]
-          playerStageText = lastMatch.group || 'Faza Pucharowa'
-
-          if (isOfficialMatchStatus(lastMatch.status)) {
-            const isP1 = lastMatch.p1Id === id
-            const myScore = (isP1 ? lastMatch.score1 : lastMatch.score2) ?? 0
-            const opScore = isP1 ? (lastMatch.score2 ?? 0) : (lastMatch.score1 ?? 0)
-
-            if (myScore > opScore) {
-              playerStatusText = playerStageText.trim().toLowerCase() === 'finał'
-                ? 'Mistrz Pucharu!'
-                : 'Awans'
-            } else {
-              playerStatusText = 'Zakończono udział'
-            }
-          }
-        }
-      }
-    }
-
     cupEnrollment.value = {
       isEnrolled: isEnrolledInCup,
       isFullyVerified: enrollmentData.value.verifyAvg === 'verified' && enrollmentData.value.verifyCam === 'verified',
       phase,
-      playerStatusText: isEnrolledInCup ? playerStatusText : undefined,
-      playerStageText: isEnrolledInCup ? playerStageText : undefined,
     }
 
     // 5. Mapuj mecze pucharowe. Najświeższy timestamp na górze, jak w starej liście.
